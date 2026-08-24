@@ -4,7 +4,7 @@
      Organization:  MSEndpointMgr / Patch My PC
      Filename:      DriverAutomationToolCore.psm1
      Purpose:       Core functions for Driver Automation Tool v2.0
-     Version:       10.2.3.0
+     Version:       10.2.4.0
     ===========================================================================
 #>
 
@@ -37,8 +37,8 @@ if ($PSVersionTable.PSVersion.Major -le 5) {
 
 #region Variables
 
-[version]$global:ScriptRelease = "10.2.3.0"
-$global:ScriptBuildDate = "21-08-2026"
+[version]$global:ScriptRelease = "10.2.4.0"
+$global:ScriptBuildDate = "23-08-2026"
 $global:ReleaseNotesURL = "https://raw.githubusercontent.com/maurice-daly/DriverAutomationTool/master/Data/DriverAutomationToolNotes.txt"
 $global:DATConfigUrl = "https://raw.githubusercontent.com/maurice-daly/DriverAutomationTool/refs/heads/master/Data/DATAPIConfig.json"
 $OEMLinksURL = "https://raw.githubusercontent.com/maurice-daly/DriverAutomationTool/master/Data/OEMLinks.xml"
@@ -702,6 +702,9 @@ function Get-DATOEMModelInfo {
                 $DellCabFile = [string]($DellXMLCabinetSource | Split-Path -Leaf)
                 $DellXMLFile = $DellCabFile.TrimEnd(".cab") + ".xml"
                 $DellWindowsVersion = $WindowsVersion.Replace(" ", "")
+                # Latest Drivers (DCU) builds carry a date-stamp version (fingerprint-based);
+                # SCCM pack mode shows the enterprise catalog dellVersion.
+                $DellDriverPackSource = (Get-ItemProperty -Path $global:RegPath -Name 'HPDriverPackSource' -ErrorAction SilentlyContinue).HPDriverPackSource
                 try {
                     Write-DATLogEntry -Value "[Dell] Catalog cab path: $(Join-Path $global:TempDirectory $DellCabFile)" -Severity 1
                     Write-DATLogEntry -Value "[Dell] Catalog XML extract path: $(Join-Path $global:TempDirectory $DellXMLFile)" -Severity 1
@@ -742,7 +745,7 @@ function Get-DATOEMModelInfo {
                             Baseboards = $(if ($sysIds) { $sysIds -join "," } else { "" })
                             OS         = $WindowsVersion
                             'OS Build' = 'All'
-                            Version    = $Model.DellVersion
+                            Version    = $(if ($DellDriverPackSource -eq 'SoftPaqs') { (Get-Date -Format 'ddMMyyyy') } else { $Model.DellVersion })
                         }
                     }
                 } catch {
@@ -752,6 +755,8 @@ function Get-DATOEMModelInfo {
             "Lenovo" {
                 $LenovoXMLSource = ($OEMLinks.OEM.Manufacturer | Where-Object { $_.Name -match "Lenovo" }).Link | Where-Object { $_.Type -eq "XMLSource" } | Select-Object -ExpandProperty URL -First 1
                 $LenovoXMLCabFile = $LenovoXMLSource | Split-Path -Leaf
+                # Latest Drivers (Model-XML) builds carry a date-stamp version; SCCM mode shows the pack date.
+                $LenovoDriverPackSource = (Get-ItemProperty -Path $global:RegPath -Name 'HPDriverPackSource' -ErrorAction SilentlyContinue).HPDriverPackSource
                 try {
                     Write-DATLogEntry -Value "[Lenovo] Catalog download path: $(Join-Path $global:TempDirectory $LenovoXMLCabFile)" -Severity 1
                     if (-not (Test-Path "$global:TempDirectory\$LenovoXMLCabFile")) {
@@ -783,7 +788,7 @@ function Get-DATOEMModelInfo {
                             'OS Build' = $WindowsBuild
                             HasGFX     = $hasGFX
                             GFXBrand   = $gfxBrand
-                            Version    = $lenovoDate
+                            Version    = $(if ($LenovoDriverPackSource -eq 'SoftPaqs') { (Get-Date -Format 'ddMMyyyy') } else { $lenovoDate })
                         }
                     }
                 } catch {
@@ -1526,6 +1531,148 @@ function Test-DATLongPathsEnabled {
     }
 }
 
+function Get-DATHPMetaValue {
+    <#
+    .SYNOPSIS
+        Defensively reads a value out of an HP SoftPaq metadata object (CVA sections), tolerating
+        the varied section/key layouts HPCMSL returns across versions. Returns $null if not found.
+    #>
+    param(
+        $Meta,
+        [string[]]$Keys
+    )
+    if ($null -eq $Meta) { return $null }
+    try {
+        # Top-level keys first, then one level into each section (metadata is section-keyed).
+        foreach ($k in $Keys) {
+            if ($Meta.Keys -contains $k) {
+                $v = $Meta[$k]
+                if ($v -isnot [System.Collections.IDictionary] -and "$v".Trim()) { return "$v".Trim() }
+            }
+        }
+        foreach ($section in $Meta.Values) {
+            if ($section -is [System.Collections.IDictionary]) {
+                foreach ($k in $Keys) {
+                    if ($section.Keys -contains $k) {
+                        $vv = $section[$k]
+                        if ("$vv".Trim()) { return "$vv".Trim() }
+                    }
+                }
+            }
+        }
+    } catch { }
+    return $null
+}
+
+function New-DATDriverManifest {
+    <#
+    .SYNOPSIS
+        Writes DATDriverManifest.json into the folder captured into the WIM, so the package
+        contents (component list + enumerated INF drivers) can be read back externally without
+        the tool -- by mounting/extracting the WIM or from the expanded package.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetFolder,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$OEM,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Model,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$OS,
+        [AllowEmptyString()][string]$PackageVersion = '',
+        [object[]]$Components = @(),
+        [AllowEmptyString()][string]$Source = ''
+    )
+    try {
+        if (-not (Test-Path -Path $TargetFolder -PathType Container)) { return $null }
+
+        # Canonicalise the root so relative paths are correct even if the caller passed an 8.3
+        # short path (Get-ChildItem always returns long-form full paths).
+        $targetFull = (Get-Item -LiteralPath $TargetFolder).FullName.TrimEnd('\', '/')
+
+        # Enumerate INF driver files; best-effort parse of Class / Provider / DriverVer (date,version).
+        $drivers = New-Object System.Collections.Generic.List[object]
+        $infFiles = @(Get-ChildItem -Path $TargetFolder -Filter '*.inf' -Recurse -File -ErrorAction SilentlyContinue)
+        foreach ($inf in $infFiles) {
+            $class = $null; $provider = $null; $ver = $null; $date = $null
+            try {
+                foreach ($line in (Get-Content -Path $inf.FullName -TotalCount 80 -ErrorAction SilentlyContinue)) {
+                    if (-not $class    -and $line -match '^\s*Class\s*=\s*(.+?)\s*$')    { $class = $Matches[1].Trim() }
+                    if (-not $provider -and $line -match '^\s*Provider\s*=\s*(.+?)\s*$') { $provider = ($Matches[1] -replace '%', '').Trim() }
+                    if (-not $ver -and $line -match '^\s*DriverVer\s*=\s*(.+?)\s*$') {
+                        $parts = $Matches[1] -split ','
+                        $date = $parts[0].Trim()
+                        if ($parts.Count -gt 1) { $ver = $parts[1].Trim() }
+                    }
+                }
+            } catch { }
+            $relPath = $inf.FullName
+            if ($relPath.StartsWith($targetFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $relPath = $relPath.Substring($targetFull.Length).TrimStart('\', '/')
+            } else {
+                $relPath = $inf.Name
+            }
+            $drivers.Add([ordered]@{
+                inf      = $inf.Name
+                path     = $relPath
+                class    = $class
+                provider = $provider
+                version  = $ver
+                date     = $date
+            })
+        }
+
+        $manifest = [ordered]@{
+            schema         = 'DAT Driver Package manifest v1'
+            generated      = (Get-Date).ToUniversalTime().ToString('o')
+            toolVersion    = "$global:ScriptRelease"
+            oem            = $OEM
+            model          = $Model
+            os             = $OS
+            packageVersion = $PackageVersion
+            source         = $Source
+            componentCount = @($Components).Count
+            driverInfCount = $drivers.Count
+            components     = @($Components)
+            drivers        = $drivers
+        }
+
+        $manifestPath = Join-Path $TargetFolder 'DATDriverManifest.json'
+        $manifest | ConvertTo-Json -Depth 6 | Set-Content -Path $manifestPath -Encoding UTF8 -Force
+        Write-DATLogEntry -Value "[$OEM] Driver manifest written: $manifestPath ($($drivers.Count) INF file(s), $(@($Components).Count) component(s))" -Severity 1
+
+        # Cache a deterministic, content-only copy of the manifest so Send-DATDriverManifest can
+        # submit it with a cross-environment-stable content hash. This deliberately omits the
+        # volatile fields above (generated timestamp, toolVersion, source) and sorts both arrays so
+        # identical package contents serialize identically on any machine. Covers both SCCM
+        # driver-pack builds and individual driver packs (all flow through this function).
+        try {
+            $canonicalDrivers = @(@($drivers) | Sort-Object -Property @{ Expression = { ConvertTo-DATCanonicalJson -InputObject $_ } } -Culture ([System.Globalization.CultureInfo]::InvariantCulture))
+            $canonicalComponents = @(@($Components) | Sort-Object -Property @{ Expression = { ConvertTo-DATCanonicalJson -InputObject $_ } } -Culture ([System.Globalization.CultureInfo]::InvariantCulture))
+            $canonicalContent = [ordered]@{
+                schema         = 'DAT Driver Package manifest v1'
+                oem            = "$OEM".Trim()
+                model          = "$Model".Trim()
+                os             = "$OS".Trim()
+                packageVersion = "$PackageVersion".Trim()
+                componentCount = @($Components).Count
+                driverInfCount = $drivers.Count
+                components     = $canonicalComponents
+                drivers        = $canonicalDrivers
+            }
+            $script:DATLastDriverManifest = [pscustomobject]@{
+                Key     = ('{0}|{1}|{2}' -f "$OEM".Trim(), "$Model".Trim(), "$OS".Trim())
+                Content = $canonicalContent
+            }
+        } catch {
+            $script:DATLastDriverManifest = $null
+            Write-DATLogEntry -Value "[$OEM] Failed to cache canonical driver manifest: $($_.Exception.Message)" -Severity 2
+        }
+
+        return $manifestPath
+    } catch {
+        Write-DATLogEntry -Value "[$OEM] Failed to write driver manifest: $($_.Exception.Message)" -Severity 2
+        return $null
+    }
+}
+
 function Invoke-DATDriverFilePackaging {
     param (
         [string]$FilePath,
@@ -1537,7 +1684,9 @@ function Invoke-DATDriverFilePackaging {
         [string]$Platform,
         [string[]]$SupplementalFilePaths = @(),
         [string]$CustomDriverPath,
-        [string]$DownloadOnlyExtractDestination
+        [string]$DownloadOnlyExtractDestination,
+        [AllowEmptyString()][string]$PackageVersion = '',
+        [object[]]$Components = @()
     )
 
     # Always use the temp directory for extraction and WIM creation, then copy the
@@ -1896,6 +2045,20 @@ function Invoke-DATDriverFilePackaging {
         $customInfCount = @(Get-ChildItem -Path $customDriverDest -Filter '*.inf' -Recurse -File -ErrorAction SilentlyContinue).Count
         $customFileCount = @(Get-ChildItem -Path $customDriverDest -Recurse -File -ErrorAction SilentlyContinue).Count
         Write-DATLogEntry -Value "[$OEM] Custom drivers injected: $customFileCount files ($customInfCount .inf files)" -Severity 1
+    }
+
+    # Embed a machine-readable manifest of the package contents (components + INF drivers) so it is
+    # captured into the WIM / expanded package and can be read back externally without the tool.
+    $null = New-DATDriverManifest -TargetFolder $DriverFolder -OEM $OEM -Model $Model -OS $OS `
+        -PackageVersion $PackageVersion -Components $Components
+
+    # Submit the deterministic contents manifest to the telemetry API. This runs for every driver
+    # package regardless of source (SCCM driver pack or individual driver pack) and platform, and
+    # no-ops safely when telemetry is disabled or the backend endpoint is not yet published.
+    try {
+        $null = Send-DATDriverManifest -OEM $OEM -Model $Model -OS $OS -Platform $Platform
+    } catch {
+        Write-DATLogEntry -Value "[Telemetry] Driver manifest submission failed: $($_.Exception.Message)" -Severity 2
     }
 
     # Download Only with extraction enabled -- stage the expanded content next to the
@@ -3959,6 +4122,41 @@ function Write-DATOfflineManifestAndScript {
     return $manifestPath
 }
 
+function Add-DATDriverDownloadFailure {
+    <#
+    .SYNOPSIS
+        Records an individual driver/component download or extract failure so the post-build
+        "View Failures" report can list exactly which drivers failed -- even when the model package
+        still built from the components that succeeded. Registry-backed (cross-runspace safe),
+        capped, and never throws.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OEM,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Model,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Driver,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Reason
+    )
+    try {
+        $list = New-Object System.Collections.Generic.List[object]
+        $raw = (Get-ItemProperty -Path $global:RegPath -Name 'DriverDownloadFailures' -ErrorAction SilentlyContinue).DriverDownloadFailures
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            # Assign before wrapping: on PS 5.1 @(<json> | ConvertFrom-Json) inline collapses a
+            # multi-element array to a single object; a temp var then @() keeps the count correct.
+            $parsed = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+            foreach ($item in @($parsed)) { if ($null -ne $item) { [void]$list.Add($item) } }
+        }
+        # Cap the list so the serialized payload stays within registry string limits.
+        if ($list.Count -ge 200) { return }
+        $reasonText = "$Reason"
+        if ($reasonText.Length -gt 200) { $reasonText = $reasonText.Substring(0, 197) + '...' }
+        [void]$list.Add([pscustomobject]@{ OEM = "$OEM"; Model = "$Model"; Driver = "$Driver"; Reason = $reasonText })
+        $json = ConvertTo-Json -InputObject @($list) -Depth 4 -Compress
+        Set-DATRegistryValue -Name 'DriverDownloadFailures' -Value $json -Type String
+        Set-DATRegistryValue -Name 'FailedDrivers' -Value "$($list.Count)" -Type String
+    } catch { }
+}
+
 function Start-DATModelProcessing {
     [CmdletBinding()]
     param (
@@ -4176,6 +4374,10 @@ function Start-DATModelProcessing {
     # Cleared at the start of every run so stale failures from a previous build are not shown.
     $buildFailures = [System.Collections.Generic.List[object]]::new()
     Remove-ItemProperty -Path $global:RegPath -Name 'BuildFailures' -ErrorAction SilentlyContinue
+    # Individual driver/component download failures (Latest Drivers builds) are recorded separately
+    # so they surface in the report even when the model package still builds. Cleared each run.
+    Remove-ItemProperty -Path $global:RegPath -Name 'DriverDownloadFailures' -ErrorAction SilentlyContinue
+    Set-DATRegistryValue -Name 'FailedDrivers' -Value '0' -Type String
 
     # Collect per-package-type skips (already at the current version) so the progress modal can render
     # them distinctly (grey "skipped") instead of as green builds, and so "Packages Created" reads
@@ -4488,6 +4690,16 @@ function Start-DATModelProcessing {
                             $spRefKey = Get-DATHPSoftPaqManifestKey -Model $modelName -OSVersion $windowsVersion -Build $windowsBuild -Architecture $arch
                             [void](Update-DATHPSoftPaqManifestReference -Key $spRefKey -Field 'intuneAppId' -Value "$($intuneResult.AppId)")
                         }
+                        # Same for the Dell Latest Drivers manifest (no-op for SCCM-pack Dell builds).
+                        if ($oem -eq 'Dell' -and $null -ne $intuneResult -and -not [string]::IsNullOrEmpty($intuneResult.AppId)) {
+                            $dellRefKey = Get-DATDellLatestManifestKey -Model $modelName -OSVersion $windowsVersion -Build $windowsBuild -Architecture $arch
+                            [void](Update-DATDellLatestManifestReference -Key $dellRefKey -Field 'intuneAppId' -Value "$($intuneResult.AppId)")
+                        }
+                        # Same for the Lenovo Latest Drivers manifest (no-op for SCCM-pack Lenovo builds).
+                        if ($oem -eq 'Lenovo' -and $null -ne $intuneResult -and -not [string]::IsNullOrEmpty($intuneResult.AppId)) {
+                            $lnvRefKey = Get-DATLenovoLatestManifestKey -Model $modelName -OSVersion $windowsVersion -Build $windowsBuild -Architecture $arch
+                            [void](Update-DATLenovoLatestManifestReference -Key $lnvRefKey -Field 'intuneAppId' -Value "$($intuneResult.AppId)")
+                        }
 
                         # Auto-deploy and auto-assignment-filter for driver packages
                         if ($null -ne $intuneResult -and -not [string]::IsNullOrEmpty($intuneResult.AppId)) {
@@ -4500,8 +4712,8 @@ function Start-DATModelProcessing {
                             if ($null -ne $deployReg.DeployAllDevices -and $deployReg.DeployAllDevices -eq 1 -and
                                 ($null -eq $deployReg.AutoAssignmentFilter -or $deployReg.AutoAssignmentFilter -ne 1)) {
                                 try {
-                                    $targetGroupId = if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupId)) { $deployReg.DeployTargetGroupId } else { 'adadadad-808e-44e2-905a-0b7873a8a531' }
-                                    $targetGroupName = if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupName)) { $deployReg.DeployTargetGroupName } else { 'All Devices' }
+                                    $targetGroupId = if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupId)) { @($deployReg.DeployTargetGroupId -split ';;' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) } else { @('adadadad-808e-44e2-905a-0b7873a8a531') }
+                                    $targetGroupName = if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupName)) { ($deployReg.DeployTargetGroupName -split ';;') -join ', ' } else { 'All Devices' }
                                     Set-DATRegistryValue -Name "RunningMode" -Value "Deploying" -Type String
                                     Set-DATRegistryValue -Name "RunningMessage" -Value "Deploying to ${targetGroupName}: $oem $modelName" -Type String
                                     Set-DATIntuneAppAssignment -AppId $intuneResult.AppId -GroupId $targetGroupId -Intent 'Required' -IMENotifications $imeNotifications
@@ -4530,7 +4742,7 @@ function Start-DATModelProcessing {
                                         $filterParams['Model'] = $modelName
                                         if (-not [string]::IsNullOrEmpty($baseboards)) { $filterParams['Baseboards'] = $baseboards }
                                     }
-                                    if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupId)) { $filterParams['TargetGroupId'] = $deployReg.DeployTargetGroupId }
+                                    if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupId)) { $filterParams['TargetGroupId'] = @($deployReg.DeployTargetGroupId -split ';;' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
                                     Invoke-DATAutoAssignmentFilter @filterParams
                                     Write-DATLogEntry -Value "[Intune] Auto-assignment filter applied for driver package: $oem $modelName ($filterMode)" -Severity 1
                                 } catch {
@@ -4624,6 +4836,16 @@ function Start-DATModelProcessing {
                                 if ($oem -eq 'HP') {
                                     $spRefKey = Get-DATHPSoftPaqManifestKey -Model $modelName -OSVersion $windowsVersion -Build $windowsBuild -Architecture $arch
                                     [void](Update-DATHPSoftPaqManifestReference -Key $spRefKey -Field 'configMgrPackageId' -Value "$cmResult")
+                                }
+                                # Same for the Dell Latest Drivers manifest (no-op for SCCM-pack Dell builds).
+                                if ($oem -eq 'Dell') {
+                                    $dellRefKey = Get-DATDellLatestManifestKey -Model $modelName -OSVersion $windowsVersion -Build $windowsBuild -Architecture $arch
+                                    [void](Update-DATDellLatestManifestReference -Key $dellRefKey -Field 'configMgrPackageId' -Value "$cmResult")
+                                }
+                                # Same for the Lenovo Latest Drivers manifest (no-op for SCCM-pack Lenovo builds).
+                                if ($oem -eq 'Lenovo') {
+                                    $lnvRefKey = Get-DATLenovoLatestManifestKey -Model $modelName -OSVersion $windowsVersion -Build $windowsBuild -Architecture $arch
+                                    [void](Update-DATLenovoLatestManifestReference -Key $lnvRefKey -Field 'configMgrPackageId' -Value "$cmResult")
                                 }
 
                                 # Telemetry: driver report with WIM hash (before cleanup). The hash
@@ -5026,8 +5248,8 @@ function Start-DATModelProcessing {
                                     if ($null -ne $deployReg.DeployAllDevices -and $deployReg.DeployAllDevices -eq 1 -and
                                         ($null -eq $deployReg.AutoAssignmentFilter -or $deployReg.AutoAssignmentFilter -ne 1)) {
                                         try {
-                                            $targetGroupId = if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupId)) { $deployReg.DeployTargetGroupId } else { 'adadadad-808e-44e2-905a-0b7873a8a531' }
-                                            $targetGroupName = if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupName)) { $deployReg.DeployTargetGroupName } else { 'All Devices' }
+                                            $targetGroupId = if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupId)) { @($deployReg.DeployTargetGroupId -split ';;' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) } else { @('adadadad-808e-44e2-905a-0b7873a8a531') }
+                                            $targetGroupName = if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupName)) { ($deployReg.DeployTargetGroupName -split ';;') -join ', ' } else { 'All Devices' }
                                             Set-DATRegistryValue -Name "RunningMode" -Value "Deploying" -Type String
                                             Set-DATRegistryValue -Name "RunningMessage" -Value "Deploying BIOS to ${targetGroupName}: $oem $modelName" -Type String
                                             Set-DATIntuneAppAssignment -AppId $biosIntuneResult.AppId -GroupId $targetGroupId -Intent 'Required' -IMENotifications $imeNotifications
@@ -5056,7 +5278,7 @@ function Start-DATModelProcessing {
                                                 $filterParams['Model'] = $modelName
                                                 if (-not [string]::IsNullOrEmpty($baseboards)) { $filterParams['Baseboards'] = $baseboards }
                                             }
-                                            if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupId)) { $filterParams['TargetGroupId'] = $deployReg.DeployTargetGroupId }
+                                            if (-not [string]::IsNullOrEmpty($deployReg.DeployTargetGroupId)) { $filterParams['TargetGroupId'] = @($deployReg.DeployTargetGroupId -split ';;' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
                                             Invoke-DATAutoAssignmentFilter @filterParams
                                             Write-DATLogEntry -Value "[Intune] Auto-assignment filter applied for BIOS package: $oem $modelName ($filterMode)" -Severity 1
                                         } catch {
@@ -6146,6 +6368,979 @@ function Test-DATHPCMSLReady {
     return $result
 }
 
+function Get-DATLatestDriverConcurrency {
+    <#
+    .SYNOPSIS
+        Returns the configured "Concurrent Driver Downloads" count (1-8, default 2) shared by the
+        Dell, HP and Lenovo "Latest Drivers" builds. Reads the 'HPConcurrentDownloads' registry value.
+    #>
+    [CmdletBinding()]
+    [OutputType([int])]
+    param()
+    $n = 2
+    try {
+        $v = (Get-ItemProperty -Path $global:RegPath -Name 'HPConcurrentDownloads' -ErrorAction SilentlyContinue).HPConcurrentDownloads
+        if ($null -ne $v) { $p = 0; if ([int]::TryParse("$v", [ref]$p) -and $p -ge 1 -and $p -le 8) { $n = $p } }
+    } catch { }
+    return $n
+}
+
+function Invoke-DATConcurrentDriverDownload {
+    <#
+    .SYNOPSIS
+        Downloads a set of individual driver files, in parallel when the user's "Concurrent Driver
+        Downloads" setting is above 1. Used by the Dell and Lenovo "Latest Drivers" builds (the twin
+        of the HP SoftPaq worker pool). Returns the file names that landed on disk.
+    .DESCRIPTION
+        Concurrency spawns up to MaxConcurrency system curl.exe processes (Microsoft-signed, present
+        on Windows 10 1803+), one per file, and computes progress from bytes on disk so the shared
+        progress registry keys have a single writer. Honours user abort (kills active curls), then
+        retries any first-pass failures sequentially through the fully validated
+        Invoke-DATContentDownload path (HTTPS enforcement, curl pinning, resume). Unrecoverable
+        failures are recorded via Add-DATDriverDownloadFailure. Falls back to a fully sequential
+        download when MaxConcurrency is 1 or system curl is unavailable, preserving existing behaviour.
+    .PARAMETER Items
+        Objects each exposing .Url (https), .FileName and .Name (display name for logs/failures).
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param (
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Items,
+        [Parameter(Mandatory)][string]$DestinationDirectory,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OEM,
+        [AllowEmptyString()][string]$Model = '',
+        [int]$MaxConcurrency = 1
+    )
+
+    if (-not (Test-Path -LiteralPath $DestinationDirectory)) {
+        New-Item -Path $DestinationDirectory -ItemType Directory -Force | Out-Null
+    }
+
+    $list = @($Items | Where-Object { $_ -and $_.Url -and $_.FileName })
+    $total = $list.Count
+    if ($total -eq 0) { return @() }
+
+    $systemCurl = Join-Path $env:SystemRoot 'System32\curl.exe'
+    $useConcurrent = ($MaxConcurrency -gt 1) -and (Test-Path -LiteralPath $systemCurl)
+
+    if (-not $useConcurrent) {
+        # Sequential fallback -- full validation/resume via Invoke-DATContentDownload (concurrency 1
+        # or no system curl). Preserves the original per-driver progress message and behaviour.
+        $i = 0
+        foreach ($it in $list) {
+            $abortReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
+            if ($abortReg.RunningState -eq 'Aborted') { throw "$OEM download aborted by user" }
+            $i++
+            Set-DATRegistryValue -Name "RunningMessage" -Value "Downloading $OEM driver $i of ${total}: $($it.Name)" -Type String
+            Set-DATRegistryValue -Name "BytesTransferred" -Value "$i" -Type String
+            try {
+                Invoke-DATContentDownload -DownloadURL $it.Url -DownloadDestination $DestinationDirectory
+            } catch {
+                Write-DATLogEntry -Value "[$OEM] Download failed for $($it.FileName): $($_.Exception.Message) -- skipping" -Severity 3
+                Add-DATDriverDownloadFailure -OEM $OEM -Model $Model -Driver "$($it.Name)" -Reason "Download failed: $($_.Exception.Message)"
+            }
+        }
+    } else {
+        Write-DATLogEntry -Value "[$OEM] Downloading $total drivers ($MaxConcurrency concurrent)..." -Severity 1
+
+        # Resolve the proxy config (credentials via a temp config file, never on the command line)
+        # and the curl window mode ONCE, then share across all workers.
+        $proxyCfg = $null
+        try { $proxyCfg = New-DATCurlProxyConfigFile } catch { $proxyCfg = $null }
+        $proxyArgs = ''
+        try { $proxyArgs = Get-DATCurlProxyArgs } catch { $proxyArgs = '' }
+        $curlRunMode = (Get-ItemProperty -Path $global:RegPath -Name 'CurlRunMode' -ErrorAction SilentlyContinue).CurlRunMode
+        $winStyle = if ($curlRunMode -eq 'Show Window') { 'Normal' } else { 'Hidden' }
+
+        $queue = [System.Collections.Generic.Queue[object]]::new()
+        foreach ($it in $list) { $queue.Enqueue($it) }
+        $activeProcs = @{}    # FileName -> @{ Proc; Item }
+        $failedItems = New-Object System.Collections.Generic.List[object]
+        $startTime = Get-Date
+
+        try {
+            while ($queue.Count -gt 0 -or $activeProcs.Count -gt 0) {
+                $abortReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
+                if ($abortReg.RunningState -eq 'Aborted') { throw "$OEM download aborted by user" }
+
+                # Fill slots up to the concurrency limit.
+                while ($activeProcs.Count -lt $MaxConcurrency -and $queue.Count -gt 0) {
+                    $it = $queue.Dequeue()
+                    $u = $null
+                    if (-not ([System.Uri]::TryCreate([string]$it.Url, [System.UriKind]::Absolute, [ref]$u)) -or $u.Scheme -ne 'https') {
+                        Write-DATLogEntry -Value "[$OEM] Rejected non-HTTPS driver URL for $($it.FileName): $($it.Url)" -Severity 3
+                        Add-DATDriverDownloadFailure -OEM $OEM -Model $Model -Driver "$($it.Name)" -Reason 'Download URL is not HTTPS'
+                        continue
+                    }
+                    $outFile = Join-Path $DestinationDirectory $it.FileName
+                    if (Test-Path -LiteralPath $outFile) { Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue }
+                    $argList = "--location --proto =https --max-redirs 5 --output `"$outFile`" --url `"$($it.Url)`" --connect-timeout 30 --retry 10 --retry-delay 60 --retry-max-time 600 --retry-connrefused $proxyArgs"
+                    if ($proxyCfg) { $argList = "--config `"$proxyCfg`" $argList" }
+                    $proc = Start-Process -FilePath $systemCurl -ArgumentList $argList -WindowStyle $winStyle -PassThru
+                    $activeProcs[$it.FileName] = @{ Proc = $proc; Item = $it }
+                    Write-DATLogEntry -Value "[$OEM] Started download: $($it.Name) (PID $($proc.Id))" -Severity 1
+                }
+
+                # Reap completed processes.
+                $finishedNames = @($activeProcs.Keys | Where-Object { $activeProcs[$_].Proc.HasExited })
+                foreach ($fn in $finishedNames) {
+                    $entry = $activeProcs[$fn]; $activeProcs.Remove($fn)
+                    $outFile = Join-Path $DestinationDirectory $fn
+                    $sizeOk = (Test-Path -LiteralPath $outFile) -and ((Get-Item -LiteralPath $outFile -ErrorAction SilentlyContinue).Length -gt 0)
+                    if ($entry.Proc.ExitCode -eq 0 -and $sizeOk) {
+                        Write-DATLogEntry -Value "[$OEM] Download completed: $($entry.Item.Name)" -Severity 1
+                    } else {
+                        Write-DATLogEntry -Value "[$OEM] Download failed (curl exit $($entry.Proc.ExitCode)): $($entry.Item.Name) -- will retry sequentially" -Severity 2
+                        [void]$failedItems.Add($entry.Item)
+                        if (Test-Path -LiteralPath $outFile) { Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue }
+                    }
+                }
+
+                # Progress from disk (single writer).
+                $doneCount = $total - $queue.Count - $activeProcs.Count
+                $bytes = (@(Get-ChildItem -Path $DestinationDirectory -File -ErrorAction SilentlyContinue) | Measure-Object -Property Length -Sum).Sum
+                if ($null -eq $bytes) { $bytes = [long]0 }
+                $mb = [math]::Round($bytes / 1MB, 2)
+                Set-DATRegistryValue -Name "BytesTransferred" -Value "$doneCount" -Type String
+                Set-DATRegistryValue -Name "DownloadSize" -Value "$mb MB" -Type String
+                $elapsed = ((Get-Date) - $startTime).TotalSeconds
+                if ($elapsed -gt 0 -and $mb -gt 0) {
+                    Set-DATRegistryValue -Name "DownloadSpeed" -Value "$([math]::Round($mb / $elapsed, 2)) MB/s" -Type String
+                }
+                Set-DATRegistryValue -Name "RunningMessage" -Value "Downloading $OEM drivers: $doneCount of $total ($($activeProcs.Count) active) -- $mb MB" -Type String
+
+                Start-Sleep -Seconds 2
+            }
+        } finally {
+            foreach ($fn in @($activeProcs.Keys)) {
+                $p = $activeProcs[$fn].Proc
+                if (-not $p.HasExited) {
+                    try { $p.Kill() } catch { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+                    Write-DATLogEntry -Value "[$OEM] Killed download process (PID $($p.Id)) on abort/error" -Severity 2
+                }
+            }
+            if ($proxyCfg -and (Test-Path -LiteralPath $proxyCfg)) { Remove-Item -LiteralPath $proxyCfg -Force -ErrorAction SilentlyContinue }
+        }
+
+        # Retry first-pass failures sequentially through the fully validated path (resume-capable).
+        if ($failedItems.Count -gt 0) {
+            Write-DATLogEntry -Value "[$OEM] Retrying $($failedItems.Count) failed download(s) sequentially..." -Severity 2
+            foreach ($it in $failedItems) {
+                $abortReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
+                if ($abortReg.RunningState -eq 'Aborted') { throw "$OEM download aborted by user" }
+                Set-DATRegistryValue -Name "RunningMessage" -Value "Retrying $OEM driver: $($it.Name)" -Type String
+                try {
+                    Invoke-DATContentDownload -DownloadURL $it.Url -DownloadDestination $DestinationDirectory
+                } catch {
+                    Write-DATLogEntry -Value "[$OEM] Retry failed for $($it.FileName): $($_.Exception.Message)" -Severity 3
+                }
+                if (-not (Test-Path -LiteralPath (Join-Path $DestinationDirectory $it.FileName))) {
+                    Add-DATDriverDownloadFailure -OEM $OEM -Model $Model -Driver "$($it.Name)" -Reason 'Download failed after concurrent and sequential retry'
+                }
+            }
+        }
+    }
+
+    # Return the file names that are present on disk.
+    $present = New-Object System.Collections.Generic.List[string]
+    foreach ($it in $list) {
+        if (Test-Path -LiteralPath (Join-Path $DestinationDirectory $it.FileName)) { [void]$present.Add([string]$it.FileName) }
+    }
+    return $present.ToArray()
+}
+
+function Invoke-DATDellLatestDriverPackage {
+    <#
+    .SYNOPSIS
+        Builds a Dell "Latest Drivers" package from the Dell Command Update (DCU) System Update
+        catalog (CatalogIndexPC.cab -> per-model slice). Resolves the newest individual driver
+        DUPs for the model/OS/arch, downloads and verifies them, extracts each to raw drivers,
+        then packages via the common WIM pipeline. Mirrors the HP "Latest Drivers" (SoftPaqs) path.
+    .DESCRIPTION
+        Reuses Invoke-DATContentDownload (HTTPS, cached, proxy-aware), Get-DATVerificationHash,
+        New-DATDriverManifest (embedded WIM manifest) and Invoke-DATDriverFilePackaging. A DUP-set
+        fingerprint drives skip-if-unchanged via the Dell Latest Drivers manifest.
+    .OUTPUTS
+        The build version string. Sets $global:DATSoftPaqBuildSkipped = $true when the DUP set is
+        unchanged and the existing package is retained.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)][string]$Model,
+        [AllowEmptyString()][string]$SystemSKU,
+        [AllowEmptyString()][string]$WindowsVersion,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$WindowsBuild,
+        [string]$Architecture = 'x64',
+        [string]$DownloadDestination,
+        [string]$PackageDestination,
+        [string]$TempDirectory,
+        [string]$RunningMode = 'Download Only',
+        [string]$CustomDriverPath,
+        [bool]$ExtractDownloadOnlyContent = $true,
+        [xml]$OEMLinks,
+        [switch]$ForceRebuild,
+        [switch]$VerifyRemoteExistence,
+        [string[]]$ExistingPackageIds = @()
+    )
+
+    $OEM = 'Dell'
+    Set-DATRegistryValue -Name "RunningMessage" -Value "Resolving latest Dell drivers for $Model..." -Type String
+    Write-DATLogEntry -Value "[Dell] Latest Drivers mode (DCU catalog) for $Model (SKU: $SystemSKU, $WindowsVersion $WindowsBuild $Architecture)" -Severity 1
+
+    # -- Nested helpers (version-tolerant DCU schema access) --
+    function Get-DcuAttr { param($Node, [string[]]$Names)
+        foreach ($n in $Names) { $v = $Node.$n; if ($null -ne $v -and "$v".Trim() -ne '') { return "$v".Trim() } }
+        return $null
+    }
+    function Get-DcuDisplay { param($Node)
+        if ($null -eq $Node) { return $null }
+        $disp = $Node.Display
+        if ($disp) {
+            $first = @($disp) | Select-Object -First 1
+            $text = if ($first -is [string]) { $first } else { $first.InnerText }
+            if ($text -and "$text".Trim() -ne '') { return "$text".Trim() }
+        }
+        if ($Node.InnerText -and "$($Node.InnerText)".Trim() -ne '') { return "$($Node.InnerText)".Trim() }
+        return $null
+    }
+    function Get-DcuHash { param($Component)
+        $hashes = @($Component.Cryptography.Hash)
+        foreach ($alg in 'SHA256', 'SHA1', 'MD5') {
+            $node = $hashes | Where-Object { (Get-DcuAttr -Node $_ -Names @('algorithm', 'Algorithm')) -ieq $alg } | Select-Object -First 1
+            if ($node) {
+                $val = if ($node -is [string]) { $node } else { $node.InnerText }
+                if ($val -and "$val".Trim() -ne '') { return [PSCustomObject]@{ Algorithm = $alg; Value = "$val".Trim() } }
+            }
+        }
+        return $null
+    }
+    # Supersession-collapse key: sorted set of alphabetic-only words. Dell revises a driver's name
+    # by changing the chipset model list (which contains digits) while keeping the vendor + function
+    # words, so digit-bearing tokens are dropped and the remaining descriptor identifies the driver.
+    $sigStopWords = @('and', 'the', 'of', 'for', 'with', 'to', 'plus', 'uwd', 'dch', 'a', 'an')
+    function Get-DcuNameSignature { param([string]$Name)
+        if ([string]::IsNullOrWhiteSpace($Name)) { return '' }
+        $toks = $Name -split '[\s/,()]+' |
+            ForEach-Object { $_.Trim().ToLowerInvariant() } |
+            Where-Object { $_ -and ($_ -notmatch '\d') -and ($sigStopWords -notcontains $_) }
+        return (($toks | Sort-Object -Unique) -join ' ')
+    }
+
+    # DCU osCode prefixes (Dell-specific; the arch comes from the separate osArch attribute).
+    switch -Wildcard ($WindowsVersion) {
+        '*Windows 11*' { $osPrefixes = @('W11', 'W21', 'WT') }
+        '*Windows 10*' { $osPrefixes = @('W10', 'WT') }
+        default        { $osPrefixes = @('W11', 'W21', 'WT') }
+    }
+
+    $DellBaseURL = ($OEMLinks.OEM.Manufacturer | Where-Object { $_.Name -match 'Dell' }).Link |
+        Where-Object { $_.Type -eq 'DownloadBase' } | Select-Object -ExpandProperty URL -First 1
+    if ([string]::IsNullOrEmpty($DellBaseURL)) { $DellBaseURL = 'https://downloads.dell.com' }
+    $DellBaseURL = $DellBaseURL.TrimEnd('/')
+
+    # Dell Latest temp dirs: Temp\DellLatest\Model\OS\Build\{Catalog,DUPs,Staging}
+    $osTag = ($WindowsVersion -replace '\s', '')
+    $dellRoot   = Join-Path $TempDirectory "DellLatest\$Model\$osTag\$WindowsBuild"
+    $catalogDir = Join-Path $dellRoot 'Catalog'
+    $dupDir     = Join-Path $dellRoot 'DUPs'
+    $stagingDir = Join-Path $dellRoot 'Staging'
+    foreach ($d in @($dellRoot, $catalogDir, $dupDir, $stagingDir)) {
+        if (-not (Test-Path $d)) { New-Item -Path $d -ItemType Directory -Force | Out-Null }
+    }
+    # Start staging empty so a rebuild never mixes drivers from a prior DUP set.
+    Get-ChildItem -Path $stagingDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+    $systemSKUs = @($SystemSKU -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+    # -- Cadence gate: skip before any catalog download when within the update cadence window --
+    $manifestKeyEarly = Get-DATDellLatestManifestKey -Model $Model -OSVersion $WindowsVersion -Build $WindowsBuild -Architecture $Architecture
+    $entryEarly = (Get-DATDellLatestManifest)[$manifestKeyEarly]
+    $cadence = Get-DATLatestDriverCadence
+    if (-not $ForceRebuild -and $cadence -ne 'Off' -and $null -ne $entryEarly -and
+        -not (Test-DATLatestCadenceElapsed -LastActivity "$($entryEarly.lastChecked)" -Cadence $cadence)) {
+        $present = Test-DATLatestPackagePresent -Entry $entryEarly -OEM $OEM -Model $Model -WindowsVersion $WindowsVersion `
+            -WindowsBuild $WindowsBuild -RunningMode $RunningMode -PackageDestination $PackageDestination `
+            -DownloadDestination $DownloadDestination -VerifyRemoteExistence:$VerifyRemoteExistence -ExistingPackageIds $ExistingPackageIds
+        if ($present) {
+            $nextDue = try { ([datetime]$entryEarly.lastChecked) } catch { Get-Date }
+            $nextDue = switch ($cadence) { 'Daily' { $nextDue.AddDays(1) } 'Weekly' { $nextDue.AddDays(7) } 'Monthly' { $nextDue.AddMonths(1) } default { $nextDue } }
+            Write-DATLogEntry -Value "[Dell] Within $cadence update cadence for $Model -- retaining existing package (next eligible $($nextDue.ToString('yyyy-MM-dd')))" -Severity 1 -UpdateUI
+            $global:DATSoftPaqBuildSkipped = $true
+            Set-DATRegistryValue -Name "RunningMode" -Value "Download Completed" -Type String
+            return "$($entryEarly.version)"
+        }
+    }
+
+    # -- 1. Download + expand the catalog index (fetched fresh each build for currency) --
+    $proxyParams = Get-DATWebRequestProxy
+    $indexUrl = "$DellBaseURL/catalog/CatalogIndexPC.cab"
+    $indexCab = Join-Path $catalogDir 'CatalogIndexPC.cab'
+    $indexXml = Join-Path $catalogDir 'CatalogIndexPC.xml'
+    Set-DATRegistryValue -Name "RunningMessage" -Value "Downloading Dell DCU catalog index..." -Type String
+    Invoke-WebRequest -Uri $indexUrl -OutFile $indexCab -UseBasicParsing -TimeoutSec 120 @proxyParams
+    & expand.exe "$indexCab" -F:* "$catalogDir" -R 2>&1 | Out-Null
+    if (-not (Test-Path $indexXml)) { throw "Dell DCU catalog index not found after extraction" }
+
+    [xml]$indexDoc = Get-Content -Path $indexXml -Raw
+    $groupManifests = @($indexDoc.ManifestIndex.GroupManifest)
+    if ($groupManifests.Count -eq 0) { $groupManifests = @($indexDoc.SelectNodes('//*[local-name()="GroupManifest"]')) }
+    Write-DATLogEntry -Value "[Dell] DCU index contains $($groupManifests.Count) group manifests" -Severity 1
+
+    # -- 2. Match the model slice by SystemID (SystemSKU) or model name --
+    $matchedGroup = $null
+    $matchedVia = $null
+    foreach ($group in $groupManifests) {
+        $models = @($group.SupportedSystems.Brand.Model)
+        if ($models.Count -eq 0) { $models = @($group.SelectNodes('.//*[local-name()="Model"]')) }
+        foreach ($m in $models) {
+            $mId = Get-DcuAttr -Node $m -Names @('systemID', 'SystemID', 'systemId')
+            $mName = Get-DcuDisplay -Node $m
+            $idMatch = $mId -and ($systemSKUs -contains $mId)
+            $nameMatch = $mName -and ($mName -ieq $Model -or $mName -like "*$Model*")
+            if ($idMatch -or ($nameMatch -and $systemSKUs.Count -eq 0)) {
+                $matchedGroup = $group
+                $matchedVia = if ($idMatch) { "SystemID $mId" } else { "name '$mName'" }
+                break
+            }
+        }
+        if ($matchedGroup) { break }
+    }
+    if (-not $matchedGroup) {
+        throw "No Dell DCU model manifest matched $Model (SKU: $SystemSKU). Verify the SystemSKU against live hardware."
+    }
+    Write-DATLogEntry -Value "[Dell] Matched DCU model slice via $matchedVia" -Severity 1
+
+    $slicePath = Get-DcuAttr -Node $matchedGroup.ManifestInformation -Names @('path', 'Path')
+    if (-not $slicePath) { throw "Dell DCU model manifest has no slice path" }
+    $slicePath = $slicePath -replace '\\', '/'
+    $sliceUrl = "$DellBaseURL/$($slicePath.TrimStart('/'))"
+    $sliceCabName = ($slicePath | Split-Path -Leaf)
+    $sliceCab = Join-Path $catalogDir $sliceCabName
+    $sliceXml = Join-Path $catalogDir ([IO.Path]::ChangeExtension($sliceCabName, 'xml'))
+    Set-DATRegistryValue -Name "RunningMessage" -Value "Downloading Dell DCU model catalog..." -Type String
+    Invoke-WebRequest -Uri $sliceUrl -OutFile $sliceCab -UseBasicParsing -TimeoutSec 120 @proxyParams
+    & expand.exe "$sliceCab" -F:* "$catalogDir" -R 2>&1 | Out-Null
+    if (-not (Test-Path $sliceXml)) {
+        $stem = [IO.Path]::GetFileNameWithoutExtension($sliceCabName)
+        $sliceXml = Get-ChildItem -Path $catalogDir -Filter "$stem*.xml" |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $sliceXml -or -not (Test-Path $sliceXml)) { throw "Dell DCU model slice XML not found after extraction" }
+
+    [xml]$sliceDoc = Get-Content -Path $sliceXml -Raw
+    $components = @($sliceDoc.Manifest.SoftwareComponent)
+    if ($components.Count -eq 0) { $components = @($sliceDoc.SelectNodes('//*[local-name()="SoftwareComponent"]')) }
+    Write-DATLogEntry -Value "[Dell] DCU model catalog contains $($components.Count) software components" -Severity 1
+
+    # -- 3. Filter to applicable driver DUPs (componentType DRVR, matching OS/arch) --
+    $applicable = foreach ($c in $components) {
+        $ctype = Get-DcuAttr -Node $c.ComponentType -Names @('value', 'Value')
+        if (-not $ctype) { $ctype = Get-DcuAttr -Node $c -Names @('componentType', 'ComponentType') }
+        if (-not $ctype -or $ctype.ToUpperInvariant() -ne 'DRVR') { continue }
+
+        $osNodes = @($c.SupportedOperatingSystems.OperatingSystem)
+        if ($osNodes.Count -gt 0) {
+            $osOk = $false
+            foreach ($os in $osNodes) {
+                $osArchVal = Get-DcuAttr -Node $os -Names @('osArch', 'OsArch')
+                if ($osArchVal -and ($osArchVal -ine $Architecture)) { continue }
+                $osCodeVal = Get-DcuAttr -Node $os -Names @('osCode', 'OsCode')
+                if (-not $osCodeVal) { $osOk = $true; break }
+                foreach ($p in $osPrefixes) { if ($osCodeVal -like "$p*") { $osOk = $true; break } }
+                if ($osOk) { break }
+            }
+            if (-not $osOk) { continue }
+        }
+
+        if ($systemSKUs.Count -gt 0) {
+            $compSysIds = @($c.SupportedSystems.Brand.Model | ForEach-Object { Get-DcuAttr -Node $_ -Names @('systemID', 'SystemID', 'systemId') }) | Where-Object { $_ }
+            if ($compSysIds.Count -gt 0 -and -not ($compSysIds | Where-Object { $systemSKUs -contains $_ })) { continue }
+        }
+
+        $path = Get-DcuAttr -Node $c -Names @('path', 'Path')
+        if (-not $path) { continue }
+
+        $nameText = Get-DcuDisplay -Node $c.Name
+        if (-not $nameText) { $nameText = Get-DcuAttr -Node $c -Names @('name', 'Name') }
+        $catText = Get-DcuDisplay -Node $c.Category
+        if (-not $catText) { $catText = Get-DcuAttr -Node $c.Category -Names @('value', 'Value') }
+
+        $releaseDateRaw = Get-DcuAttr -Node $c -Names @('releaseDate', 'ReleaseDate', 'dateTime')
+        $releaseSort = [datetime]::MinValue
+        if ($releaseDateRaw) { [void][datetime]::TryParse($releaseDateRaw, [ref]$releaseSort) }
+        $critText = $null
+        if ($c.Criticality) {
+            $critText = Get-DcuDisplay -Node $c.Criticality
+            if (-not $critText) {
+                $critVal = Get-DcuAttr -Node $c.Criticality -Names @('value', 'Value')
+                $critText = switch ($critVal) { '1' { 'Recommended' } '2' { 'Urgent' } '3' { 'Optional' } default { $critVal } }
+            }
+        }
+        $catHash = Get-DcuHash -Component $c
+
+        [PSCustomObject]@{
+            Type          = 'DRVR'
+            Category      = $catText
+            Name          = $nameText
+            Signature     = Get-DcuNameSignature -Name $nameText
+            Version       = Get-DcuAttr -Node $c -Names @('dellVersion', 'vendorVersion', 'version')
+            ReleaseDate   = $releaseDateRaw
+            ReleaseSort   = $releaseSort
+            Criticality   = $critText
+            Identifier    = Get-DcuAttr -Node $c -Names @('releaseID', 'packageID', 'identifier')
+            Hash          = if ($catHash) { $catHash.Value } else { $null }
+            HashAlgorithm = if ($catHash) { $catHash.Algorithm } else { $null }
+            Path          = ($path -replace '\\', '/')
+            FileName      = (($path -replace '\\', '/') | Split-Path -Leaf)
+        }
+    }
+    $applicable = @($applicable)
+    if ($applicable.Count -eq 0) {
+        throw "No applicable Dell driver DUPs found for $Model ($WindowsVersion $Architecture) in the DCU catalog."
+    }
+
+    # Collapse to the newest DUP per driver. Dell publishes many superseded revisions of the same
+    # driver under slightly different names (the chipset model list changes); grouping by the
+    # digit-free name signature within a category collapses them so only the newest version ships.
+    $selected = $applicable |
+        Group-Object -Property { "$($_.Category)|$($_.Signature)" } |
+        ForEach-Object { $_.Group | Sort-Object -Property ReleaseSort, Version -Descending | Select-Object -First 1 } |
+        Sort-Object Category, Name
+    $selected = @($selected)
+    Write-DATLogEntry -Value "[Dell] Selected $($selected.Count) driver component(s) (newest per driver, collapsed from $($applicable.Count) applicable DUPs)" -Severity 1
+
+    # -- 4. Fingerprint the DUP set; skip rebuild when unchanged --
+    $manifestKey = Get-DATDellLatestManifestKey -Model $Model -OSVersion $WindowsVersion -Build $WindowsBuild -Architecture $Architecture
+    $identifiers = @($selected | ForEach-Object { if ($_.Identifier) { $_.Identifier } else { $_.FileName } })
+    $fingerprint = Get-DATDellDUPFingerprint -Identifiers $identifiers
+    $manifest = Get-DATDellLatestManifest
+    $entry = $manifest[$manifestKey]
+    $listUnchanged = ($null -ne $entry) -and (-not [string]::IsNullOrEmpty($fingerprint)) -and ("$($entry.fingerprint)" -eq $fingerprint)
+
+    if ($listUnchanged) {
+        $packageStillExists = $true
+        $missingReason = ''
+        switch ($RunningMode) {
+            'Intune' {
+                if ($VerifyRemoteExistence) {
+                    $storedRef = "$($entry.intuneAppId)"
+                    if ([string]::IsNullOrEmpty($storedRef)) { $packageStillExists = $false; $missingReason = 'no Intune application id was recorded' }
+                    elseif ($ExistingPackageIds -notcontains $storedRef) { $packageStillExists = $false; $missingReason = "Intune application $storedRef no longer exists" }
+                }
+            }
+            'Configuration Manager' {
+                if ($VerifyRemoteExistence) {
+                    $storedRef = "$($entry.configMgrPackageId)"
+                    if ([string]::IsNullOrEmpty($storedRef)) { $packageStillExists = $false; $missingReason = 'no ConfigMgr package was recorded' }
+                    elseif ($ExistingPackageIds -notcontains $storedRef) { $packageStillExists = $false; $missingReason = "ConfigMgr package $storedRef no longer exists" }
+                }
+            }
+            'WIM Package Only' {
+                $wimFinalPath = Join-Path $PackageDestination "$OEM\$Model\$WindowsVersion $WindowsBuild\DriverPackage.wim"
+                if (-not (Test-Path -LiteralPath $wimFinalPath)) { $packageStillExists = $false; $missingReason = 'the WIM package is missing' }
+            }
+            'Download Only' {
+                if (-not ((Test-Path -LiteralPath $DownloadDestination) -and (@(Get-ChildItem -LiteralPath $DownloadDestination -File -ErrorAction SilentlyContinue).Count -gt 0))) {
+                    $packageStillExists = $false; $missingReason = 'the downloaded files are missing'
+                }
+            }
+        }
+
+        if ($ForceRebuild) {
+            Write-DATLogEntry -Value "[Dell] Latest driver set unchanged for $Model but Force Update is set -- rebuilding" -Severity 1
+        } elseif (-not $packageStillExists) {
+            Write-DATLogEntry -Value "[Dell] Latest driver set unchanged for $Model but $missingReason -- rebuilding" -Severity 1
+        } else {
+            $stableVersion = "$($entry.version)"
+            $shortFp = if (-not [string]::IsNullOrEmpty($fingerprint)) { $fingerprint.Substring(0, [Math]::Min(8, $fingerprint.Length)) } else { 'n/a' }
+            Write-DATLogEntry -Value "[Dell] Latest driver set unchanged since last build for $Model ($($selected.Count) components, v$stableVersion, fingerprint $shortFp) -- skipping rebuild" -Severity 1 -UpdateUI
+            try {
+                $entry | Add-Member -NotePropertyName lastVerified -NotePropertyValue (Get-Date -Format 'o') -Force
+                $entry | Add-Member -NotePropertyName lastChecked  -NotePropertyValue (Get-Date -Format 'o') -Force
+                $manifest[$manifestKey] = $entry
+                [void](Save-DATDellLatestManifest -Manifest $manifest)
+            } catch {
+                Write-DATLogEntry -Value "[Dell] Failed to update Latest Drivers manifest verification time: $($_.Exception.Message)" -Severity 2
+            }
+            $global:DATSoftPaqBuildSkipped = $true
+            Set-DATRegistryValue -Name "RunningMode" -Value "Download Completed" -Type String
+            return $stableVersion
+        }
+    }
+
+    $buildVersion = if ($listUnchanged) { "$($entry.version)" } else { (Get-Date -Format 'ddMMyyyy') }
+
+    # -- 5. Download, verify and extract each selected DUP --
+    $total = $selected.Count
+    # Report the extra individual driver downloads (this build fetches N DUPs, not one pack) so the
+    # "Downloads Required" tile counts them: base estimate already counts 1 driver, add the rest.
+    if ($total -gt 1) {
+        $prevExtra = 0
+        try { $prevExtra = [int](Get-ItemProperty -Path $global:RegPath -Name 'LatestDownloadsExtra' -ErrorAction SilentlyContinue).LatestDownloadsExtra } catch { $prevExtra = 0 }
+        Set-DATRegistryValue -Name "LatestDownloadsExtra" -Value "$($prevExtra + ($total - 1))" -Type String
+    }
+    $dellComponents = New-Object System.Collections.Generic.List[object]
+    Set-DATRegistryValue -Name "DownloadBytes" -Value "$total" -Type String
+    Set-DATRegistryValue -Name "BytesTransferred" -Value "0" -Type String
+    Set-DATRegistryValue -Name "RunningMode" -Value "Download" -Type String
+    # Download all selected DUPs -- concurrently when the user's Concurrent Driver Downloads setting
+    # is above 1, otherwise sequentially. Returns the file names that landed on disk; per-driver
+    # download failures are recorded inside the helper.
+    $dellDownloadItems = @($selected | ForEach-Object { [pscustomobject]@{ Url = "$DellBaseURL/$($_.Path.TrimStart('/'))"; FileName = $_.FileName; Name = $_.Name } })
+    $downloadedFileNames = Invoke-DATConcurrentDriverDownload -Items $dellDownloadItems -DestinationDirectory $dupDir `
+        -OEM 'Dell' -Model $Model -MaxConcurrency (Get-DATLatestDriverConcurrency)
+
+    foreach ($dup in $selected) {
+        $abortReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
+        if ($abortReg.RunningState -eq 'Aborted') { throw "Dell download aborted by user" }
+
+        $dupFile = Join-Path $dupDir $dup.FileName
+        if ($downloadedFileNames -notcontains $dup.FileName -or -not (Test-Path $dupFile)) {
+            # Failed to download (already recorded by the concurrent downloader) -- skip component.
+            continue
+        }
+
+        # Integrity: verify the catalog hash when available; DUPs are Authenticode-signed as a fallback.
+        if ($dup.Hash -and $dup.HashAlgorithm) {
+            $actual = Get-DATVerificationHash -FilePath $dupFile -Algorithm $dup.HashAlgorithm
+            if ($actual -and ($actual -ieq $dup.Hash)) {
+                Write-DATLogEntry -Value "[Dell] Hash verified ($($dup.HashAlgorithm)): $($dup.FileName)" -Severity 1
+            } elseif ($actual) {
+                Write-DATLogEntry -Value "[Dell] Hash mismatch ($($dup.HashAlgorithm)) for $($dup.FileName) -- expected $($dup.Hash), got $actual. Skipping component." -Severity 3
+                Add-DATDriverDownloadFailure -OEM 'Dell' -Model $Model -Driver "$($dup.Name)" -Reason "Hash mismatch ($($dup.HashAlgorithm)) -- file integrity check failed"
+                Remove-Item $dupFile -Force -ErrorAction SilentlyContinue
+                continue
+            }
+        }
+
+        # Extract the driver DUP to raw INF payloads (Dell DUP switches: /s /e=<folder>).
+        $outDir = Join-Path $stagingDir ([IO.Path]::GetFileNameWithoutExtension($dup.FileName))
+        if (-not (Test-Path $outDir)) { New-Item -Path $outDir -ItemType Directory -Force | Out-Null }
+        try {
+            $exProc = Start-Process -FilePath $dupFile -ArgumentList "/s", "/e=`"$outDir`"" -Wait -PassThru -WindowStyle Hidden
+            $infCount = @(Get-ChildItem -Path $outDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue).Count
+            if ($infCount -eq 0) {
+                Write-DATLogEntry -Value "[Dell] $($dup.FileName) extracted no INF files (exit $($exProc.ExitCode)) -- component may not be a driver DUP" -Severity 2
+            }
+        } catch {
+            Write-DATLogEntry -Value "[Dell] Extraction failed for $($dup.FileName): $($_.Exception.Message)" -Severity 3
+            Add-DATDriverDownloadFailure -OEM 'Dell' -Model $Model -Driver "$($dup.Name)" -Reason "Extraction failed: $($_.Exception.Message)"
+            continue
+        }
+
+        $dellComponents.Add([ordered]@{
+            id          = $dup.Identifier
+            name        = $dup.Name
+            version     = $dup.Version
+            category    = $dup.Category
+            releaseDate = $dup.ReleaseDate
+            criticality = $dup.Criticality
+            type        = 'DRVR'
+        })
+    }
+
+    $stagedFiles = @(Get-ChildItem -Path $stagingDir -Recurse -File -ErrorAction SilentlyContinue).Count
+    Write-DATLogEntry -Value "[Dell] Extraction complete: $stagedFiles driver files staged from $($dellComponents.Count) component(s)" -Severity 1
+    if ($stagedFiles -eq 0) {
+        throw "No Dell driver files were extracted from the DCU catalog for $Model"
+    }
+
+    # -- 6. Package via the common WIM pipeline (embeds DATDriverManifest.json) --
+    if ($RunningMode -ne "Download Only" -or $ExtractDownloadOnlyContent) {
+        $packageDest = if (-not [string]::IsNullOrEmpty($PackageDestination)) { $PackageDestination } else { $DownloadDestination }
+        $packagingPlatform = if ($RunningMode -eq 'WIM Package Only') { 'WIM Package Only' }
+                             elseif ($RunningMode -eq 'Configuration Manager (Offline)') { 'Configuration Manager' }
+                             else { $RunningMode }
+        Set-DATRegistryValue -Name "RunningMessage" -Value "Creating WIM package for Dell $Model..." -Type String
+        Set-DATRegistryValue -Name "RunningMode" -Value "Packaging" -Type String
+        Write-DATLogEntry -Value "[Dell] Creating WIM package from Latest Drivers staging directory..." -Severity 1
+
+        $null = Invoke-DATDriverFilePackaging -FilePath $stagingDir -OEM $OEM -Model $Model `
+            -OS $WindowsVersion -Destination $packageDest -Platform $packagingPlatform `
+            -CustomDriverPath $CustomDriverPath -DownloadOnlyExtractDestination $DownloadDestination `
+            -PackageVersion $buildVersion -Components $dellComponents.ToArray()
+    }
+
+    Set-DATRegistryValue -Name "RunningMode" -Value "Download Completed" -Type String
+    Write-DATLogEntry -Value "[Dell] Latest Drivers package process completed successfully" -Severity 1 -UpdateUI
+
+    # Persist the manifest so an unchanged DUP set skips rebuild next time.
+    try {
+        $manifestSave = Get-DATDellLatestManifest
+        $existingRef = $manifestSave[$manifestKey]
+        $manifestSave[$manifestKey] = [PSCustomObject]@{
+            systemSku          = "$SystemSKU"
+            componentIds       = @($identifiers | Sort-Object)
+            fingerprint        = $fingerprint
+            version            = $buildVersion
+            lastBuilt          = (Get-Date -Format 'o')
+            lastChecked        = (Get-Date -Format 'o')
+            lastVerified       = (Get-Date -Format 'o')
+            intuneAppId        = if ($existingRef) { "$($existingRef.intuneAppId)" } else { '' }
+            configMgrPackageId = if ($existingRef) { "$($existingRef.configMgrPackageId)" } else { '' }
+        }
+        [void](Save-DATDellLatestManifest -Manifest $manifestSave)
+        Write-DATLogEntry -Value "[Dell] Latest Drivers manifest updated for $Model (v$buildVersion, $($dellComponents.Count) components)" -Severity 1
+    } catch {
+        Write-DATLogEntry -Value "[Dell] Failed to update Latest Drivers manifest: $($_.Exception.Message)" -Severity 2
+    }
+
+    return $buildVersion
+}
+
+function Invoke-DATLenovoLatestDriverPackage {
+    <#
+    .SYNOPSIS
+        Builds a Lenovo "Latest Drivers" package from Lenovo's public per-model Model-XML update
+        catalog (https://download.lenovo.com/catalog/{MachineType}_win{ver}.xml). Resolves the newest
+        individual driver packages for the model/OS/build, downloads and verifies them, extracts each
+        to raw drivers, then packages via the common WIM pipeline. Twin of the Dell/HP Latest paths.
+    .DESCRIPTION
+        Reuses Invoke-DATContentDownload, Get-DATVerificationHash, New-DATDriverManifest and
+        Invoke-DATDriverFilePackaging. A package-set fingerprint drives change tracking and an
+        update-cadence gate throttles rebuilds -- both via the Lenovo Latest Drivers manifest.
+    .OUTPUTS
+        The build version string. Sets $global:DATSoftPaqBuildSkipped = $true when retained.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)][string]$Model,
+        [AllowEmptyString()][string]$SystemSKU,
+        [AllowEmptyString()][string]$WindowsVersion,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$WindowsBuild,
+        [string]$Architecture = 'x64',
+        [string]$DownloadDestination,
+        [string]$PackageDestination,
+        [string]$TempDirectory,
+        [string]$RunningMode = 'Download Only',
+        [string]$CustomDriverPath,
+        [bool]$ExtractDownloadOnlyContent = $true,
+        [xml]$OEMLinks,
+        [switch]$ForceRebuild,
+        [switch]$VerifyRemoteExistence,
+        [string[]]$ExistingPackageIds = @()
+    )
+
+    $OEM = 'Lenovo'
+    $LenovoBase = 'https://download.lenovo.com'
+    Set-DATRegistryValue -Name "RunningMessage" -Value "Resolving latest Lenovo drivers for $Model..." -Type String
+    Write-DATLogEntry -Value "[Lenovo] Latest Drivers mode (Model-XML catalog) for $Model (MT: $SystemSKU, $WindowsVersion $WindowsBuild $Architecture)" -Severity 1
+
+    # -- Nested helpers --
+    $sigStopWords = @('and', 'the', 'of', 'for', 'with', 'to', 'plus', 'uwd', 'dch', 'a', 'an', 'driver', 'gen')
+    function Get-LnvSignature { param([string]$Name)
+        if ([string]::IsNullOrWhiteSpace($Name)) { return '' }
+        $core = ($Name -split '\s-\s')[0]
+        $toks = $core -split '[\s/,()]+' | ForEach-Object { $_.Trim().ToLowerInvariant() } |
+            Where-Object { $_ -and ($_ -notmatch '\d') -and ($sigStopWords -notcontains $_) }
+        return (($toks | Sort-Object -Unique) -join ' ')
+    }
+    function ConvertTo-LnvVersion { param([string]$Version)
+        $v = $null
+        if ([version]::TryParse((($Version -replace '[^0-9.]', ' ').Trim() -split '\s+')[0], [ref]$v)) { return $v }
+        return ([version]'0.0')
+    }
+    # Package applies to a target build if it has no <_WindowsBuildVersion>, or any Version matches
+    # (trailing '^' = ">= build", 'v' = "<= build", bare = exact).
+    function Test-LnvBuildApplicable { param($DescRoot, [int]$TargetBuild)
+        if ($TargetBuild -le 0) { return $true }
+        $verNodes = $DescRoot.SelectNodes('.//*[local-name()="_WindowsBuildVersion"]/*[local-name()="Version"]')
+        if (-not $verNodes -or $verNodes.Count -eq 0) { return $true }
+        foreach ($vn in $verNodes) {
+            $raw = "$($vn.InnerText)".Trim(); if (-not $raw) { continue }
+            $op = if ($raw.EndsWith('^')) { '^' } elseif ($raw.EndsWith('v')) { 'v' } else { '' }
+            $baseNum = 0
+            if (-not [int]::TryParse(($raw -replace '[^\d]', ''), [ref]$baseNum)) { continue }
+            switch ($op) {
+                '^'     { if ($TargetBuild -ge $baseNum) { return $true } }
+                'v'     { if ($TargetBuild -le $baseNum) { return $true } }
+                default { if ($TargetBuild -eq $baseNum) { return $true } }
+            }
+        }
+        return $false
+    }
+
+    # Windows feature-update -> build number, for evaluating package <_WindowsBuildVersion> conditions.
+    $winBuildMap = @{
+        'Win11' = @{ '21H2' = 22000; '22H2' = 22621; '23H2' = 22631; '24H2' = 26100; '25H2' = 26200 }
+        'Win10' = @{ '20H2' = 19042; '21H1' = 19043; '21H2' = 19044; '22H2' = 19045 }
+    }
+    $osMajor = if ($WindowsVersion -match '10') { '10' } else { '11' }
+    $osKey = "Win$osMajor"
+    $targetBuildNum = 0
+    if ($WindowsBuild -and $winBuildMap[$osKey].ContainsKey($WindowsBuild)) { $targetBuildNum = $winBuildMap[$osKey][$WindowsBuild] }
+
+    # Categories that are NOT hardware drivers (excluded from a driver pack).
+    $nonDriverCategories = @('Software and Utilities', 'BIOS UEFI', 'Advanced Firmware')
+
+    # -- Cadence gate: skip before any catalog download when within the cadence window --
+    $manifestKey = Get-DATLenovoLatestManifestKey -Model $Model -OSVersion $WindowsVersion -Build $WindowsBuild -Architecture $Architecture
+    $manifest = Get-DATLenovoLatestManifest
+    $entry = $manifest[$manifestKey]
+    $cadence = Get-DATLatestDriverCadence
+    if (-not $ForceRebuild -and $cadence -ne 'Off' -and $null -ne $entry -and
+        -not (Test-DATLatestCadenceElapsed -LastActivity "$($entry.lastChecked)" -Cadence $cadence)) {
+        $present = Test-DATLatestPackagePresent -Entry $entry -OEM $OEM -Model $Model -WindowsVersion $WindowsVersion `
+            -WindowsBuild $WindowsBuild -RunningMode $RunningMode -PackageDestination $PackageDestination `
+            -DownloadDestination $DownloadDestination -VerifyRemoteExistence:$VerifyRemoteExistence -ExistingPackageIds $ExistingPackageIds
+        if ($present) {
+            $nextDue = try { ([datetime]$entry.lastChecked) } catch { Get-Date }
+            $nextDue = switch ($cadence) { 'Daily' { $nextDue.AddDays(1) } 'Weekly' { $nextDue.AddDays(7) } 'Monthly' { $nextDue.AddMonths(1) } default { $nextDue } }
+            Write-DATLogEntry -Value "[Lenovo] Within $cadence update cadence for $Model -- retaining existing package (next eligible $($nextDue.ToString('yyyy-MM-dd'))) " -Severity 1 -UpdateUI
+            $global:DATSoftPaqBuildSkipped = $true
+            Set-DATRegistryValue -Name "RunningMode" -Value "Download Completed" -Type String
+            return "$($entry.version)"
+        }
+    }
+
+    # -- Lenovo Latest temp dirs --
+    $osTag = ($WindowsVersion -replace '\s', '')
+    $lnvRoot    = Join-Path $TempDirectory "LenovoLatest\$Model\$osTag\$WindowsBuild"
+    $catalogDir = Join-Path $lnvRoot 'Catalog'
+    $pkgDlDir   = Join-Path $lnvRoot 'Packages'
+    $stagingDir = Join-Path $lnvRoot 'Staging'
+    foreach ($d in @($lnvRoot, $catalogDir, $pkgDlDir, $stagingDir)) { if (-not (Test-Path $d)) { New-Item -Path $d -ItemType Directory -Force | Out-Null } }
+    Get-ChildItem -Path $stagingDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+    $proxyParams = Get-DATWebRequestProxy
+
+    # -- 1. Resolve the Machine Type + download the Model-XML catalog --
+    $mtList = @($SystemSKU -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[A-Za-z0-9]{4}$' })
+    if ($mtList.Count -eq 0) { throw "No valid Lenovo Machine Type found in '$SystemSKU' for $Model." }
+
+    $modelXml = $null; $usedMt = $null
+    foreach ($mtCandidate in $mtList) {
+        $mtLower = $mtCandidate.ToLowerInvariant()
+        $modelXmlUrl = "$LenovoBase/catalog/${mtLower}_win${osMajor}.xml"
+        $candidatePath = Join-Path $catalogDir "${mtLower}_win${osMajor}.xml"
+        try {
+            Set-DATRegistryValue -Name "RunningMessage" -Value "Downloading Lenovo catalog for MT $mtCandidate..." -Type String
+            Invoke-WebRequest -Uri $modelXmlUrl -OutFile $candidatePath -UseBasicParsing -TimeoutSec 120 @proxyParams
+            $modelXml = $candidatePath; $usedMt = $mtCandidate
+            Write-DATLogEntry -Value "[Lenovo] Model catalog: $modelXmlUrl" -Severity 1
+            break
+        } catch {
+            Write-DATLogEntry -Value "[Lenovo] No Model-XML for MT $mtCandidate / Win$osMajor -- trying next" -Severity 2
+        }
+    }
+    if (-not $modelXml) { throw "No Lenovo Model-XML catalog found for $Model (MTs: $($mtList -join ', ') / Win$osMajor)." }
+
+    [xml]$mdoc = Get-Content -Path $modelXml -Raw
+    $pkgNodes = @($mdoc.packages.package)
+    if ($pkgNodes.Count -eq 0) { $pkgNodes = @($mdoc.SelectNodes('//*[local-name()="package"]')) }
+    Write-DATLogEntry -Value "[Lenovo] Model catalog lists $($pkgNodes.Count) package(s)" -Severity 1
+
+    # -- 2. Fetch each descriptor, filter to applicable drivers --
+    $applicable = New-Object System.Collections.Generic.List[object]
+    foreach ($p in $pkgNodes) {
+        $loc = "$($p.location)".Trim(); if (-not $loc) { continue }
+        $category = "$($p.category)".Trim()
+        if ($nonDriverCategories -contains $category) { continue }
+
+        $descName = ($loc -split '\?')[0] | Split-Path -Leaf
+        $descPath = Join-Path $catalogDir $descName
+        try {
+            if (-not (Test-Path $descPath)) { Invoke-WebRequest -Uri $loc -OutFile $descPath -UseBasicParsing -TimeoutSec 60 @proxyParams }
+            $ddoc = New-Object System.Xml.XmlDocument
+            $ddoc.Load($descPath)   # .Load handles the BOM that the [xml] cast rejects
+        } catch {
+            Write-DATLogEntry -Value "[Lenovo] Descriptor fetch/parse failed ($descName): $($_.Exception.Message)" -Severity 2
+            continue
+        }
+        $root = $ddoc.DocumentElement
+
+        # Only PackageType 2 (device driver) belongs in a pnputil-applied pack. Lenovo types:
+        # 1=Application, 2=Driver, 3=BIOS, 4=Firmware (SSD/ME/Thunderbolt-retimer/dock flashers --
+        # self-contained utilities with no driver INF that pnputil cannot apply). Empty type is kept.
+        $pkgTypeCode = "$($root.PackageType.type)".Trim()
+        if ($pkgTypeCode -eq '1' -or $pkgTypeCode -eq '3' -or $pkgTypeCode -eq '4') {
+            $skipTitle = "$($root.Title.InnerText)".Trim(); if (-not $skipTitle) { $skipTitle = $descName }
+            Write-DATLogEntry -Value "[Lenovo] Skipping non-driver package (PackageType $pkgTypeCode): $skipTitle" -Severity 1
+            continue
+        }
+
+        if ($targetBuildNum -gt 0 -and -not (Test-LnvBuildApplicable -DescRoot $root -TargetBuild $targetBuildNum)) { continue }
+
+        $title = "$($root.Title.InnerText)".Trim(); if (-not $title) { $title = "$($root.Title)".Trim() }
+        $version = "$($root.version)".Trim()
+        $sevType = "$($root.Severity.type)".Trim()
+        $severity = switch ($sevType) { '1' { 'Critical' } '2' { 'Recommended' } '3' { 'Optional' } default { $sevType } }
+        $releaseDate = "$($root.ReleaseDate.InnerText)".Trim(); if (-not $releaseDate) { $releaseDate = "$($root.ReleaseDate)".Trim() }
+        $extractCmd = "$($root.ExtractCommand)".Trim()
+
+        $fileNode = $root.Files.Installer.File | Select-Object -First 1
+        $fileName = "$($fileNode.Name)".Trim()
+        if (-not $fileName) { continue }
+        $descFolder = ($loc -replace '/[^/]+$', '/')
+
+        $applicable.Add([PSCustomObject]@{
+            Category    = $category
+            Title       = $title
+            Signature   = "$category|$(Get-LnvSignature -Name $title)"
+            Version     = $version
+            VersionSort = (ConvertTo-LnvVersion -Version $version)
+            Severity    = $severity
+            ReleaseDate = $releaseDate
+            Id          = "$($root.id)"
+            Hash        = "$($fileNode.CRC)".Trim()
+            FileName    = $fileName
+            DownloadUrl = "$descFolder$fileName"
+            ExtractCmd  = $extractCmd
+        })
+    }
+    $applicable = $applicable.ToArray()
+    if ($applicable.Count -eq 0) { throw "No applicable Lenovo driver packages found for $Model (MT $usedMt / Win$osMajor $WindowsBuild)." }
+
+    # Newest package per component (Lenovo curates, so this rarely collapses anything).
+    $selected = $applicable |
+        Group-Object -Property Signature |
+        ForEach-Object { $_.Group | Sort-Object -Property VersionSort, ReleaseDate -Descending | Select-Object -First 1 } |
+        Sort-Object Category, Title
+    $selected = @($selected)
+    Write-DATLogEntry -Value "[Lenovo] Selected $($selected.Count) driver package(s) (newest per component, from $($applicable.Count) applicable)" -Severity 1
+
+    # -- 3. Change tracking (fingerprint) skip --
+    $identifiers = @($selected | ForEach-Object { "$($_.Id)|$($_.Version)" })
+    $fingerprint = Get-DATLenovoPackageFingerprint -Identifiers $identifiers
+    $listUnchanged = ($null -ne $entry) -and (-not [string]::IsNullOrEmpty($fingerprint)) -and ("$($entry.fingerprint)" -eq $fingerprint)
+
+    if ($listUnchanged -and -not $ForceRebuild) {
+        $present = Test-DATLatestPackagePresent -Entry $entry -OEM $OEM -Model $Model -WindowsVersion $WindowsVersion `
+            -WindowsBuild $WindowsBuild -RunningMode $RunningMode -PackageDestination $PackageDestination `
+            -DownloadDestination $DownloadDestination -VerifyRemoteExistence:$VerifyRemoteExistence -ExistingPackageIds $ExistingPackageIds
+        if ($present) {
+            $shortFp = if ($fingerprint) { $fingerprint.Substring(0, [Math]::Min(8, $fingerprint.Length)) } else { 'n/a' }
+            Write-DATLogEntry -Value "[Lenovo] Latest driver set unchanged for $Model ($($selected.Count) packages, v$($entry.version), fingerprint $shortFp) -- no new pack" -Severity 1 -UpdateUI
+            try {
+                $entry | Add-Member -NotePropertyName lastVerified -NotePropertyValue (Get-Date -Format 'o') -Force
+                $entry | Add-Member -NotePropertyName lastChecked  -NotePropertyValue (Get-Date -Format 'o') -Force
+                $manifest[$manifestKey] = $entry
+                [void](Save-DATLenovoLatestManifest -Manifest $manifest)
+            } catch { }
+            $global:DATSoftPaqBuildSkipped = $true
+            Set-DATRegistryValue -Name "RunningMode" -Value "Download Completed" -Type String
+            return "$($entry.version)"
+        }
+    }
+
+    $buildVersion = if ($listUnchanged) { "$($entry.version)" } else { (Get-Date -Format 'ddMMyyyy') }
+
+    # -- 4. Download, verify and extract each selected package --
+    $total = $selected.Count
+    if ($total -gt 1) {
+        $prevExtra = 0
+        try { $prevExtra = [int](Get-ItemProperty -Path $global:RegPath -Name 'LatestDownloadsExtra' -ErrorAction SilentlyContinue).LatestDownloadsExtra } catch { $prevExtra = 0 }
+        Set-DATRegistryValue -Name "LatestDownloadsExtra" -Value "$($prevExtra + ($total - 1))" -Type String
+    }
+    $lnvComponents = New-Object System.Collections.Generic.List[object]
+    Set-DATRegistryValue -Name "DownloadBytes" -Value "$total" -Type String
+    Set-DATRegistryValue -Name "BytesTransferred" -Value "0" -Type String
+    Set-DATRegistryValue -Name "RunningMode" -Value "Download" -Type String
+    # Download all selected driver packages -- concurrently when the user's Concurrent Driver
+    # Downloads setting is above 1, otherwise sequentially. Returns the file names that landed on
+    # disk; per-driver download failures are recorded inside the helper.
+    $lnvDownloadItems = @($selected | ForEach-Object { [pscustomobject]@{ Url = $_.DownloadUrl; FileName = $_.FileName; Name = $_.Title } })
+    $downloadedFileNames = Invoke-DATConcurrentDriverDownload -Items $lnvDownloadItems -DestinationDirectory $pkgDlDir `
+        -OEM 'Lenovo' -Model $Model -MaxConcurrency (Get-DATLatestDriverConcurrency)
+
+    foreach ($pkg in $selected) {
+        $abortReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
+        if ($abortReg.RunningState -eq 'Aborted') { throw "Lenovo download aborted by user" }
+
+        $pkgFile = Join-Path $pkgDlDir $pkg.FileName
+        if ($downloadedFileNames -notcontains $pkg.FileName -or -not (Test-Path $pkgFile)) {
+            # Failed to download (already recorded by the concurrent downloader) -- skip.
+            continue
+        }
+
+        if ($pkg.Hash) {
+            $actual = Get-DATVerificationHash -FilePath $pkgFile -Algorithm SHA256
+            if ($actual -and ($actual -ieq $pkg.Hash)) {
+                Write-DATLogEntry -Value "[Lenovo] SHA256 verified: $($pkg.FileName)" -Severity 1
+            } elseif ($actual) {
+                Write-DATLogEntry -Value "[Lenovo] Hash mismatch for $($pkg.FileName) -- expected $($pkg.Hash), got $actual. Skipping." -Severity 3
+                Add-DATDriverDownloadFailure -OEM 'Lenovo' -Model $Model -Driver "$($pkg.Title)" -Reason 'Hash mismatch (SHA256) -- file integrity check failed'
+                Remove-Item $pkgFile -Force -ErrorAction SilentlyContinue
+                continue
+            }
+        }
+
+        # Extract via the package's own ExtractCommand (Inno Setup: /VERYSILENT /DIR=%PACKAGEPATH% /EXTRACT=YES).
+        $outDir = Join-Path $stagingDir ([IO.Path]::GetFileNameWithoutExtension($pkg.FileName))
+        if (-not (Test-Path $outDir)) { New-Item -Path $outDir -ItemType Directory -Force | Out-Null }
+        # Quote the substituted path -- Lenovo ExtractCommands use an unquoted /DIR=%PACKAGEPATH%,
+        # which Inno Setup truncates at the first space (temp paths like "C:\DAT Testing\..." extract nothing).
+        $extractArgs = ($pkg.ExtractCmd -replace '(?i)^\s*\S+\.exe\s*', '') -replace '"?%PACKAGEPATH%"?', "`"$outDir`""
+        if ([string]::IsNullOrWhiteSpace($extractArgs)) { $extractArgs = "/VERYSILENT /DIR=`"$outDir`" /EXTRACT=`"YES`"" }
+        try {
+            $exProc = Start-Process -FilePath $pkgFile -ArgumentList $extractArgs -Wait -PassThru -WindowStyle Hidden
+            $infCount = @(Get-ChildItem -Path $outDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue).Count
+            if ($infCount -eq 0) { Write-DATLogEntry -Value "[Lenovo] $($pkg.FileName) extracted no INF (exit $($exProc.ExitCode)) -- switches vary by package" -Severity 2 }
+        } catch {
+            Write-DATLogEntry -Value "[Lenovo] Extraction failed for $($pkg.FileName): $($_.Exception.Message)" -Severity 3
+            Add-DATDriverDownloadFailure -OEM 'Lenovo' -Model $Model -Driver "$($pkg.Title)" -Reason "Extraction failed: $($_.Exception.Message)"
+            continue
+        }
+
+        $lnvComponents.Add([ordered]@{
+            id          = $pkg.Id
+            name        = $pkg.Title
+            version     = $pkg.Version
+            category    = $pkg.Category
+            releaseDate = $pkg.ReleaseDate
+            criticality = $pkg.Severity
+            type        = 'DRVR'
+        })
+    }
+
+    $stagedFiles = @(Get-ChildItem -Path $stagingDir -Recurse -File -ErrorAction SilentlyContinue).Count
+    Write-DATLogEntry -Value "[Lenovo] Extraction complete: $stagedFiles driver files staged from $($lnvComponents.Count) package(s)" -Severity 1
+    if ($stagedFiles -eq 0) { throw "No Lenovo driver files were extracted from the Model-XML catalog for $Model" }
+
+    # -- 5. Package via the common WIM pipeline (embeds DATDriverManifest.json) --
+    if ($RunningMode -ne "Download Only" -or $ExtractDownloadOnlyContent) {
+        $packageDest = if (-not [string]::IsNullOrEmpty($PackageDestination)) { $PackageDestination } else { $DownloadDestination }
+        $packagingPlatform = if ($RunningMode -eq 'WIM Package Only') { 'WIM Package Only' }
+                             elseif ($RunningMode -eq 'Configuration Manager (Offline)') { 'Configuration Manager' }
+                             else { $RunningMode }
+        Set-DATRegistryValue -Name "RunningMessage" -Value "Creating WIM package for Lenovo $Model..." -Type String
+        Set-DATRegistryValue -Name "RunningMode" -Value "Packaging" -Type String
+        Write-DATLogEntry -Value "[Lenovo] Creating WIM package from Latest Drivers staging directory..." -Severity 1
+
+        $null = Invoke-DATDriverFilePackaging -FilePath $stagingDir -OEM $OEM -Model $Model `
+            -OS "$WindowsVersion $WindowsBuild" -Destination $packageDest -Platform $packagingPlatform `
+            -CustomDriverPath $CustomDriverPath -DownloadOnlyExtractDestination $DownloadDestination `
+            -PackageVersion $buildVersion -Components $lnvComponents.ToArray()
+    }
+
+    Set-DATRegistryValue -Name "RunningMode" -Value "Download Completed" -Type String
+    Write-DATLogEntry -Value "[Lenovo] Latest Drivers package process completed successfully" -Severity 1 -UpdateUI
+
+    # Persist the tracking manifest (fingerprint + cadence timestamps).
+    try {
+        $manifestSave = Get-DATLenovoLatestManifest
+        $existingRef = $manifestSave[$manifestKey]
+        $nowIso = (Get-Date -Format 'o')
+        $manifestSave[$manifestKey] = [PSCustomObject]@{
+            machineType        = "$usedMt"
+            componentIds       = @($identifiers | Sort-Object)
+            fingerprint        = $fingerprint
+            version            = $buildVersion
+            lastBuilt          = $nowIso
+            lastChecked        = $nowIso
+            lastVerified       = $nowIso
+            intuneAppId        = if ($existingRef) { "$($existingRef.intuneAppId)" } else { '' }
+            configMgrPackageId = if ($existingRef) { "$($existingRef.configMgrPackageId)" } else { '' }
+        }
+        [void](Save-DATLenovoLatestManifest -Manifest $manifestSave)
+        Write-DATLogEntry -Value "[Lenovo] Latest Drivers manifest updated for $Model (v$buildVersion, $($lnvComponents.Count) packages)" -Severity 1
+    } catch {
+        Write-DATLogEntry -Value "[Lenovo] Failed to update Latest Drivers manifest: $($_.Exception.Message)" -Severity 2
+    }
+
+    return $buildVersion
+}
+
 function Invoke-DATOEMDownloadModule {
     [CmdletBinding()]
     param (
@@ -6239,14 +7434,14 @@ function Invoke-DATOEMDownloadModule {
     # If a direct download URL was provided from the DAT API catalog, use it and skip OEM catalog lookup
     # Only accept URLs that point to a downloadable file (not info/landing pages)
     if (-not [string]::IsNullOrEmpty($CatalogDownloadURL) -and $CatalogDownloadURL -match '\.(msi|exe|cab|zip|wim)(\?|$)') {
-        # HP Individual SoftPaqs mode: ignore the pre-resolved driver pack URL so the HP SoftPaq
-        # discovery block runs instead of downloading the monolithic pack.
-        $HPDriverPackSource = if ($OEM -eq 'HP') {
+        # HP/Dell/Lenovo Latest Drivers mode: ignore the pre-resolved SCCM driver pack URL so the
+        # OEM's Latest Drivers block runs instead of downloading the monolithic pack.
+        $buildTypeSource = if ($OEM -in @('HP', 'Dell', 'Lenovo')) {
             (Get-ItemProperty -Path $global:RegPath -Name 'HPDriverPackSource' -ErrorAction SilentlyContinue).HPDriverPackSource
         } else { $null }
-        if ($OEM -eq 'HP' -and $HPDriverPackSource -eq 'SoftPaqs') {
-            Write-DATLogEntry -Value "[HP] Individual SoftPaqs mode -- ignoring pre-resolved driver pack URL: $CatalogDownloadURL" -Severity 1
-            # Leave $downloadURL null so the HP SoftPaq switch block runs
+        if (($OEM -in @('HP', 'Dell', 'Lenovo')) -and $buildTypeSource -eq 'SoftPaqs') {
+            Write-DATLogEntry -Value "[$OEM] Latest Drivers mode -- ignoring pre-resolved SCCM driver pack URL: $CatalogDownloadURL" -Severity 1
+            # Leave $downloadURL null so the OEM Latest Drivers switch block runs
         } else {
             $downloadURL = $CatalogDownloadURL
             $downloadFileName = ($CatalogDownloadURL -split '\?')[0] | Split-Path -Leaf
@@ -6263,6 +7458,17 @@ function Invoke-DATOEMDownloadModule {
     if ([string]::IsNullOrEmpty($downloadURL)) {
     switch ($OEM) {
         "Dell" {
+            # Latest Drivers (DCU catalog) mode: resolve, download, extract and package the newest
+            # individual driver DUPs, then return -- bypassing the enterprise SCCM pack resolution.
+            $DellBuildType = (Get-ItemProperty -Path $global:RegPath -Name 'HPDriverPackSource' -ErrorAction SilentlyContinue).HPDriverPackSource
+            if ($DellBuildType -eq 'SoftPaqs') {
+                return (Invoke-DATDellLatestDriverPackage -Model $Model -SystemSKU $SystemSKU `
+                    -WindowsVersion $WindowsVersion -WindowsBuild $WindowsBuild -Architecture $Architecture `
+                    -DownloadDestination $DownloadDestination -PackageDestination $PackageDestination `
+                    -TempDirectory $TempDirectory -RunningMode $RunningMode -CustomDriverPath $CustomDriverPath `
+                    -ExtractDownloadOnlyContent $ExtractDownloadOnlyContent -OEMLinks $OEMLinks `
+                    -ForceRebuild:$ForceRebuild -VerifyRemoteExistence:$VerifyRemoteExistence -ExistingPackageIds $ExistingPackageIds)
+            }
             $DellLink = ($OEMLinks.OEM.Manufacturer | Where-Object { $_.Name -match "Dell" }).Link |
                 Where-Object { $_.Type -eq "XMLCabinetSource" } | Select-Object -ExpandProperty URL -First 1
             if ([string]::IsNullOrEmpty($DellLink)) { throw "Dell catalog URL not found in OEM links" }
@@ -6478,6 +7684,25 @@ function Invoke-DATOEMDownloadModule {
             }
             Write-DATLogEntry -Value "[HP] Concurrent downloads: $HPConcurrentDownloads" -Severity 1
 
+            # ── Cadence gate: skip before SoftPaq discovery when within the update cadence window ──
+            $spCadenceKey = Get-DATHPSoftPaqManifestKey -Model $Model -OSVersion $WindowsVersion -Build $WindowsBuild -Architecture $Architecture
+            $spCadenceEntry = (Get-DATHPSoftPaqManifest)[$spCadenceKey]
+            $hpCadence = Get-DATLatestDriverCadence
+            if (-not $ForceRebuild -and $hpCadence -ne 'Off' -and $null -ne $spCadenceEntry -and
+                -not (Test-DATLatestCadenceElapsed -LastActivity "$($spCadenceEntry.lastChecked)" -Cadence $hpCadence)) {
+                $present = Test-DATLatestPackagePresent -Entry $spCadenceEntry -OEM 'HP' -Model $Model -WindowsVersion $WindowsVersion `
+                    -WindowsBuild $WindowsBuild -RunningMode $RunningMode -PackageDestination $PackageDestination `
+                    -DownloadDestination $DownloadDestination -VerifyRemoteExistence:$VerifyRemoteExistence -ExistingPackageIds $ExistingPackageIds
+                if ($present) {
+                    $nextDue = try { ([datetime]$spCadenceEntry.lastChecked) } catch { Get-Date }
+                    $nextDue = switch ($hpCadence) { 'Daily' { $nextDue.AddDays(1) } 'Weekly' { $nextDue.AddDays(7) } 'Monthly' { $nextDue.AddMonths(1) } default { $nextDue } }
+                    Write-DATLogEntry -Value "[HP] Within $hpCadence update cadence for $Model -- retaining existing package (next eligible $($nextDue.ToString('yyyy-MM-dd')))" -Severity 1 -UpdateUI
+                    $global:DATSoftPaqBuildSkipped = $true
+                    Set-DATRegistryValue -Name "RunningMode" -Value "Download Completed" -Type String
+                    return "$($spCadenceEntry.version)"
+                }
+            }
+
             # ── Step 1: Discover SoftPaqs using New-HPDriverPack -WhatIf ──────────
             # Pre-flight: verify that HPCMSL supports the requested OS version
             $hpDPCmd = Get-Command -Name New-HPDriverPack -ErrorAction SilentlyContinue
@@ -6492,6 +7717,8 @@ function Invoke-DATOEMDownloadModule {
 
             $SoftPaqIDs = @()
             $DiscoveryPlatformID = $null
+            # Maps SoftPaq id -> descriptive name scraped from the WhatIf output (for the WIM manifest).
+            $spNameMap = @{}
 
             # Resolve PowerShell executable for child processes
             $discoveryPwshExe = if ($PSVersionTable.PSVersion.Major -ge 7) {
@@ -6541,6 +7768,10 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
                         $DiscoveryPlatformID = $PlatformID
                         Write-DATLogEntry -Value "[HP] Found $($SoftPaqIDs.Count) SoftPaqs for platform ${PlatformID}:" -Severity 1
                         foreach ($line in ($allLines | Where-Object { $_ -match '^\s+(?:sp)?(\d{4,})' })) {
+                            if ($line -match '^\s+(?:sp)?(\d{4,})') {
+                                $spName = ($line -replace '^\s*(?:sp)?\d{4,}\s*[-:]*\s*', '').Trim()
+                                if ($spName) { $spNameMap[$Matches[1]] = $spName }
+                            }
                             Write-DATLogEntry -Value "-- Download required - $($line.Trim())" -Severity 1
                         }
                         break
@@ -6660,6 +7891,7 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
                     }
                     try {
                         $spEntry | Add-Member -NotePropertyName lastVerified -NotePropertyValue (Get-Date -Format 'o') -Force
+                        $spEntry | Add-Member -NotePropertyName lastChecked  -NotePropertyValue (Get-Date -Format 'o') -Force
                         $spManifest[$spManifestKey] = $spEntry
                         [void](Save-DATHPSoftPaqManifest -Manifest $spManifest)
                     } catch {
@@ -6676,6 +7908,13 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
             $spBuildVersion = if ($spListUnchanged) { "$($spEntry.version)" } else { (Get-Date -Format 'ddMMyyyy') }
 
             $totalSoftPaqs = $SoftPaqIDs.Count
+            # Report the extra individual driver downloads (N SoftPaqs, not one pack) so the
+            # "Downloads Required" tile counts them: base estimate already counts 1 driver.
+            if ($totalSoftPaqs -gt 1) {
+                $prevExtra = 0
+                try { $prevExtra = [int](Get-ItemProperty -Path $global:RegPath -Name 'LatestDownloadsExtra' -ErrorAction SilentlyContinue).LatestDownloadsExtra } catch { $prevExtra = 0 }
+                Set-DATRegistryValue -Name "LatestDownloadsExtra" -Value "$($prevExtra + ($totalSoftPaqs - 1))" -Type String
+            }
             Set-DATRegistryValue -Name "DownloadBytes" -Value "0" -Type String
             Set-DATRegistryValue -Name "BytesTransferred" -Value "0" -Type String
 
@@ -6867,6 +8106,8 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
 
             $extractedCount = 0
             $skippedCount = 0
+            # Rich per-SoftPaq detail for the WIM manifest (name/version/category/date).
+            $hpComponents = New-Object System.Collections.Generic.List[object]
 
             foreach ($spId in $successfulIDs) {
                 $abortReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
@@ -6913,11 +8154,28 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
                     $metadata = Get-HPSoftpaqMetadata -Number $spId -MaxRetries 3
                 } catch {
                     Write-DATLogEntry -Value "[HP] SP$spId metadata lookup failed: $($_.Exception.Message) -- copying all extracted content" -Severity 2
+                    $hpComponents.Add([ordered]@{
+                        id          = "SP$spId"
+                        name        = if ($spNameMap.ContainsKey($spId)) { $spNameMap[$spId] } else { "SoftPaq $spId" }
+                        version     = $null
+                        category    = $null
+                        releaseDate = $null
+                        type        = 'SoftPaq'
+                    })
                     # Fallback: copy everything
                     if (-not (Test-Path $spStagingDir)) { New-Item -Path $spStagingDir -ItemType Directory -Force | Out-Null }
                     Copy-Item "$spExtractDir\*" $spStagingDir -Recurse -Force -ErrorAction SilentlyContinue
                     continue
                 }
+
+                $hpComponents.Add([ordered]@{
+                    id          = "SP$spId"
+                    name        = if ($spNameMap.ContainsKey($spId)) { $spNameMap[$spId] } else { Get-DATHPMetaValue -Meta $metadata -Keys @('US', 'Title') }
+                    version     = Get-DATHPMetaValue -Meta $metadata -Keys @('Version')
+                    category    = Get-DATHPMetaValue -Meta $metadata -Keys @('Category')
+                    releaseDate = Get-DATHPMetaValue -Meta $metadata -Keys @('DateReleased', 'ReleaseDate', 'Date')
+                    type        = 'SoftPaq'
+                })
 
                 if ($metadata.ContainsKey('Devices_INFPath')) {
                     # Determine which INF path key to use
@@ -6980,7 +8238,8 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
 
                 $null = Invoke-DATDriverFilePackaging -FilePath $HPStagingDir -OEM $OEM -Model $Model `
                     -OS "$WindowsVersion $WindowsBuild" -Destination $packageDest -Platform $packagingPlatform `
-                    -CustomDriverPath $CustomDriverPath -DownloadOnlyExtractDestination $DownloadDestination
+                    -CustomDriverPath $CustomDriverPath -DownloadOnlyExtractDestination $DownloadDestination `
+                    -PackageVersion $spBuildVersion -Components $hpComponents.ToArray()
             }
 
             Set-DATRegistryValue -Name "RunningMode" -Value "Download Completed" -Type String
@@ -6996,6 +8255,7 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
                     fingerprint          = $spFingerprint
                     version              = $spBuildVersion
                     lastBuilt            = (Get-Date -Format 'o')
+                    lastChecked          = (Get-Date -Format 'o')
                     lastVerified         = (Get-Date -Format 'o')
                     intuneAppId          = if ($existingRef) { "$($existingRef.intuneAppId)" } else { '' }
                     configMgrPackageId   = if ($existingRef) { "$($existingRef.configMgrPackageId)" } else { '' }
@@ -7011,6 +8271,17 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
             } # end else (Individual SoftPaqs mode)
         }
         "Lenovo" {
+            # Latest Drivers (Model-XML catalog) mode: resolve, download, extract and package the
+            # newest individual driver packages, then return -- bypassing the SCCM pack resolution.
+            $LenovoBuildType = (Get-ItemProperty -Path $global:RegPath -Name 'HPDriverPackSource' -ErrorAction SilentlyContinue).HPDriverPackSource
+            if ($LenovoBuildType -eq 'SoftPaqs') {
+                return (Invoke-DATLenovoLatestDriverPackage -Model $Model -SystemSKU $SystemSKU `
+                    -WindowsVersion $WindowsVersion -WindowsBuild $WindowsBuild -Architecture $Architecture `
+                    -DownloadDestination $DownloadDestination -PackageDestination $PackageDestination `
+                    -TempDirectory $TempDirectory -RunningMode $RunningMode -CustomDriverPath $CustomDriverPath `
+                    -ExtractDownloadOnlyContent $ExtractDownloadOnlyContent -OEMLinks $OEMLinks `
+                    -ForceRebuild:$ForceRebuild -VerifyRemoteExistence:$VerifyRemoteExistence -ExistingPackageIds $ExistingPackageIds)
+            }
             $LenovoLink = ($OEMLinks.OEM.Manufacturer | Where-Object { $_.Name -match "Lenovo" }).Link |
                 Where-Object { $_.Type -eq "XMLSource" } | Select-Object -ExpandProperty URL -First 1
             if ([string]::IsNullOrEmpty($LenovoLink)) { throw "Lenovo catalog URL not found in OEM links" }
@@ -7369,6 +8640,9 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
             OS           = $packagingOS
             Destination  = $packageDest
             Platform     = $packagingPlatform
+        }
+        if (-not [string]::IsNullOrEmpty($catalogVersion)) {
+            $packagingParams['PackageVersion'] = "$catalogVersion"
         }
         if ($RunningMode -eq 'Download Only') {
             $packagingParams['DownloadOnlyExtractDestination'] = $DownloadDestination
@@ -9558,13 +10832,15 @@ function Get-DATDeployedPackageVersions {
 function Set-DATIntuneAppAssignment {
     <#
     .SYNOPSIS
-        Creates a group assignment for an Intune Win32 app (Available or Required).
-        Supports regular groups, All Users, and All Devices.
+        Creates one or more group assignments for an Intune Win32 app (Available or Required).
+        Supports regular groups, All Users, and All Devices. Multiple group IDs are emitted as
+        separate assignment entries in a single /assign call (the action replaces the whole set,
+        so all targets must be sent together).
     #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)][string]$AppId,
-        [Parameter(Mandatory)][string]$GroupId,
+        [Parameter(Mandatory)][string[]]$GroupId,
         [Parameter(Mandatory)][ValidateSet('Available', 'Required')][string]$Intent,
         [ValidateSet('showAll', 'showReboot', 'hideAll')][string]$IMENotifications = 'showAll'
     )
@@ -9578,39 +10854,41 @@ function Set-DATIntuneAppAssignment {
     $allUsersId  = 'acacacac-9df4-4c7d-9d50-4ef0226f57a9'
     $allDevicesId = 'adadadad-808e-44e2-905a-0b7873a8a531'
 
-    $target = switch ($GroupId) {
-        $allUsersId {
-            @{ "@odata.type" = "#microsoft.graph.allLicensedUsersAssignmentTarget" }
-        }
-        $allDevicesId {
-            @{ "@odata.type" = "#microsoft.graph.allDevicesAssignmentTarget" }
-        }
-        default {
-            @{
-                "@odata.type" = "#microsoft.graph.groupAssignmentTarget"
-                groupId       = $GroupId
-            }
-        }
-    }
+    $groupIds = @($GroupId | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+    if ($groupIds.Count -eq 0) { throw "Set-DATIntuneAppAssignment: no group ID supplied." }
 
-    $body = @{
-        mobileAppAssignments = @(
-            @{
-                "@odata.type" = "#microsoft.graph.mobileAppAssignment"
-                intent        = $intentMap[$Intent]
-                target        = $target
-                settings      = @{
-                    "@odata.type"       = "#microsoft.graph.win32LobAppAssignmentSettings"
-                    notifications       = $IMENotifications
-                    installTimeSettings = $null
-                    restartSettings     = $null
-                    deliveryOptimizationPriority = "notConfigured"
+    $assignments = foreach ($gid in $groupIds) {
+        $target = switch ($gid) {
+            $allUsersId {
+                @{ "@odata.type" = "#microsoft.graph.allLicensedUsersAssignmentTarget" }
+            }
+            $allDevicesId {
+                @{ "@odata.type" = "#microsoft.graph.allDevicesAssignmentTarget" }
+            }
+            default {
+                @{
+                    "@odata.type" = "#microsoft.graph.groupAssignmentTarget"
+                    groupId       = $gid
                 }
             }
-        )
+        }
+        @{
+            "@odata.type" = "#microsoft.graph.mobileAppAssignment"
+            intent        = $intentMap[$Intent]
+            target        = $target
+            settings      = @{
+                "@odata.type"       = "#microsoft.graph.win32LobAppAssignmentSettings"
+                notifications       = $IMENotifications
+                installTimeSettings = $null
+                restartSettings     = $null
+                deliveryOptimizationPriority = "notConfigured"
+            }
+        }
     }
 
-    Write-DATLogEntry -Value "[Intune] Assigning app $AppId to group $GroupId as $Intent" -Severity 1
+    $body = @{ mobileAppAssignments = @($assignments) }
+
+    Write-DATLogEntry -Value "[Intune] Assigning app $AppId to group(s) $($groupIds -join ', ') as $Intent" -Severity 1
     return Invoke-DATGraphRequest -Uri "/deviceAppManagement/mobileApps/$AppId/assign" -Method POST -Body $body
 }
 
@@ -9889,13 +11167,14 @@ function Find-DATIntuneAssignmentFilter {
 function Set-DATIntuneAppAssignmentWithFilter {
     <#
     .SYNOPSIS
-        Creates a group assignment for an Intune Win32 app with an assignment filter.
-        The filter is applied in "include" mode so only matching devices receive the app.
+        Creates one or more group assignments for an Intune Win32 app with an assignment filter.
+        The filter is applied in "include" mode so only matching devices receive the app. Multiple
+        group IDs are emitted as separate assignment entries in a single /assign call.
     #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)][string]$AppId,
-        [Parameter(Mandatory)][string]$GroupId,
+        [Parameter(Mandatory)][string[]]$GroupId,
         [Parameter(Mandatory)][ValidateSet('Available', 'Required')][string]$Intent,
         [Parameter(Mandatory)][string]$FilterId,
         [ValidateSet('include', 'exclude')][string]$FilterType = 'include',
@@ -9907,37 +11186,39 @@ function Set-DATIntuneAppAssignmentWithFilter {
     $allUsersId  = 'acacacac-9df4-4c7d-9d50-4ef0226f57a9'
     $allDevicesId = 'adadadad-808e-44e2-905a-0b7873a8a531'
 
-    $target = switch ($GroupId) {
-        $allUsersId  { @{ "@odata.type" = "#microsoft.graph.allLicensedUsersAssignmentTarget"; "deviceAndAppManagementAssignmentFilterId" = $FilterId; "deviceAndAppManagementAssignmentFilterType" = $FilterType } }
-        $allDevicesId { @{ "@odata.type" = "#microsoft.graph.allDevicesAssignmentTarget"; "deviceAndAppManagementAssignmentFilterId" = $FilterId; "deviceAndAppManagementAssignmentFilterType" = $FilterType } }
-        default {
-            @{
-                "@odata.type" = "#microsoft.graph.groupAssignmentTarget"
-                groupId       = $GroupId
-                "deviceAndAppManagementAssignmentFilterId"   = $FilterId
-                "deviceAndAppManagementAssignmentFilterType" = $FilterType
+    $groupIds = @($GroupId | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+    if ($groupIds.Count -eq 0) { throw "Set-DATIntuneAppAssignmentWithFilter: no group ID supplied." }
+
+    $assignments = foreach ($gid in $groupIds) {
+        $target = switch ($gid) {
+            $allUsersId  { @{ "@odata.type" = "#microsoft.graph.allLicensedUsersAssignmentTarget"; "deviceAndAppManagementAssignmentFilterId" = $FilterId; "deviceAndAppManagementAssignmentFilterType" = $FilterType } }
+            $allDevicesId { @{ "@odata.type" = "#microsoft.graph.allDevicesAssignmentTarget"; "deviceAndAppManagementAssignmentFilterId" = $FilterId; "deviceAndAppManagementAssignmentFilterType" = $FilterType } }
+            default {
+                @{
+                    "@odata.type" = "#microsoft.graph.groupAssignmentTarget"
+                    groupId       = $gid
+                    "deviceAndAppManagementAssignmentFilterId"   = $FilterId
+                    "deviceAndAppManagementAssignmentFilterType" = $FilterType
+                }
+            }
+        }
+        @{
+            "@odata.type" = "#microsoft.graph.mobileAppAssignment"
+            intent        = $intentMap[$Intent]
+            target        = $target
+            settings      = @{
+                "@odata.type"       = "#microsoft.graph.win32LobAppAssignmentSettings"
+                notifications       = $IMENotifications
+                installTimeSettings = $null
+                restartSettings     = $null
+                deliveryOptimizationPriority = "notConfigured"
             }
         }
     }
 
-    $body = @{
-        mobileAppAssignments = @(
-            @{
-                "@odata.type" = "#microsoft.graph.mobileAppAssignment"
-                intent        = $intentMap[$Intent]
-                target        = $target
-                settings      = @{
-                    "@odata.type"       = "#microsoft.graph.win32LobAppAssignmentSettings"
-                    notifications       = $IMENotifications
-                    installTimeSettings = $null
-                    restartSettings     = $null
-                    deliveryOptimizationPriority = "notConfigured"
-                }
-            }
-        )
-    }
+    $body = @{ mobileAppAssignments = @($assignments) }
 
-    Write-DATLogEntry -Value "[Intune] Assigning app $AppId to group $GroupId as $Intent with filter $FilterId ($FilterType)" -Severity 1
+    Write-DATLogEntry -Value "[Intune] Assigning app $AppId to group(s) $($groupIds -join ', ') as $Intent with filter $FilterId ($FilterType)" -Severity 1
     return Invoke-DATGraphRequest -Uri "/deviceAppManagement/mobileApps/$AppId/assign" -Method POST -Body $body
 }
 
@@ -9955,8 +11236,8 @@ function Invoke-DATAutoAssignmentFilter {
     .PARAMETER FilterMode
         'Make' = one filter per manufacturer. 'Model' = one filter per make+model.
     .PARAMETER TargetGroupId
-        Optional. The Entra group Object ID to assign the app to. Defaults to the built-in
-        All Devices group. Supply a custom security group Object ID to scope the deployment.
+        Optional. One or more Entra group Object IDs to assign the app to. Defaults to the built-in
+        All Devices group. Supply custom security group Object ID(s) to scope the deployment.
     #>
     [CmdletBinding()]
     param (
@@ -9964,7 +11245,7 @@ function Invoke-DATAutoAssignmentFilter {
         [Parameter(Mandatory)][string]$Manufacturer,
         [string]$Model,
         [Parameter(Mandatory)][ValidateSet('Make', 'Model')][string]$FilterMode,
-        [string]$TargetGroupId = 'adadadad-808e-44e2-905a-0b7873a8a531',
+        [string[]]$TargetGroupId = @('adadadad-808e-44e2-905a-0b7873a8a531'),
         [string]$Baseboards,
         [ValidateSet('showAll', 'showReboot', 'hideAll')][string]$IMENotifications = 'showAll'
     )
@@ -10026,9 +11307,9 @@ function Invoke-DATAutoAssignmentFilter {
         Write-DATLogEntry -Value "[Intune] Created assignment filter: $filterName ($filterId)" -Severity 1
     }
 
-    # Assign to the target group (All Devices by default, or a custom Entra group) with the filter in include mode
+    # Assign to the target group(s) (All Devices by default, or custom Entra group(s)) with the filter in include mode
     Set-DATIntuneAppAssignmentWithFilter -AppId $AppId -GroupId $TargetGroupId -Intent 'Required' -FilterId $filterId -FilterType 'include' -IMENotifications $IMENotifications
-    Write-DATLogEntry -Value "[Intune] App $AppId assigned to group $TargetGroupId with filter $filterName" -Severity 1
+    Write-DATLogEntry -Value "[Intune] App $AppId assigned to group(s) $($TargetGroupId -join ', ') with filter $filterName" -Severity 1
 }
 
 #endregion Assignment Filter Functions
@@ -14876,6 +16157,10 @@ function Invoke-DATBiosPackaging {
 # Session-scoped cache for the remote config (fetched once per module load / tool session)
 $script:DATTelemetryConfig = $null
 
+# Holds the canonical (content-only) driver manifest built by New-DATDriverManifest for the most
+# recently packaged model, so Send-DATDriverManifest can submit it without rescanning the package.
+$script:DATLastDriverManifest = $null
+
 function Get-DATTelemetryConfig {
     <#
     .SYNOPSIS
@@ -15350,6 +16635,360 @@ function Get-DATHPSoftPaqManifestPath {
     return (Join-Path $settingsDir 'HPSoftPaqManifest.json')
 }
 
+function Get-DATDellLatestManifestPath {
+    <#
+    .SYNOPSIS
+        Returns the full path to the Dell "Latest Drivers" (DCU) manifest file under Settings.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $settingsDir = Join-Path $global:ScriptDirectory 'Settings'
+    if (-not (Test-Path -LiteralPath $settingsDir)) {
+        try { New-Item -Path $settingsDir -ItemType Directory -Force | Out-Null } catch {}
+    }
+    return (Join-Path $settingsDir 'DellLatestManifest.json')
+}
+
+function Get-DATDellLatestManifestKey {
+    <#
+    .SYNOPSIS
+        Builds a stable manifest key for a Dell model/OS/build/architecture combination.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Model,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OSVersion,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Build,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Architecture
+    )
+    return ("Dell|{0}|{1}|{2}|{3}" -f $Model.Trim(), $OSVersion.Trim(), $Build.Trim(), $Architecture.Trim())
+}
+
+function Get-DATDellDUPFingerprint {
+    <#
+    .SYNOPSIS
+        Computes an order-independent SHA256 fingerprint of a Dell DUP identifier list (release
+        IDs are alphanumeric, unlike HP's numeric SoftPaq ids). Returns lowercase hex or $null.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowNull()][AllowEmptyString()][string[]]$Identifiers
+    )
+    if ($null -eq $Identifiers) { return $null }
+    $valid = @($Identifiers |
+        ForEach-Object { if ($null -ne $_) { $_.Trim() } } |
+        Where-Object { $_ } |
+        Select-Object -Unique |
+        Sort-Object)
+    if ($valid.Count -eq 0) { return $null }
+    $joined = ($valid -join ',')
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($joined)
+        return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-DATDellLatestManifest {
+    <#
+    .SYNOPSIS
+        Loads the Dell Latest Drivers manifest as a hashtable. Missing/corrupt files yield empty.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param()
+    $path = Get-DATDellLatestManifestPath
+    $manifest = @{}
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+            if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+                foreach ($prop in $obj.PSObject.Properties) {
+                    $manifest[$prop.Name] = $prop.Value
+                }
+            }
+        } catch {
+            Write-DATLogEntry -Value "[Dell] Latest Drivers manifest unreadable, treating as empty: $($_.Exception.Message)" -Severity 2
+            $manifest = @{}
+        }
+    }
+    return $manifest
+}
+
+function Save-DATDellLatestManifest {
+    <#
+    .SYNOPSIS
+        Atomically persists the Dell Latest Drivers manifest hashtable to disk. Never throws.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)][hashtable]$Manifest
+    )
+    $path = Get-DATDellLatestManifestPath
+    try {
+        $json = $Manifest | ConvertTo-Json -Depth 6
+        $tmp = "$path.tmp"
+        Set-Content -LiteralPath $tmp -Value $json -Encoding UTF8 -ErrorAction Stop
+        Move-Item -LiteralPath $tmp -Destination $path -Force -ErrorAction Stop
+        return $true
+    } catch {
+        Write-DATLogEntry -Value "[Dell] Failed to save Latest Drivers manifest: $($_.Exception.Message)" -Severity 2
+        return $false
+    }
+}
+
+function Update-DATDellLatestManifestReference {
+    <#
+    .SYNOPSIS
+        Records the remote package reference (Intune app id / ConfigMgr package name) on an
+        existing Dell Latest Drivers manifest entry. No-ops when the entry is absent.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][ValidateSet('intuneAppId', 'configMgrPackageId')][string]$Field,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Value
+    )
+    $manifest = Get-DATDellLatestManifest
+    if (-not $manifest.ContainsKey($Key)) { return $false }
+    try {
+        $entry = $manifest[$Key]
+        $entry | Add-Member -NotePropertyName $Field -NotePropertyValue $Value -Force
+        $manifest[$Key] = $entry
+        return (Save-DATDellLatestManifest -Manifest $manifest)
+    } catch {
+        Write-DATLogEntry -Value "[Dell] Failed to record Latest Drivers manifest reference ($Field): $($_.Exception.Message)" -Severity 2
+        return $false
+    }
+}
+
+# ---- Shared "Latest Drivers" cadence + existence helpers (Dell / HP / Lenovo) --------------
+
+function Get-DATLatestDriverCadence {
+    <#
+    .SYNOPSIS
+        Returns the Latest Drivers rebuild cadence: 'Off' (default), 'Daily', 'Weekly' or 'Monthly'.
+        This throttles how often an on-demand ("Latest Drivers") pack is re-evaluated/rebuilt.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $v = (Get-ItemProperty -Path $global:RegPath -Name 'LatestDriverCadence' -ErrorAction SilentlyContinue).LatestDriverCadence
+    if ([string]::IsNullOrWhiteSpace($v) -or $v -notin @('Daily', 'Weekly', 'Monthly')) { return 'Off' }
+    return $v
+}
+
+function Test-DATLatestCadenceElapsed {
+    <#
+    .SYNOPSIS
+        Returns $true when the cadence window has elapsed since $LastActivity, i.e. a rebuild
+        evaluation is due. Returns $true for cadence 'Off' or a missing/unparseable timestamp.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [AllowEmptyString()][AllowNull()][string]$LastActivity,
+        [AllowEmptyString()][AllowNull()][string]$Cadence
+    )
+    if ([string]::IsNullOrWhiteSpace($Cadence) -or $Cadence -eq 'Off') { return $true }
+    if ([string]::IsNullOrWhiteSpace($LastActivity)) { return $true }
+    $last = [datetime]::MinValue
+    if (-not [datetime]::TryParse($LastActivity, [ref]$last)) { return $true }
+    $now = Get-Date
+    switch ($Cadence) {
+        'Daily'   { return ($now -ge $last.AddDays(1)) }
+        'Weekly'  { return ($now -ge $last.AddDays(7)) }
+        'Monthly' { return ($now -ge $last.AddMonths(1)) }
+        default   { return $true }
+    }
+}
+
+function Test-DATLatestPackagePresent {
+    <#
+    .SYNOPSIS
+        Returns $true when the previously built Latest Drivers package for a model still exists for
+        the given running mode: an on-disk WIM / downloaded files, or a recorded Intune/ConfigMgr
+        reference that is still present in $ExistingPackageIds (when -VerifyRemoteExistence).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)]$Entry,
+        [Parameter(Mandatory)][string]$OEM,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Model,
+        [AllowEmptyString()][string]$WindowsVersion,
+        [AllowEmptyString()][string]$WindowsBuild,
+        [string]$RunningMode,
+        [AllowEmptyString()][string]$PackageDestination,
+        [AllowEmptyString()][string]$DownloadDestination,
+        [switch]$VerifyRemoteExistence,
+        [string[]]$ExistingPackageIds = @()
+    )
+    switch ($RunningMode) {
+        'Intune' {
+            if (-not $VerifyRemoteExistence) { return $true }
+            $ref = "$($Entry.intuneAppId)"
+            return ((-not [string]::IsNullOrEmpty($ref)) -and ($ExistingPackageIds -contains $ref))
+        }
+        'Configuration Manager' {
+            if (-not $VerifyRemoteExistence) { return $true }
+            $ref = "$($Entry.configMgrPackageId)"
+            return ((-not [string]::IsNullOrEmpty($ref)) -and ($ExistingPackageIds -contains $ref))
+        }
+        'WIM Package Only' {
+            $wim = Join-Path $PackageDestination "$OEM\$Model\$WindowsVersion $WindowsBuild\DriverPackage.wim"
+            return (Test-Path -LiteralPath $wim)
+        }
+        'Download Only' {
+            return ((Test-Path -LiteralPath $DownloadDestination) -and (@(Get-ChildItem -LiteralPath $DownloadDestination -File -ErrorAction SilentlyContinue).Count -gt 0))
+        }
+        default { return $true }
+    }
+}
+
+# ---- Lenovo "Latest Drivers" manifest helpers (twins of the Dell helpers) ------------------
+
+function Get-DATLenovoLatestManifestPath {
+    <#
+    .SYNOPSIS
+        Returns the full path to the Lenovo "Latest Drivers" tracking manifest under Settings.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $settingsDir = Join-Path $global:ScriptDirectory 'Settings'
+    if (-not (Test-Path -LiteralPath $settingsDir)) {
+        try { New-Item -Path $settingsDir -ItemType Directory -Force | Out-Null } catch {}
+    }
+    return (Join-Path $settingsDir 'LenovoLatestManifest.json')
+}
+
+function Get-DATLenovoLatestManifestKey {
+    <#
+    .SYNOPSIS
+        Builds a stable manifest key for a Lenovo model/OS/build/architecture combination.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Model,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OSVersion,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Build,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Architecture
+    )
+    return ("Lenovo|{0}|{1}|{2}|{3}" -f $Model.Trim(), $OSVersion.Trim(), $Build.Trim(), $Architecture.Trim())
+}
+
+function Get-DATLenovoPackageFingerprint {
+    <#
+    .SYNOPSIS
+        Order-independent SHA256 fingerprint of a Lenovo package identifier list (alphanumeric ids,
+        each ideally suffixed with its version). Returns lowercase hex, or $null when empty.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowNull()][AllowEmptyString()][string[]]$Identifiers
+    )
+    if ($null -eq $Identifiers) { return $null }
+    $valid = @($Identifiers |
+        ForEach-Object { if ($null -ne $_) { $_.Trim() } } |
+        Where-Object { $_ } |
+        Select-Object -Unique |
+        Sort-Object)
+    if ($valid.Count -eq 0) { return $null }
+    $joined = ($valid -join ',')
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($joined)
+        return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-DATLenovoLatestManifest {
+    <#
+    .SYNOPSIS
+        Loads the Lenovo Latest Drivers manifest as a hashtable. Missing/corrupt files yield empty.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param()
+    $path = Get-DATLenovoLatestManifestPath
+    $manifest = @{}
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+            if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+                foreach ($prop in $obj.PSObject.Properties) { $manifest[$prop.Name] = $prop.Value }
+            }
+        } catch {
+            Write-DATLogEntry -Value "[Lenovo] Latest Drivers manifest unreadable, treating as empty: $($_.Exception.Message)" -Severity 2
+            $manifest = @{}
+        }
+    }
+    return $manifest
+}
+
+function Save-DATLenovoLatestManifest {
+    <#
+    .SYNOPSIS
+        Atomically persists the Lenovo Latest Drivers manifest hashtable to disk. Never throws.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)][hashtable]$Manifest
+    )
+    $path = Get-DATLenovoLatestManifestPath
+    try {
+        $json = $Manifest | ConvertTo-Json -Depth 6
+        $tmp = "$path.tmp"
+        Set-Content -LiteralPath $tmp -Value $json -Encoding UTF8 -ErrorAction Stop
+        Move-Item -LiteralPath $tmp -Destination $path -Force -ErrorAction Stop
+        return $true
+    } catch {
+        Write-DATLogEntry -Value "[Lenovo] Failed to save Latest Drivers manifest: $($_.Exception.Message)" -Severity 2
+        return $false
+    }
+}
+
+function Update-DATLenovoLatestManifestReference {
+    <#
+    .SYNOPSIS
+        Records the remote package reference (Intune app id / ConfigMgr package name) on an existing
+        Lenovo Latest Drivers manifest entry. No-ops when the entry is absent.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][ValidateSet('intuneAppId', 'configMgrPackageId')][string]$Field,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Value
+    )
+    $manifest = Get-DATLenovoLatestManifest
+    if (-not $manifest.ContainsKey($Key)) { return $false }
+    try {
+        $entry = $manifest[$Key]
+        $entry | Add-Member -NotePropertyName $Field -NotePropertyValue $Value -Force
+        $manifest[$Key] = $entry
+        return (Save-DATLenovoLatestManifest -Manifest $manifest)
+    } catch {
+        Write-DATLogEntry -Value "[Lenovo] Failed to record Latest Drivers manifest reference ($Field): $($_.Exception.Message)" -Severity 2
+        return $false
+    }
+}
+
 function Get-DATHPSoftPaqManifestKey {
     <#
     .SYNOPSIS
@@ -15584,6 +17223,301 @@ function Get-DATPackageHash {
         # on the still-wedged pipeline, so the abandoned runspace is left for GC to reclaim.
         if (-not $timedOut) { try { $ps.Dispose() } catch {} }
     }
+}
+
+function ConvertTo-DATCanonicalJson {
+    <#
+    .SYNOPSIS
+        Serializes an object to deterministic ("canonical") JSON so that identical content yields a
+        byte-identical string -- and therefore an identical SHA256 hash -- on any machine, culture,
+        or PowerShell edition.
+    .DESCRIPTION
+        PowerShell's built-in ConvertTo-Json does NOT guarantee a stable property order (hashtable
+        enumeration order is not fixed) and it formats numbers using the current culture. Both make
+        it unusable when a hash of the output must match across environments. This writer instead:
+          - sorts every object/dictionary key with the ordinal comparer (recursively),
+          - preserves array order (callers are responsible for pre-sorting arrays whose order is not
+            semantically meaningful),
+          - formats numbers and booleans with the invariant culture,
+          - emits compact JSON (no insignificant whitespace) using UTF-8-safe escaping.
+        The result is intended for hashing, not for human display.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory)][AllowNull()]$InputObject
+    )
+
+    $sb = [System.Text.StringBuilder]::new()
+
+    $escape = {
+        param([string]$s)
+        $out = [System.Text.StringBuilder]::new()
+        [void]$out.Append('"')
+        foreach ($ch in $s.ToCharArray()) {
+            switch ($ch) {
+                '"'  { [void]$out.Append('\"'); continue }
+                '\'  { [void]$out.Append('\\'); continue }
+                "`b" { [void]$out.Append('\b'); continue }
+                "`f" { [void]$out.Append('\f'); continue }
+                "`n" { [void]$out.Append('\n'); continue }
+                "`r" { [void]$out.Append('\r'); continue }
+                "`t" { [void]$out.Append('\t'); continue }
+                default {
+                    if ([int]$ch -lt 0x20) {
+                        [void]$out.Append('\u')
+                        [void]$out.Append(([int]$ch).ToString('x4', [System.Globalization.CultureInfo]::InvariantCulture))
+                    } else {
+                        [void]$out.Append($ch)
+                    }
+                }
+            }
+        }
+        [void]$out.Append('"')
+        return $out.ToString()
+    }
+
+    $write = $null
+    $write = {
+        param($node)
+
+        if ($null -eq $node) { [void]$sb.Append('null'); return }
+
+        # Handle scalars FIRST. The -is checks below transparently see through any PSObject/ETS
+        # wrapper added by the pipeline (e.g. Sort-Object), so scalars must be tested before the
+        # structured-type unwrap -- otherwise unwrapping a wrapped scalar via BaseObject yields the
+        # wrong value ($null) and the scalar renders as an empty string.
+        if ($node -is [string]) { [void]$sb.Append((& $escape $node)); return }
+        if ($node -is [bool])   { [void]$sb.Append($(if ($node) { 'true' } else { 'false' })); return }
+        if ($node -is [System.Enum]) { [void]$sb.Append((& $escape ([string]$node))); return }
+
+        if ($node -is [int] -or $node -is [long] -or $node -is [int16] -or $node -is [byte] -or `
+            $node -is [double] -or $node -is [single] -or $node -is [decimal] -or $node -is [uint32] -or $node -is [uint64]) {
+            [void]$sb.Append([System.Convert]::ToString($node, [System.Globalization.CultureInfo]::InvariantCulture))
+            return
+        }
+
+        # Structured types: unwrap any PSObject wrapper to the underlying .NET object so the
+        # IDictionary / IEnumerable checks are reliable after pipeline wrapping. Use .psobject.BaseObject
+        # (a plain .BaseObject member does not exist on wrapped scalars/collections) and null-guard it.
+        if ($node -is [System.Management.Automation.PSObject] -and $null -ne $node.psobject.BaseObject) {
+            $node = $node.psobject.BaseObject
+        }
+
+        if ($node -is [System.Collections.IDictionary]) {
+            [void]$sb.Append('{')
+            $first = $true
+            foreach ($key in ($node.Keys | Sort-Object -Property { [string]$_ } -Culture ([System.Globalization.CultureInfo]::InvariantCulture))) {
+                if (-not $first) { [void]$sb.Append(',') }
+                $first = $false
+                [void]$sb.Append((& $escape ([string]$key)))
+                [void]$sb.Append(':')
+                & $write $node[$key]
+            }
+            [void]$sb.Append('}')
+            return
+        }
+
+        if ($node -is [System.Management.Automation.PSCustomObject]) {
+            [void]$sb.Append('{')
+            $first = $true
+            foreach ($prop in ($node.PSObject.Properties | Sort-Object -Property Name -Culture ([System.Globalization.CultureInfo]::InvariantCulture))) {
+                if (-not $first) { [void]$sb.Append(',') }
+                $first = $false
+                [void]$sb.Append((& $escape $prop.Name))
+                [void]$sb.Append(':')
+                & $write $prop.Value
+            }
+            [void]$sb.Append('}')
+            return
+        }
+
+        if ($node -is [System.Collections.IEnumerable]) {
+            [void]$sb.Append('[')
+            $first = $true
+            foreach ($item in $node) {
+                if (-not $first) { [void]$sb.Append(',') }
+                $first = $false
+                & $write $item
+            }
+            [void]$sb.Append(']')
+            return
+        }
+
+        # Fallback: treat anything else as its string form.
+        [void]$sb.Append((& $escape ([string]$node)))
+    }
+
+    & $write $InputObject
+    return $sb.ToString()
+}
+
+function Get-DATDriverManifestContentHash {
+    <#
+    .SYNOPSIS
+        Computes the deterministic SHA256 content hash of a driver package manifest object.
+    .DESCRIPTION
+        Serializes the object with ConvertTo-DATCanonicalJson and hashes the UTF-8 bytes, so the
+        same package contents produce the same hash on every environment. The backend can therefore
+        deduplicate manifests globally by this hash instead of storing one copy per device.
+        Returns a lowercase hex string, or $null on failure.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory)][AllowNull()]$Manifest
+    )
+    if ($null -eq $Manifest) { return $null }
+    try {
+        $canonical = ConvertTo-DATCanonicalJson -InputObject $Manifest
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($canonical)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $sha.Dispose()
+        }
+    } catch {
+        Write-DATLogEntry -Value "[Telemetry] Failed to compute driver manifest content hash: $($_.Exception.Message)" -Severity 2
+        return $null
+    }
+}
+
+function Get-DATDriverManifestSentPath {
+    <#
+    .SYNOPSIS
+        Returns the path to the per-install cache of already-submitted driver manifest content hashes.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $settingsDir = Join-Path $global:ScriptDirectory 'Settings'
+    if (-not (Test-Path -LiteralPath $settingsDir)) {
+        try { New-Item -Path $settingsDir -ItemType Directory -Force | Out-Null } catch {}
+    }
+    return (Join-Path $settingsDir 'DriverManifestSent.json')
+}
+
+function Send-DATDriverManifest {
+    <#
+    .SYNOPSIS
+        Submits the deterministic contents manifest of a driver package to the telemetry API.
+    .DESCRIPTION
+        Builds a canonical, content-only manifest (no timestamps, tool version, machine name or
+        absolute paths) so a SHA256 hash of the payload is identical across every environment for
+        the same package contents. This lets the backend deduplicate on the content hash rather than
+        storing a copy for each of potentially 1M+ reporting devices.
+
+        The manifest content is produced by New-DATDriverManifest (cached in $script:DATLastDriverManifest
+        immediately before this call, covering both SCCM driver-pack builds and individual driver
+        packs). To further limit traffic, each install records the content hashes it has already
+        submitted and skips resending an unchanged manifest on subsequent runs.
+
+        This function no-ops safely when the 'driverManifest' endpoint is not present in the API
+        config -- the backend for this feature is not yet deployed, so this keeps the client ready
+        without emitting failures until the endpoint exists.
+    .PARAMETER OEM
+        Manufacturer, used to validate the cached manifest matches this package.
+    .PARAMETER Model
+        Model name, used to validate the cached manifest matches this package.
+    .PARAMETER OS
+        OS label, used to validate the cached manifest matches this package.
+    .PARAMETER Platform
+        The build platform (Intune / Configuration Manager / WIM Package Only / Download Only).
+    .PARAMETER Architecture
+        OS architecture (x64 / ARM64), routing metadata only -- not part of the content hash.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OEM,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Model,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OS,
+        [AllowEmptyString()][string]$Platform = '',
+        [AllowEmptyString()][string]$Architecture = ''
+    )
+
+    if (-not (Test-DATTelemetryEnabled)) { return $false }
+
+    $config = Get-DATTelemetryConfig
+    if ($null -eq $config) { return $false }
+
+    # Backend not yet deployed -- silently stay ready until the endpoint is published in the config.
+    $endpoint = $null
+    if ($config.PSObject.Properties['endpoints'] -and $config.endpoints.PSObject.Properties['driverManifest']) {
+        $endpoint = $config.endpoints.driverManifest
+    }
+    if ([string]::IsNullOrEmpty($endpoint)) {
+        Write-DATLogEntry -Value "[Telemetry] Driver manifest endpoint not configured -- skipping (feature pending backend)" -Severity 1
+        return $false
+    }
+
+    $cached = $script:DATLastDriverManifest
+    if ($null -eq $cached -or $null -eq $cached.Content) {
+        Write-DATLogEntry -Value "[Telemetry] No cached driver manifest content available to submit for $OEM $Model" -Severity 2
+        return $false
+    }
+
+    # Guard against a stale cache from an earlier package by confirming the identity matches.
+    $expectedKey = ('{0}|{1}|{2}' -f $OEM.Trim(), $Model.Trim(), $OS.Trim())
+    if ("$($cached.Key)" -ne $expectedKey) {
+        Write-DATLogEntry -Value "[Telemetry] Cached driver manifest key '$($cached.Key)' does not match '$expectedKey' -- skipping manifest submission" -Severity 2
+        return $false
+    }
+
+    # Defensive: strip any volatile fields so the hashed content can never carry a creation date,
+    # tool version or other environment-specific value that would break cross-environment hashing.
+    $content = [ordered]@{}
+    foreach ($prop in $cached.Content.GetEnumerator()) {
+        if ($prop.Key -in @('generated', 'createdAt', 'created', 'timestamp', 'toolVersion', 'datVersion', 'machineName', 'source')) { continue }
+        $content[$prop.Key] = $prop.Value
+    }
+
+    $contentHash = Get-DATDriverManifestContentHash -Manifest $content
+    if ([string]::IsNullOrEmpty($contentHash)) { return $false }
+
+    # Per-install dedupe: never resend a manifest whose content is unchanged from a previous run.
+    $sentPath = Get-DATDriverManifestSentPath
+    $sentHashes = New-Object System.Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $sentPath) {
+        try {
+            $raw = Get-Content -LiteralPath $sentPath -Raw -ErrorAction Stop
+            if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+                foreach ($h in @($parsed)) { if (-not [string]::IsNullOrWhiteSpace($h)) { $sentHashes.Add([string]$h) } }
+            }
+        } catch { }
+    }
+    if ($sentHashes.Contains($contentHash)) {
+        Write-DATLogEntry -Value "[Telemetry] Driver manifest $contentHash already submitted -- skipping resend" -Severity 1
+        return $false
+    }
+
+    $body = @{
+        telemetryId   = Get-DATTelemetryId
+        manufacturer  = $OEM
+        model         = $Model
+        osVersion     = $OS
+        osArchitecture = $Architecture
+        platform      = $Platform
+        datVersion    = [string]$global:ScriptRelease
+        executionMode = $global:ExecutionMode
+        contentHash   = $contentHash
+        hashMethod    = 'SHA256'
+        content       = $content
+    }
+
+    Send-DATTelemetry -Endpoint $endpoint -Body $body
+
+    # Record the submitted hash (bounded) so repeat runs on this install do not resend it.
+    try {
+        $sentHashes.Add($contentHash)
+        $trimmed = @($sentHashes | Select-Object -Last 5000)
+        $trimmed | ConvertTo-Json -Compress | Set-Content -LiteralPath $sentPath -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        Write-DATLogEntry -Value "[Telemetry] Could not update driver manifest sent-cache ($sentPath): $($_.Exception.Message)" -Severity 2
+    }
+    return $true
 }
 
 function Send-DATDriverReport {

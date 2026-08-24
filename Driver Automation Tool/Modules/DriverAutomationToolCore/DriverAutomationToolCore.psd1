@@ -1,6 +1,6 @@
 @{
     RootModule        = 'DriverAutomationToolCore.psm1'
-    ModuleVersion     = '10.2.3.0'
+    ModuleVersion     = '10.2.4.0'
     GUID              = 'a3e0e746-8e3a-4c5b-b8d0-3b2e4f6a9c1d'
     Author            = 'Maurice Daly'
     CompanyName       = 'MSEndpointMgr'
@@ -110,6 +110,9 @@
         'Send-DATDriverReport',
         'Send-DATBiosReport',
         'Send-DATSummaryReport',
+        'ConvertTo-DATCanonicalJson',
+        'Get-DATDriverManifestContentHash',
+        'Send-DATDriverManifest',
         'Test-DATTelemetryConnection',
         'Get-DATBiosCatalog',
         'Get-DATDriverCatalog',
