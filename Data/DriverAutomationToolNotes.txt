@@ -3,6 +3,18 @@ Release Notes
 IMPORTANT
 - DAT Downloads have been moved to GitHub - https://github.com/maurice-daly/DriverAutomationTool
 
+Version 10.2.4
+What's New & Fixed
+- OEM Support — Dell and Lenovo now join HP with a Latest Drivers build type. Instead of the OEM's monthly SCCM driver pack, packages can be built from the newest individual drivers pulled straight from the Dell Command Update catalog (Dell) and the Lenovo per-model update catalog (Lenovo). Other manufacturers continue to use their SCCM driver pack.
+- Driver Packaging — New Update Cadence control (Off, Daily, Weekly, Monthly) throttles how often a Latest Drivers pack is re-evaluated on repeat or scheduled runs. Within the window the existing pack is retained, and a new pack is built only when the underlying driver set actually changes — tracked per model so unchanged sets are skipped rather than rebuilt every run.
+- Intune Deployment — Auto-deployed packages can now target one or more specific Entra security groups (for example a pilot ring plus a broad ring) instead of only All Devices, applied across each package's assignment.
+- User Interface — Added a live in-progress build tile so long-running builds show current activity instead of appearing stuck, plus new "New" feature indicators and icons that highlight the Latest Drivers build type and related options, and assorted layout/theme refinements.
+- Documentation — User guide and README updated for the Dell/Lenovo Latest Drivers build type and update cadence, with new design/feasibility documentation added for the Dell On-Demand (DCU) catalog and Lenovo Latest Driver sourcing.
+- Telemetry / Backend — Deterministic driver-package contents manifest with a cross-environment-stable content hash, ready to submit to the (pending) backend API for global de-duplication.
+- User Interface — New "What's New" modal shown once per version after an upgrade; the "New" feature pills now also clear when you interact with a section's controls, not just hover.
+- Reporting — Individual per-driver download failures are now captured and surfaced in the build "View Failures" modal (previously only logged and silently skipped).
+- Driver Packaging — Dell and Lenovo Latest Drivers now honour the Concurrent Driver Downloads setting (parallel downloads), which previously only applied to HP.
+
 Version 10.2.3
 What's New & Fixed
 - Security / FIPS Compliance — Package integrity hashing now uses SHA256 instead of MD5, so the tool no longer errors out with "not part of the Windows Platform FIPS validated cryptographic algorithms" on FIPS-enforced hosts. Where an OEM catalog only publishes an MD5 hash, verification now degrades gracefully to Authenticode/HTTPS trust rather than failing the download. (#900)

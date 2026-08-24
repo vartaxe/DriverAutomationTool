@@ -934,7 +934,7 @@
                                    Foreground="{DynamicResource AccentColor}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <TextBlock Text="Driver Automation Tool" FontSize="13" FontWeight="SemiBold"
                                    Foreground="{DynamicResource WindowForeground}" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="txt_Version" Text=" Version 10.2.3" FontSize="11"
+                        <TextBlock x:Name="txt_Version" Text=" Version 10.2.4" FontSize="11"
                                    Foreground="{DynamicResource InputPlaceholder}" VerticalAlignment="Center" Margin="4,0"/>
                     </StackPanel>
 
@@ -1035,7 +1035,10 @@
                             </StackPanel>
                             <Button x:Name="nav_IntuneSettings"
                                     Style="{StaticResource NavButton}">
-                                <TextBlock><Run Text="&#xE774;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Intune Settings"/></TextBlock>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock VerticalAlignment="Center"><Run Text="&#xE774;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Intune Settings"/></TextBlock>
+                                    <Ellipse x:Name="dot_IntuneSettings" Width="7" Height="7" Fill="{DynamicResource AccentColor}" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                </StackPanel>
                             </Button>
                             <StackPanel x:Name="panel_IntuneSub" Visibility="Collapsed">
                                 <Button x:Name="nav_IntuneAuth"
@@ -1044,7 +1047,10 @@
                                 </Button>
                                 <Button x:Name="nav_IntuneOptions"
                                         Style="{StaticResource SubNavButton}">
-                                    <TextBlock><Run Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Package Options"/></TextBlock>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock VerticalAlignment="Center"><Run Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Package Options"/></TextBlock>
+                                        <Ellipse x:Name="dot_IntuneOptions" Width="7" Height="7" Fill="{DynamicResource AccentColor}" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                    </StackPanel>
                                 </Button>
                                 <Button x:Name="nav_IntunePackageMgmt"
                                         Style="{StaticResource SubNavButton}">
@@ -1065,7 +1071,10 @@
                             </StackPanel>
                             <Button x:Name="nav_CommonSettings"
                                     Style="{StaticResource NavButton}">
-                                <TextBlock><Run Text="&#xE713;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Common Settings"/></TextBlock>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock VerticalAlignment="Center"><Run Text="&#xE713;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Common Settings"/></TextBlock>
+                                    <Ellipse x:Name="dot_CommonSettings" Width="7" Height="7" Fill="{DynamicResource AccentColor}" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                </StackPanel>
                             </Button>
 
                             <TextBlock Text="TOOLS" FontSize="10" FontWeight="Bold" Margin="16,16,0,6"
@@ -3703,9 +3712,14 @@
 
                                     <!-- Custom deployment target sub-section -->
                                     <Border Height="1" Background="{DynamicResource CardBorder}" Margin="0,16,0,16"/>
-                                    <TextBlock Text="Custom deployment target (optional)" FontSize="13" FontWeight="SemiBold"
-                                               Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,6"/>
-                                    <TextBlock Text="Override the built-in 'All Devices' group by targeting a specific Entra security group. Search by display name, or paste a group Object ID. When set, all auto-deployed packages (and any assignment filters) are assigned to this group instead of All Devices. Leave empty to use All Devices."
+                                    <StackPanel x:Name="zone_MultiDeploy" Orientation="Horizontal" Background="Transparent" Margin="0,0,0,6">
+                                        <TextBlock Text="Custom deployment target (optional)" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource WindowForeground}"/>
+                                        <Border x:Name="pill_MultiDeploy" Visibility="Collapsed" Background="{DynamicResource AccentColor}" CornerRadius="8" Padding="7,1,7,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="New" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="Override the built-in 'All Devices' group by targeting one or more specific Entra security groups (for example a pilot ring plus a broad ring). Search by display name, or paste a group Object ID, and add each group to the list. When set, all auto-deployed packages (and any assignment filters) are assigned to every group in the list instead of All Devices. Leave the list empty to use All Devices."
                                                FontSize="13" Foreground="{DynamicResource InputPlaceholder}"
                                                TextWrapping="Wrap" Margin="0,0,0,12" LineHeight="20"/>
 
@@ -3732,31 +3746,25 @@
                                     <ComboBox x:Name="cmb_DeployGroupResults" Height="34" Visibility="Collapsed" Margin="0,0,0,8"
                                               ToolTip="Select a group from the search results"/>
 
-                                    <!-- Selected group panel -->
-                                    <Border x:Name="panel_DeployGroupSelected" Background="{DynamicResource InputBackground}" CornerRadius="6"
-                                            Padding="12,8" Visibility="Collapsed">
-                                        <Grid>
+                                    <!-- Selected groups list (rows built in code-behind) -->
+                                    <StackPanel x:Name="panel_DeployGroupSelected" Visibility="Collapsed">
+                                        <Grid Margin="0,0,0,6">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                                <TextBlock Text="Target group" FontSize="11" FontWeight="SemiBold"
-                                                           Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,2"/>
-                                                <TextBlock x:Name="txt_DeployGroupSelectedName" FontSize="13" FontWeight="SemiBold"
-                                                           Foreground="{DynamicResource WindowForeground}" TextWrapping="Wrap"/>
-                                                <TextBlock x:Name="txt_DeployGroupSelectedId" FontSize="11" FontFamily="Consolas"
-                                                           Foreground="{DynamicResource InputPlaceholder}" Margin="0,2,0,0" TextWrapping="Wrap"/>
-                                            </StackPanel>
-                                            <Button x:Name="btn_ClearDeployGroup" Grid.Column="1" Style="{StaticResource RoundedButton}" Height="30"
-                                                    Cursor="Hand" ToolTip="Clear custom target and revert to All Devices" Padding="10,4"
-                                                    VerticalAlignment="Center" Margin="8,0,0,0">
+                                            <TextBlock Grid.Column="0" Text="Target groups" FontSize="11" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource InputPlaceholder}" VerticalAlignment="Center"/>
+                                            <Button x:Name="btn_ClearDeployGroup" Grid.Column="1" Style="{StaticResource RoundedButton}" Height="28"
+                                                    Cursor="Hand" ToolTip="Remove all target groups and revert to All Devices" Padding="10,2"
+                                                    VerticalAlignment="Center">
                                                 <TextBlock FontSize="11" Foreground="{DynamicResource WindowForeground}">
-                                                    <Run Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="10"/><Run Text="  Clear"/>
+                                                    <Run Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="10"/><Run Text="  Clear all"/>
                                                 </TextBlock>
                                             </Button>
                                         </Grid>
-                                    </Border>
+                                        <StackPanel x:Name="list_DeployGroups"/>
+                                    </StackPanel>
 
                                 </StackPanel>
                             </Border>
@@ -5548,6 +5556,143 @@
                                         </StackPanel>
                                     </Border>
 
+                                    <!-- Driver Package Build Type -->
+                                    <Border Style="{StaticResource CardPanel}" Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <StackPanel x:Name="zone_LenovoLatest" Orientation="Horizontal" Background="Transparent" Margin="0,0,0,6">
+                                                <TextBlock FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource WindowForeground}">
+                                                    <Run Text="&#xE912;" FontFamily="Segoe MDL2 Assets" FontSize="14"/><Run Text="  Driver Package Build Type"/>
+                                                </TextBlock>
+                                                <Border x:Name="pill_LenovoLatest" Visibility="Collapsed" Background="{DynamicResource AccentColor}" CornerRadius="8" Padding="7,1,7,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="New" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="18"
+                                                       Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,10">
+                                                SCCM Driver Packs are created from the OEM's SCCM / Configuration Manager driver package release, which is typically updated once a month. Due to the model support cadence defined by the OEM, these driver packages might not contain the latest driver updates.
+                                            </TextBlock>
+                                            <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="18"
+                                                       Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,12">
+                                                For Dell, HP and Lenovo, selecting Latest Drivers forces the tool to use the latest individual driver sources -- the Dell Command Update catalog for Dell, the HP Client Management Script Library (CMSL) lookup for HP, or the Lenovo per-model update catalog for Lenovo. Other manufacturers continue to use their SCCM driver pack.
+                                            </TextBlock>
+
+                                            <TextBlock Text="Build Type" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,4"/>
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="250"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox x:Name="cmb_HPDriverPackSource" Grid.Column="0" Height="34">
+                                                    <ComboBoxItem Content="SCCM Driver Pack" Tag="DriverPack" IsSelected="True"/>
+                                                    <ComboBoxItem Content="Latest Drivers" Tag="SoftPaqs"/>
+                                                </ComboBox>
+                                            </Grid>
+
+                                            <!-- Warning: Latest Drivers selected but HPCMSL missing (HP pre-req) -->
+                                            <Border x:Name="txt_HPLatestDriversWarning" Visibility="Collapsed"
+                                                    Background="{DynamicResource InputBackground}" CornerRadius="6" Padding="12,10" Margin="0,0,0,12">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                               VerticalAlignment="Center" Margin="0,0,10,0"
+                                                               Foreground="{DynamicResource StatusWarning}" Text="&#xE7BA;"/>
+                                                    <TextBlock Grid.Column="1" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap"
+                                                               Foreground="{DynamicResource StatusWarning}"
+                                                               Text="HP requires the HPCMSL module to build Latest Drivers packages. Install it below to enable HP Latest Drivers support."/>
+                                                </Grid>
+                                            </Border>
+
+                                            <!-- Concurrent Driver Downloads -->
+                                            <TextBlock x:Name="lbl_HPConcurrentTitle" Text="Concurrent Driver Downloads" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,4" Opacity="0.4"/>
+                                            <TextBlock x:Name="lbl_HPConcurrentDesc" Text="Number of individual driver files downloaded simultaneously when building a Latest Drivers package for Dell, HP or Lenovo. Higher values speed up downloads but increase network and memory usage."
+                                                       FontSize="12" Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,8" TextWrapping="Wrap" LineHeight="18" Opacity="0.4"/>
+                                            <Grid Margin="0,0,0,16">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="200"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox x:Name="cmb_HPConcurrentDownloads" Grid.Column="0" Height="34" IsEnabled="False">
+                                                    <ComboBoxItem Content="1 (Sequential)" Tag="1"/>
+                                                    <ComboBoxItem Content="2 (Default)" Tag="2" IsSelected="True"/>
+                                                    <ComboBoxItem Content="3" Tag="3"/>
+                                                    <ComboBoxItem Content="4" Tag="4"/>
+                                                </ComboBox>
+                                                <TextBlock Grid.Column="1" FontSize="11"
+                                                           Foreground="{DynamicResource InputPlaceholder}"
+                                                           VerticalAlignment="Center" Margin="12,0,0,0"
+                                                           Text="Recommended: 2 for most connections" x:Name="lbl_HPConcurrentHint" Opacity="0.4"/>
+                                            </Grid>
+
+                                            <!-- Update Cadence (Latest Drivers only) -->
+                                            <StackPanel x:Name="zone_UpdateCadence" Orientation="Horizontal" Background="Transparent" Margin="0,0,0,4">
+                                                <TextBlock x:Name="lbl_LatestCadenceTitle" Text="Update Cadence" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource WindowForeground}" Opacity="0.4"/>
+                                                <Border x:Name="pill_UpdateCadence" Visibility="Collapsed" Background="{DynamicResource AccentColor}" CornerRadius="8" Padding="7,1,7,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="New" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock x:Name="lbl_LatestCadenceDesc" Text="How often a Latest Drivers pack is re-evaluated when the build runs repeatedly (e.g. on a schedule). Within the window the existing pack is retained; when the window elapses the driver set is re-checked and a new pack is built only if it changed. Force Update always rebuilds."
+                                                       FontSize="12" Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,8" TextWrapping="Wrap" LineHeight="18" Opacity="0.4"/>
+                                            <Grid Margin="0,0,0,16">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="200"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox x:Name="cmb_LatestDriverCadence" Grid.Column="0" Height="34" IsEnabled="False">
+                                                    <ComboBoxItem Content="Off (rebuild every run)" Tag="Off" IsSelected="True"/>
+                                                    <ComboBoxItem Content="Daily" Tag="Daily"/>
+                                                    <ComboBoxItem Content="Weekly" Tag="Weekly"/>
+                                                    <ComboBoxItem Content="Monthly" Tag="Monthly"/>
+                                                </ComboBox>
+                                                <TextBlock Grid.Column="1" FontSize="11"
+                                                           Foreground="{DynamicResource InputPlaceholder}"
+                                                           VerticalAlignment="Center" Margin="12,0,0,0"
+                                                           Text="Applies to Dell / HP / Lenovo Latest Drivers packs" x:Name="lbl_LatestCadenceHint" Opacity="0.4"/>
+                                            </Grid>
+
+                                            <!-- Divider -->
+                                            <Border Height="1" Background="{DynamicResource SidebarActive}" Margin="0,0,0,14"/>
+
+                                            <!-- HP CMSL Section (pre-req for HP Latest Drivers) -->
+                                            <TextBlock Text="HP Client Management Script Library (HPCMSL)" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,6"/>
+                                            <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="20"
+                                                       Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,10">
+                                                The Driver Automation Tool uses the HPCMSL PowerShell module to create driver and BIOS packages for HP devices, and it is required to build HP Latest Drivers packages. Without this module installed, HP will be unavailable as a manufacturer option.
+                                            </TextBlock>
+                                            <Border Background="{DynamicResource InputBackground}" CornerRadius="6" Padding="12,10" Margin="0,0,0,0">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock x:Name="txt_HpcmslStatusIcon" Grid.Column="0"
+                                                               FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                               VerticalAlignment="Center" Margin="0,0,10,0"
+                                                               Foreground="{DynamicResource InputPlaceholder}"
+                                                               Text="&#xE946;"/>
+                                                    <TextBlock x:Name="txt_HpcmslStatus" Grid.Column="1"
+                                                               FontSize="12" VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource InputPlaceholder}"
+                                                               Text="Checking HPCMSL status..."/>
+                                                    <Button x:Name="btn_InstallHpcmsl" Grid.Column="2"
+                                                            Style="{StaticResource SecondaryButton}" Height="30"
+                                                            Margin="10,0,0,0" Visibility="Collapsed">
+                                                        <TextBlock FontSize="12">
+                                                            <Run Text="&#xE896;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Install Module"/>
+                                                        </TextBlock>
+                                                    </Button>
+                                                </Grid>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+
                                     <!-- Purge Downloads -->
                                     <Border Style="{StaticResource CardPanel}" Margin="0,0,0,12">
                                         <StackPanel>
@@ -5707,79 +5852,6 @@
                                                        Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,12">
                                                 <Run Text="&#xE74C;" FontFamily="Segoe MDL2 Assets" FontSize="14"/><Run Text="  External Utilities &amp; Modules"/>
                                             </TextBlock>
-
-                                            <!-- HP CMSL Section -->
-                                            <TextBlock Text="HP Client Management Script Library (HPCMSL)" FontSize="13" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,6"/>
-                                            <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="20"
-                                                       Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,10">
-                                                The Driver Automation Tool uses the HPCMSL PowerShell module to create driver and BIOS packages for HP devices. Without this module installed, HP will be unavailable as a manufacturer option.
-                                            </TextBlock>
-                                            <Border Background="{DynamicResource InputBackground}" CornerRadius="6" Padding="12,10" Margin="0,0,0,16">
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                        <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock x:Name="txt_HpcmslStatusIcon" Grid.Column="0"
-                                                               FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                                               VerticalAlignment="Center" Margin="0,0,10,0"
-                                                               Foreground="{DynamicResource InputPlaceholder}"
-                                                               Text="&#xE946;"/>
-                                                    <TextBlock x:Name="txt_HpcmslStatus" Grid.Column="1"
-                                                               FontSize="12" VerticalAlignment="Center"
-                                                               Foreground="{DynamicResource InputPlaceholder}"
-                                                               Text="Checking HPCMSL status..."/>
-                                                    <Button x:Name="btn_InstallHpcmsl" Grid.Column="2"
-                                                            Style="{StaticResource SecondaryButton}" Height="30"
-                                                            Margin="10,0,0,0" Visibility="Collapsed">
-                                                        <TextBlock FontSize="12">
-                                                            <Run Text="&#xE896;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Install Module"/>
-                                                        </TextBlock>
-                                                    </Button>
-                                                </Grid>
-                                            </Border>
-
-                                            <!-- HP Driver Pack Source -->
-                                            <TextBlock Text="Driver Pack Source" FontSize="13" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,4"/>
-                                            <TextBlock Text="Choose how HP drivers are obtained. SCCM Driver Pack downloads a single monolithic pack from HP's catalog. Individual SoftPaqs downloads each driver component separately using HPCMSL, giving more granular and up-to-date drivers."
-                                                       FontSize="12" Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,8" TextWrapping="Wrap" LineHeight="18"/>
-                                            <Grid Margin="0,0,0,16">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="250"/>
-                                                </Grid.ColumnDefinitions>
-                                                <ComboBox x:Name="cmb_HPDriverPackSource" Grid.Column="0" Height="34">
-                                                    <ComboBoxItem Content="SCCM Driver Pack" Tag="DriverPack" IsSelected="True"/>
-                                                    <ComboBoxItem Content="Individual SoftPaqs" Tag="SoftPaqs"/>
-                                                </ComboBox>
-                                            </Grid>
-
-                                            <!-- HP Concurrent SoftPaq Downloads -->
-                                            <TextBlock x:Name="lbl_HPConcurrentTitle" Text="Concurrent SoftPaq Downloads" FontSize="13" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,4" Opacity="0.4"/>
-                                            <TextBlock x:Name="lbl_HPConcurrentDesc" Text="Number of HP SoftPaq files downloaded simultaneously during driver pack creation. Higher values speed up downloads but increase network and memory usage."
-                                                       FontSize="12" Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,8" TextWrapping="Wrap" LineHeight="18" Opacity="0.4"/>
-                                            <Grid Margin="0,0,0,16">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="200"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <ComboBox x:Name="cmb_HPConcurrentDownloads" Grid.Column="0" Height="34" IsEnabled="False">
-                                                    <ComboBoxItem Content="1 (Sequential)" Tag="1"/>
-                                                    <ComboBoxItem Content="2 (Default)" Tag="2" IsSelected="True"/>
-                                                    <ComboBoxItem Content="3" Tag="3"/>
-                                                    <ComboBoxItem Content="4" Tag="4"/>
-                                                </ComboBox>
-                                                <TextBlock Grid.Column="1" FontSize="11"
-                                                           Foreground="{DynamicResource InputPlaceholder}"
-                                                           VerticalAlignment="Center" Margin="12,0,0,0"
-                                                           Text="Recommended: 2 for most connections" x:Name="lbl_HPConcurrentHint" Opacity="0.4"/>
-                                            </Grid>
-
-                                            <!-- Divider -->
-                                            <Border Height="1" Background="{DynamicResource SidebarActive}" Margin="0,0,0,14"/>
 
                                             <!-- Download Engine Section -->
                                             <TextBlock Text="Download Engine" FontSize="13" FontWeight="SemiBold"
@@ -6814,7 +6886,7 @@
                                     <StackPanel>
                                         <TextBlock Text="Driver Automation Tool" FontSize="22" FontWeight="Bold"
                                                    Foreground="{DynamicResource AccentColor}" Margin="0,0,0,4"/>
-                                        <TextBlock x:Name="txt_AboutVersion" Text="Version 10.2.3" FontSize="14"
+                                        <TextBlock x:Name="txt_AboutVersion" Text="Version 10.2.4" FontSize="14"
                                                    Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,16"/>
 
                                         <TextBlock TextWrapping="Wrap" FontSize="13"
@@ -7080,6 +7152,41 @@ BY USING THIS TOOL, YOU ACKNOWLEDGE AND AGREE THAT:
                                 Style="{StaticResource RoundedButton}"
                                 HorizontalAlignment="Right" Height="34">
                             <TextBlock><Run Text="&#xE711;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Close"/></TextBlock>
+                        </Button>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- What's New Modal Overlay (shown once per version after an upgrade) -->
+            <Grid x:Name="overlay_WhatsNew" Grid.Row="0" Grid.RowSpan="2" Visibility="Collapsed">
+                <Border Background="#80000000"/>
+                <Border Background="{DynamicResource WindowBackground}"
+                        BorderBrush="{DynamicResource WindowBorder}" BorderThickness="1"
+                        CornerRadius="{StaticResource CardRadius}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Width="640" MaxHeight="600" Padding="30">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Margin="0,0,0,6">
+                            <TextBlock Text="What's New" FontSize="26" FontWeight="Bold"
+                                       Foreground="{DynamicResource WindowForeground}"/>
+                            <TextBlock x:Name="txt_WhatsNewVersion" Text="Version" FontSize="15" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource AccentColor}" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <Border Grid.Row="1" Height="1" Background="{DynamicResource CardBorder}" Margin="0,10,0,16"/>
+                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Margin="0,0,0,20">
+                            <!-- Feature/fix rows are built in code-behind (bold category + description, spaced, no bullets) -->
+                            <StackPanel x:Name="panel_WhatsNewItems"/>
+                        </ScrollViewer>
+                        <Button x:Name="btn_WhatsNewClose" Grid.Row="3"
+                                Style="{StaticResource RoundedButton}"
+                                HorizontalAlignment="Right" Height="36" Padding="16,4">
+                            <TextBlock><Run Text="&#xE73E;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Got it"/></TextBlock>
                         </Button>
                     </Grid>
                 </Border>

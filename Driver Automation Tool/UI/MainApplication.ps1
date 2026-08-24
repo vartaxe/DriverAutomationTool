@@ -2550,11 +2550,23 @@ function Show-DATBuildFailuresDialog {
     )
 
     $failureList = @($Failures)
-    if ($failureList.Count -eq 0) { return }
+
+    # Individual driver/component download failures (Latest Drivers builds) are recorded separately
+    # from model-level package failures so they can be shown even when the model itself succeeded.
+    $driverFailures = @()
+    try {
+        $ddfJson = (Get-ItemProperty -Path $global:RegPath -Name 'DriverDownloadFailures' -ErrorAction SilentlyContinue).DriverDownloadFailures
+        if (-not [string]::IsNullOrWhiteSpace($ddfJson)) {
+            $ddfParsed = $ddfJson | ConvertFrom-Json -ErrorAction Stop
+            $driverFailures = @($ddfParsed)
+        }
+    } catch { $driverFailures = @() }
+
+    if ($failureList.Count -eq 0 -and $driverFailures.Count -eq 0) { return }
 
     # Normalise into one clean entry per failed model (de-duplicates repeated text).
     $groups = @(ConvertTo-DATFailureGroups -Failures $failureList)
-    if ($groups.Count -eq 0) { return }
+    if ($groups.Count -eq 0 -and $driverFailures.Count -eq 0) { return }
 
     $theme = Get-DATTheme -ThemeName $script:CurrentTheme
     $bgColor = [System.Windows.Media.ColorConverter]::ConvertFromString($theme['CardBackground'])
@@ -2620,7 +2632,11 @@ function Show-DATBuildFailuresDialog {
 
     # Subtitle / count
     $subText = [System.Windows.Controls.TextBlock]::new()
-    $subText.Text = "$($groups.Count) model$(if ($groups.Count -ne 1) { 's' }) failed to build -- expand a row for details"
+    $subText.Text = if ($groups.Count -gt 0) {
+        "$($groups.Count) model$(if ($groups.Count -ne 1) { 's' }) failed to build -- expand a row for details"
+    } else {
+        "$($driverFailures.Count) individual driver download$(if ($driverFailures.Count -ne 1) { 's' }) failed -- see below"
+    }
     $subText.FontSize = 12
     $subText.Foreground = $dimBrush
     $subText.HorizontalAlignment = 'Center'
@@ -2750,6 +2766,55 @@ function Show-DATBuildFailuresDialog {
 
         $card.Child = $cardPanel
         $listPanel.Children.Add($card) | Out-Null
+    }
+
+    # Individual driver download failures -- listed per model (these can occur even when the model's
+    # package still built from the components that succeeded, so they are shown as their own section).
+    if ($driverFailures.Count -gt 0) {
+        $ddHeader = [System.Windows.Controls.TextBlock]::new()
+        $ddHeader.Text = "Individual driver download failures ($($driverFailures.Count))"
+        $ddHeader.FontSize = 12
+        $ddHeader.FontWeight = [System.Windows.FontWeights]::SemiBold
+        $ddHeader.Foreground = $dimBrush
+        $ddHeader.Margin = [System.Windows.Thickness]::new(2, 6, 0, 8)
+        $listPanel.Children.Add($ddHeader) | Out-Null
+
+        $ddByModel = $driverFailures | Group-Object { "$($_.OEM) $($_.Model)".Trim() }
+        foreach ($mg in $ddByModel) {
+            $mcard = [System.Windows.Controls.Border]::new()
+            $mcard.Background = [System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.Color]::FromArgb(60, $rowBgColor.R, $rowBgColor.G, $rowBgColor.B))
+            $mcard.CornerRadius = [System.Windows.CornerRadius]::new(8)
+            $mcard.Padding = [System.Windows.Thickness]::new(12, 8, 12, 8)
+            $mcard.Margin = [System.Windows.Thickness]::new(0, 0, 0, 8)
+            $mcard.BorderBrush = [System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.Color]::FromArgb(90, $errorBrush.Color.R, $errorBrush.Color.G, $errorBrush.Color.B))
+            $mcard.BorderThickness = [System.Windows.Thickness]::new(1)
+            $mpanel = [System.Windows.Controls.StackPanel]::new()
+
+            $mtitle = [System.Windows.Controls.TextBlock]::new()
+            $mtitle.Text = "$($mg.Name) -- $($mg.Count) driver$(if ($mg.Count -ne 1) { 's' })"
+            $mtitle.FontSize = 13
+            $mtitle.FontWeight = [System.Windows.FontWeights]::SemiBold
+            $mtitle.Foreground = $fgBrush
+            $mtitle.TextTrimming = 'CharacterEllipsis'
+            $mtitle.Margin = [System.Windows.Thickness]::new(0, 0, 0, 4)
+            $mpanel.Children.Add($mtitle) | Out-Null
+
+            foreach ($df in $mg.Group) {
+                $dname = "$($df.Driver)"; if ([string]::IsNullOrWhiteSpace($dname)) { $dname = 'Unknown driver' }
+                $drsn = "$($df.Reason)"; if ([string]::IsNullOrWhiteSpace($drsn)) { $drsn = 'see log for details' }
+                $dline = [System.Windows.Controls.TextBlock]::new()
+                $dline.Text = "- $dname : $drsn"
+                $dline.FontSize = 12
+                $dline.Foreground = $dimBrush
+                $dline.TextWrapping = 'Wrap'
+                $dline.Margin = [System.Windows.Thickness]::new(0, 2, 0, 0)
+                $mpanel.Children.Add($dline) | Out-Null
+            }
+            $mcard.Child = $mpanel
+            $listPanel.Children.Add($mcard) | Out-Null
+        }
     }
 
     $scroll.Content = $listPanel
@@ -3054,7 +3119,14 @@ function Show-DATBuildSummaryDialog {
     if (-not [string]::IsNullOrEmpty($failuresJson)) {
         try { $buildFailures = @($failuresJson | ConvertFrom-Json) } catch { $buildFailures = @() }
     }
-    if ($buildFailures.Count -gt 0) {
+    # Individual driver download failures are recorded separately and shown even when no model failed.
+    $driverFailuresJson = $null
+    try { $driverFailuresJson = (Get-ItemProperty -Path $global:RegPath -Name 'DriverDownloadFailures' -ErrorAction SilentlyContinue).DriverDownloadFailures } catch { $driverFailuresJson = $null }
+    $driverFailures = @()
+    if (-not [string]::IsNullOrEmpty($driverFailuresJson)) {
+        try { $ddfTmp = $driverFailuresJson | ConvertFrom-Json; $driverFailures = @($ddfTmp) } catch { $driverFailures = @() }
+    }
+    if ($buildFailures.Count -gt 0 -or $driverFailures.Count -gt 0) {
         $btnFailures = [System.Windows.Controls.Button]::new()
         $btnFailures.Height = 36
         $btnFailures.HorizontalAlignment = 'Stretch'
@@ -3076,7 +3148,7 @@ function Show-DATBuildSummaryDialog {
         $btnFailures.Foreground = $errorBrush
         $btnFailures.FontSize = 13
         $btnFailures.FontWeight = [System.Windows.FontWeights]::SemiBold
-        $btnFailures.Content = "View Failures ($($buildFailures.Count))"
+        $btnFailures.Content = "View Failures ($($buildFailures.Count + $driverFailures.Count))"
         # Stash the captured data in script scope and use a plain (non-closure) handler.
         # A GetNewClosure() scriptblock is rebound to a new dynamic module session state,
         # which cannot see script-level functions like Show-DATBuildFailuresDialog (the
@@ -5844,7 +5916,10 @@ function Update-DATBuildModalStats {
         # pre-build estimate undercounts whenever a model's grid status and the build's own
         # skip-if-current decision diverge, so grow the figure to match reality and stay truthful.
         if ($null -ne $script:BuildModalDownloadsValue) {
-            $required = [Math]::Max([int]$script:BuildInitialDownloads, $created)
+            # Include extra individual-file downloads reported by the build (Latest Drivers DUPs).
+            $extra = 0
+            try { $extra = [int]$rv.LatestDownloadsExtra } catch { $extra = 0 }
+            $required = [Math]::Max([int]$script:BuildInitialDownloads + $extra, $created)
             $script:BuildModalDownloadsValue.Text = "$required"
         }
 
@@ -7224,7 +7299,26 @@ function Set-DATActiveView {
 
     # Show target view
     $targetView = $Window.FindName($ViewName)
-    if ($null -ne $targetView) { $targetView.Visibility = 'Visible' }
+    if ($null -ne $targetView) {
+        $targetView.Visibility = 'Visible'
+        # Each view carries its own ScrollViewer, so a revisit would otherwise keep its old
+        # offset. Reset the view's OUTERMOST ScrollViewer to the top (deferred until after layout).
+        # Breadth-first + stop-at-first so we never recurse into nested/virtualized list scrollers.
+        $resetScroll = {
+            try {
+                $queue = New-Object System.Collections.Queue
+                $queue.Enqueue($targetView)
+                while ($queue.Count -gt 0) {
+                    $node = $queue.Dequeue()
+                    if ($null -eq $node) { continue }
+                    if ($node -is [System.Windows.Controls.ScrollViewer]) { $node.ScrollToTop(); break }
+                    $childCount = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($node)
+                    for ($i = 0; $i -lt $childCount; $i++) { $queue.Enqueue([System.Windows.Media.VisualTreeHelper]::GetChild($node, $i)) }
+                }
+            } catch { }
+        }.GetNewClosure()
+        $Window.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::Background, [System.Action]$resetScroll) | Out-Null
+    }
 
     # Auto-load packages when navigating to Package Management
     if ($ViewName -eq 'view_Packages') {
@@ -10419,6 +10513,10 @@ $btn_Build.Add_Click({
 
     $global:SelectedModels = [System.Collections.ArrayList]::new()
     $downloadsRequired = 0   # count of new/updated packages that will actually download
+    # The deployed-version "current" suppression only applies to deployment platforms. WIM Package
+    # Only / Download Only have nothing deployed to compare against and always build every applicable
+    # package, so their tile must count them all.
+    $suppressCurrent = ($selectedPlatform -like '*Configuration Manager*') -or ($selectedPlatform -eq 'Intune')
     foreach ($model in $selectedModels) {
         # Determine the OS label for package naming
         $osForPackage = if ($model.Build -eq 'All') {
@@ -10443,13 +10541,16 @@ $btn_Build.Add_Click({
         # only, and vice versa. Leaves 'All' when both need work, when either is unknown, or when
         # the scan hasn't run -- the build's skip-if-current logic remains the safety net.
         $mBiosOnly      = $(try { [bool]$model.BIOSOnly } catch { $false })
-        $dvApplicable   = (-not $mBiosOnly) -and -not [string]::IsNullOrEmpty($model.Version)
-        $biosApplicable = (-not [string]::IsNullOrEmpty($model.BIOSVersion)) -and ($model.OEM -ne 'Microsoft')
+        # Applicability mirrors the build-progress modal's row logic (driver row unless BIOS-only,
+        # BIOS row unless Microsoft) rather than requiring a catalog Version string, so the count is
+        # correct for new models (e.g. Latest Drivers on a model with no enterprise pack version yet).
+        $dvApplicable   = (-not $mBiosOnly)
+        $biosApplicable = ($model.OEM -ne 'Microsoft')
         $driverCurrent  = ($model.DriverStatus -eq 'Current')
         $biosCurrent    = ($model.BIOSStatus -eq 'Current')
 
         $perModelPkgType = $buildPackageType
-        if ($buildPackageType -eq 'All' -and $script:DeployedVersionsFetched) {
+        if ($buildPackageType -eq 'All' -and $suppressCurrent -and $script:DeployedVersionsFetched) {
             if ($dvApplicable -and $driverCurrent -and $biosApplicable -and (-not $biosCurrent)) {
                 $perModelPkgType = 'BIOS'
             } elseif ($biosApplicable -and $biosCurrent -and $dvApplicable -and (-not $driverCurrent)) {
@@ -10459,9 +10560,9 @@ $btn_Build.Add_Click({
 
         # Count downloads required -- packages that are new or updated (skip known-current ones)
         if (($perModelPkgType -in @('Drivers', 'All')) -and $dvApplicable -and
-            (-not ($script:DeployedVersionsFetched -and $driverCurrent))) { $downloadsRequired++ }
+            (-not ($suppressCurrent -and $script:DeployedVersionsFetched -and $driverCurrent))) { $downloadsRequired++ }
         if (($perModelPkgType -in @('BIOS', 'All')) -and $biosApplicable -and
-            (-not ($script:DeployedVersionsFetched -and $biosCurrent))) { $downloadsRequired++ }
+            (-not ($suppressCurrent -and $script:DeployedVersionsFetched -and $biosCurrent))) { $downloadsRequired++ }
 
         $modelObj = [PSCustomObject]@{
             OEM              = $model.OEM
@@ -10493,6 +10594,9 @@ $btn_Build.Add_Click({
     Set-DATRegistryValue -Name "FailedPackages" -Value "0" -Type String
     Set-DATRegistryValue -Name "PackagesCreated" -Value "0" -Type String
     Set-DATRegistryValue -Name "SkippedPackages" -Value "0" -Type String
+    # Extra individual-file downloads beyond the per-model package estimate (Latest Drivers: N DUPs
+    # instead of one pack). The build adds (count - 1) per Latest model so the tile reflects reality.
+    Set-DATRegistryValue -Name "LatestDownloadsExtra" -Value "0" -Type String
     # Clear the structured failure/skip lists so the progress modal cannot mark rows from a prior build.
     Remove-ItemProperty -Path $global:RegPath -Name 'BuildFailures' -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path $global:RegPath -Name 'BuildSkippedCurrent' -ErrorAction SilentlyContinue
@@ -16161,6 +16265,15 @@ $link_CurlDownload.Add_RequestNavigate({
     $e.Handled = $true
 })
 
+# Show a warning when Latest Drivers is selected but HPCMSL (the HP pre-req) is not installed.
+function Update-DATBuildTypeWarning {
+    $warn = $Window.FindName('txt_HPLatestDriversWarning')
+    if ($null -eq $warn) { return }
+    $combo = $Window.FindName('cmb_HPDriverPackSource')
+    $isLatest = ($null -ne $combo -and $null -ne $combo.SelectedItem -and [string]$combo.SelectedItem.Tag -eq 'SoftPaqs')
+    $warn.Visibility = if ($isLatest -and -not $script:HPCMSLAvailable) { 'Visible' } else { 'Collapsed' }
+}
+
 # HP CMSL status check
 function Update-DATHpcmslStatus {
     $hpcmslModule = Get-Module -ListAvailable -Name HPCMSL -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -16186,6 +16299,7 @@ function Update-DATHpcmslStatus {
         $txt_HpcmslStatus.Foreground = $Window.FindResource('StatusWarning')
         $btn_InstallHpcmsl.Visibility = 'Visible'
     }
+    Update-DATBuildTypeWarning
 }
 
 Update-DATHpcmslStatus
@@ -18104,32 +18218,121 @@ $btn_SearchDeployGroup          = $Window.FindName('btn_SearchDeployGroup')
 $txt_DeployGroupStatus          = $Window.FindName('txt_DeployGroupStatus')
 $cmb_DeployGroupResults         = $Window.FindName('cmb_DeployGroupResults')
 $panel_DeployGroupSelected      = $Window.FindName('panel_DeployGroupSelected')
-$txt_DeployGroupSelectedName    = $Window.FindName('txt_DeployGroupSelectedName')
-$txt_DeployGroupSelectedId      = $Window.FindName('txt_DeployGroupSelectedId')
+$list_DeployGroups              = $Window.FindName('list_DeployGroups')
 $btn_ClearDeployGroup           = $Window.FindName('btn_ClearDeployGroup')
 
 # Flag used to suppress persistence while the results list is populated programmatically
 $script:DeployGroupSuppressSelection = $false
 
-# Helper to persist and display the selected target group
-function Set-DATDeployTargetGroup {
+# Ordered collection of selected target groups; each entry is [pscustomobject]@{ Id; Name }
+$script:DeployTargetGroups = [System.Collections.Generic.List[object]]::new()
+
+# Persist the current target-group list to the registry as ;;-delimited id/name lists,
+# or clear the values when the list is empty (reverting to All Devices).
+function Save-DATDeployTargetGroups {
+    if ($script:DeployTargetGroups.Count -eq 0) {
+        Remove-ItemProperty -Path $global:RegPath -Name "DeployTargetGroupId" -Force -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $global:RegPath -Name "DeployTargetGroupName" -Force -ErrorAction SilentlyContinue
+        return
+    }
+    $ids   = ($script:DeployTargetGroups | ForEach-Object { $_.Id }) -join ';;'
+    $names = ($script:DeployTargetGroups | ForEach-Object { $_.Name }) -join ';;'
+    Set-DATRegistryValue -Name "DeployTargetGroupId" -Value $ids -Type String
+    Set-DATRegistryValue -Name "DeployTargetGroupName" -Value $names -Type String
+}
+
+# Rebuild the selected-group chip rows from $script:DeployTargetGroups
+function Update-DATDeployGroupList {
+    if ($null -eq $list_DeployGroups -or $null -eq $panel_DeployGroupSelected) { return }
+    $list_DeployGroups.Children.Clear()
+    if ($script:DeployTargetGroups.Count -eq 0) {
+        $panel_DeployGroupSelected.Visibility = 'Collapsed'
+        return
+    }
+    $panel_DeployGroupSelected.Visibility = 'Visible'
+    $theme = Get-DATTheme -ThemeName $script:CurrentTheme
+    $bgBrush   = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($theme['InputBackground']))
+    $fgBrush   = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($theme['WindowForeground']))
+    $subBrush  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($theme['InputPlaceholder']))
+    foreach ($g in $script:DeployTargetGroups) {
+        $row = [System.Windows.Controls.Border]::new()
+        $row.Background = $bgBrush
+        $row.CornerRadius = [System.Windows.CornerRadius]::new(6)
+        $row.Padding = [System.Windows.Thickness]::new(12, 8, 12, 8)
+        $row.Margin = [System.Windows.Thickness]::new(0, 0, 0, 6)
+
+        $grid = [System.Windows.Controls.Grid]::new()
+        $c0 = [System.Windows.Controls.ColumnDefinition]::new(); $c0.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+        $c1 = [System.Windows.Controls.ColumnDefinition]::new(); $c1.Width = [System.Windows.GridLength]::Auto
+        $grid.ColumnDefinitions.Add($c0); $grid.ColumnDefinitions.Add($c1)
+
+        $info = [System.Windows.Controls.StackPanel]::new()
+        $info.VerticalAlignment = 'Center'
+        $nameTb = [System.Windows.Controls.TextBlock]::new()
+        $nameTb.Text = $g.Name
+        $nameTb.FontSize = 13; $nameTb.FontWeight = [System.Windows.FontWeights]::SemiBold
+        $nameTb.Foreground = $fgBrush; $nameTb.TextWrapping = 'Wrap'
+        $idTb = [System.Windows.Controls.TextBlock]::new()
+        $idTb.Text = $g.Id
+        $idTb.FontSize = 11; $idTb.FontFamily = [System.Windows.Media.FontFamily]::new('Consolas')
+        $idTb.Foreground = $subBrush
+        $idTb.Margin = [System.Windows.Thickness]::new(0, 2, 0, 0); $idTb.TextWrapping = 'Wrap'
+        $info.Children.Add($nameTb) | Out-Null
+        $info.Children.Add($idTb) | Out-Null
+        [System.Windows.Controls.Grid]::SetColumn($info, 0)
+
+        $removeBtn = [System.Windows.Controls.Button]::new()
+        try { $removeBtn.Style = $Window.FindResource('RoundedButton') } catch { }
+        $removeBtn.Height = 28; $removeBtn.Padding = [System.Windows.Thickness]::new(10, 2, 10, 2)
+        $removeBtn.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+        $removeBtn.VerticalAlignment = 'Center'; $removeBtn.Cursor = 'Hand'
+        $removeBtn.ToolTip = "Remove this target group"
+        $removeTb = [System.Windows.Controls.TextBlock]::new()
+        $removeTb.Text = [char]0xE711; $removeTb.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+        $removeTb.FontSize = 10; $removeTb.Foreground = $fgBrush
+        $removeBtn.Content = $removeTb
+        # Stash the group id on the button and use a plain (non-closure) handler: a GetNewClosure()
+        # scriptblock is rebound to a new session state that cannot see script-level functions.
+        $removeBtn.Tag = $g.Id
+        $removeBtn.Add_Click({ Remove-DATDeployTargetGroup -GroupId $this.Tag })
+        [System.Windows.Controls.Grid]::SetColumn($removeBtn, 1)
+
+        $grid.Children.Add($info) | Out-Null
+        $grid.Children.Add($removeBtn) | Out-Null
+        $row.Child = $grid
+        $list_DeployGroups.Children.Add($row) | Out-Null
+    }
+}
+
+# Add a group to the target list (ignoring duplicates), persist and refresh the UI
+function Add-DATDeployTargetGroup {
     param (
         [Parameter(Mandatory)][AllowEmptyString()][string]$GroupId,
         [Parameter(Mandatory)][AllowEmptyString()][string]$GroupName
     )
-    if ([string]::IsNullOrWhiteSpace($GroupId)) {
-        Remove-ItemProperty -Path $global:RegPath -Name "DeployTargetGroupId" -Force -ErrorAction SilentlyContinue
-        Remove-ItemProperty -Path $global:RegPath -Name "DeployTargetGroupName" -Force -ErrorAction SilentlyContinue
-        $panel_DeployGroupSelected.Visibility = 'Collapsed'
-        Write-DATActivityLog "Package Deployment: custom target group cleared (reverting to All Devices)" -Level Info
+    if ([string]::IsNullOrWhiteSpace($GroupId)) { return }
+    if ($script:DeployTargetGroups | Where-Object { $_.Id -eq $GroupId }) {
+        Write-DATActivityLog "Package Deployment: group '$GroupName' ($GroupId) is already a target" -Level Info
         return
     }
-    Set-DATRegistryValue -Name "DeployTargetGroupId" -Value $GroupId -Type String
-    Set-DATRegistryValue -Name "DeployTargetGroupName" -Value $GroupName -Type String
-    $txt_DeployGroupSelectedName.Text = $GroupName
-    $txt_DeployGroupSelectedId.Text = $GroupId
-    $panel_DeployGroupSelected.Visibility = 'Visible'
-    Write-DATActivityLog "Package Deployment: custom target group set to '$GroupName' ($GroupId)" -Level Info
+    $displayName = if ([string]::IsNullOrWhiteSpace($GroupName)) { $GroupId } else { $GroupName }
+    $script:DeployTargetGroups.Add([pscustomobject]@{ Id = $GroupId; Name = $displayName })
+    Save-DATDeployTargetGroups
+    Update-DATDeployGroupList
+    Write-DATActivityLog "Package Deployment: added custom target group '$displayName' ($GroupId)" -Level Info
+}
+
+# Remove a group from the target list, persist and refresh the UI
+function Remove-DATDeployTargetGroup {
+    param ([Parameter(Mandatory)][AllowEmptyString()][string]$GroupId)
+    if ([string]::IsNullOrWhiteSpace($GroupId)) { return }
+    $match = $script:DeployTargetGroups | Where-Object { $_.Id -eq $GroupId } | Select-Object -First 1
+    if ($null -ne $match) { [void]$script:DeployTargetGroups.Remove($match) }
+    Save-DATDeployTargetGroups
+    Update-DATDeployGroupList
+    if ($script:DeployTargetGroups.Count -eq 0) {
+        Write-DATActivityLog "Package Deployment: all custom target groups removed (reverting to All Devices)" -Level Info
+    }
 }
 
 $btn_SearchDeployGroup.Add_Click({
@@ -18154,7 +18357,8 @@ $btn_SearchDeployGroup.Add_Click({
             $txt_DeployGroupStatus.Visibility = 'Visible'
             $group = Invoke-DATGraphRequest -Uri "/groups/$($searchText.Trim())?`$select=id,displayName" -NoPagination
             if ($null -ne $group -and -not [string]::IsNullOrEmpty($group.id)) {
-                Set-DATDeployTargetGroup -GroupId $group.id -GroupName $group.displayName
+                Add-DATDeployTargetGroup -GroupId $group.id -GroupName $group.displayName
+                $txt_DeployGroupSearch.Text = ''
                 $txt_DeployGroupStatus.Visibility = 'Collapsed'
                 $cmb_DeployGroupResults.Visibility = 'Collapsed'
             } else {
@@ -18196,13 +18400,13 @@ $btn_SearchDeployGroup.Add_Click({
                 # SelectedIndex here does not double-trigger the handler.
                 $cmb_DeployGroupResults.SelectedIndex = 0
                 $only = $results[0]
-                Set-DATDeployTargetGroup -GroupId $only.id -GroupName $only.displayName
-                $txt_DeployGroupStatus.Text = "1 group found and set as the deployment target."
+                Add-DATDeployTargetGroup -GroupId $only.id -GroupName $only.displayName
+                $txt_DeployGroupStatus.Text = "1 group found and added to the deployment target list."
             } else {
                 # Force no selection so a click on ANY item -- including the first --
                 # is a genuine index change that raises SelectionChanged.
                 $cmb_DeployGroupResults.SelectedIndex = -1
-                $txt_DeployGroupStatus.Text = "$($results.Count) group(s) found. Select one to set as the deployment target."
+                $txt_DeployGroupStatus.Text = "$($results.Count) group(s) found. Select one to add to the deployment target list."
             }
         }
         $script:DeployGroupSuppressSelection = $false
@@ -18219,12 +18423,15 @@ $cmb_DeployGroupResults.Add_SelectionChanged({
     if ($script:DeployGroupSuppressSelection) { return }
     $selected = $cmb_DeployGroupResults.SelectedItem
     if ($null -ne $selected -and $null -ne $selected.Tag) {
-        Set-DATDeployTargetGroup -GroupId $selected.Tag.Id -GroupName $selected.Tag.Name
+        Add-DATDeployTargetGroup -GroupId $selected.Tag.Id -GroupName $selected.Tag.Name
     }
 })
 
 $btn_ClearDeployGroup.Add_Click({
-    Set-DATDeployTargetGroup -GroupId '' -GroupName ''
+    $script:DeployTargetGroups.Clear()
+    Save-DATDeployTargetGroups
+    Update-DATDeployGroupList
+    Write-DATActivityLog "Package Deployment: all custom target groups removed (reverting to All Devices)" -Level Info
     $txt_DeployGroupSearch.Text = ''
     $txt_DeployGroupStatus.Visibility = 'Collapsed'
     $cmb_DeployGroupResults.Visibility = 'Collapsed'
@@ -18800,13 +19007,17 @@ $cmb_HPDriverPackSource = $Window.FindName('cmb_HPDriverPackSource')
 $lbl_HPConcurrentTitle = $Window.FindName('lbl_HPConcurrentTitle')
 $lbl_HPConcurrentDesc = $Window.FindName('lbl_HPConcurrentDesc')
 $lbl_HPConcurrentHint = $Window.FindName('lbl_HPConcurrentHint')
+$cmb_LatestDriverCadence = $Window.FindName('cmb_LatestDriverCadence')
+$lbl_LatestCadenceTitle = $Window.FindName('lbl_LatestCadenceTitle')
+$lbl_LatestCadenceDesc = $Window.FindName('lbl_LatestCadenceDesc')
+$lbl_LatestCadenceHint = $Window.FindName('lbl_LatestCadenceHint')
 
 $cmb_HPDriverPackSource.Add_SelectionChanged({
     $selected = $cmb_HPDriverPackSource.SelectedItem
     if ($selected) {
         $val = [string]$selected.Tag
         Set-DATRegistryValue -Name "HPDriverPackSource" -Value $val -Type String
-        Write-DATActivityLog "HP driver pack source set to $val" -Level Info
+        Write-DATActivityLog "Driver package build type set to $val" -Level Info
         # Enable/disable concurrent downloads based on selection
         $isSoftPaqs = ($val -eq 'SoftPaqs')
         $cmb_HPConcurrentDownloads.IsEnabled = $isSoftPaqs
@@ -18814,6 +19025,15 @@ $cmb_HPDriverPackSource.Add_SelectionChanged({
         $lbl_HPConcurrentTitle.Opacity = $opacity
         $lbl_HPConcurrentDesc.Opacity = $opacity
         $lbl_HPConcurrentHint.Opacity = $opacity
+        # Update cadence enables with Latest Drivers too
+        if ($null -ne $cmb_LatestDriverCadence) {
+            $cmb_LatestDriverCadence.IsEnabled = $isSoftPaqs
+            $lbl_LatestCadenceTitle.Opacity = $opacity
+            $lbl_LatestCadenceDesc.Opacity = $opacity
+            $lbl_LatestCadenceHint.Opacity = $opacity
+        }
+        # Surface the HP pre-req warning when Latest Drivers is chosen without HPCMSL
+        Update-DATBuildTypeWarning
 
         # Update the displayed driver version for HP rows already in the grid:
         # DriverPack mode shows the HP catalog version; SoftPaq mode shows a date stamp.
@@ -18849,6 +19069,18 @@ $cmb_HPConcurrentDownloads.Add_SelectionChanged({
         Write-DATActivityLog "HP concurrent downloads set to $val" -Level Info
     }
 })
+
+# Latest Drivers update cadence (Dell / HP / Lenovo)
+if ($null -ne $cmb_LatestDriverCadence) {
+    $cmb_LatestDriverCadence.Add_SelectionChanged({
+        $selected = $cmb_LatestDriverCadence.SelectedItem
+        if ($selected) {
+            $val = [string]$selected.Tag
+            Set-DATRegistryValue -Name "LatestDriverCadence" -Value $val -Type String
+            Write-DATActivityLog "Latest Drivers update cadence set to $val" -Level Info
+        }
+    })
+}
 
 $cmb_IntuneChunkSize.Add_SelectionChanged({
     $selected = $cmb_IntuneChunkSize.SelectedItem
@@ -25276,13 +25508,44 @@ function Show-DATReleaseNotesDialog {
     $scrollViewer.VerticalScrollBarVisibility = 'Auto'
     $scrollViewer.HorizontalScrollBarVisibility = 'Disabled'
 
-    $notesBlock = [System.Windows.Controls.TextBlock]::new()
-    $notesBlock.Text = $script:ReleaseNotesText
-    $notesBlock.TextWrapping = [System.Windows.TextWrapping]::Wrap
-    $notesBlock.FontSize = 12
-    $notesBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+    # Render notes line-by-line so leading "-" bullets become blue accent dots; other lines stay as text.
+    $notesPanel = [System.Windows.Controls.StackPanel]::new()
+    $fgBrush = [System.Windows.Media.SolidColorBrush]::new(
         [System.Windows.Media.ColorConverter]::ConvertFromString($theme['WindowForeground']))
-    $scrollViewer.Content = $notesBlock
+    $accentBrush = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.ColorConverter]::ConvertFromString($theme['AccentColor']))
+    foreach ($rawLine in ($script:ReleaseNotesText -split "`r?`n")) {
+        $m = [regex]::Match($rawLine, '^(?<indent>\s*)-\s?(?<text>.*)$')
+        if ($m.Success) {
+            $indent = $m.Groups['indent'].Value.Length
+            $row = [System.Windows.Controls.Grid]::new()
+            $c0 = [System.Windows.Controls.ColumnDefinition]::new(); $c0.Width = [System.Windows.GridLength]::Auto
+            $c1 = [System.Windows.Controls.ColumnDefinition]::new(); $c1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            $row.ColumnDefinitions.Add($c0); $row.ColumnDefinitions.Add($c1)
+            $dot = [System.Windows.Shapes.Ellipse]::new()
+            $dot.Width = 6; $dot.Height = 6; $dot.Fill = $accentBrush
+            $dot.VerticalAlignment = 'Top'
+            $dot.Margin = [System.Windows.Thickness]::new((6 + $indent * 6), 6, 8, 0)
+            [System.Windows.Controls.Grid]::SetColumn($dot, 0)
+            $txt = [System.Windows.Controls.TextBlock]::new()
+            $txt.Text = $m.Groups['text'].Value
+            $txt.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $txt.FontSize = 12; $txt.Foreground = $fgBrush
+            $txt.Margin = [System.Windows.Thickness]::new(0, 0, 0, 3)
+            [System.Windows.Controls.Grid]::SetColumn($txt, 1)
+            $row.Children.Add($dot) | Out-Null
+            $row.Children.Add($txt) | Out-Null
+            $notesPanel.Children.Add($row) | Out-Null
+        } else {
+            $tb = [System.Windows.Controls.TextBlock]::new()
+            $tb.Text = $rawLine
+            $tb.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $tb.FontSize = 12; $tb.Foreground = $fgBrush
+            $tb.Margin = [System.Windows.Thickness]::new(0, 0, 0, 2)
+            $notesPanel.Children.Add($tb) | Out-Null
+        }
+    }
+    $scrollViewer.Content = $notesPanel
     $mainPanel.Children.Add($scrollViewer) | Out-Null
 
     $border.Child = $mainPanel
@@ -25448,16 +25711,20 @@ try {
             Write-Host "Disabled" -ForegroundColor DarkYellow
         }
 
-        # Restore Custom Deployment Target Group
+        # Restore Custom Deployment Target Group(s)
         Write-Host "  Target Group  : " -NoNewline -ForegroundColor DarkGray
+        $script:DeployTargetGroups.Clear()
         if (-not [string]::IsNullOrEmpty($savedConfig.DeployTargetGroupId)) {
-            $groupName = if (-not [string]::IsNullOrEmpty($savedConfig.DeployTargetGroupName)) { $savedConfig.DeployTargetGroupName } else { $savedConfig.DeployTargetGroupId }
-            $txt_DeployGroupSelectedName.Text = $groupName
-            $txt_DeployGroupSelectedId.Text = $savedConfig.DeployTargetGroupId
-            $panel_DeployGroupSelected.Visibility = 'Visible'
-            Write-Host "$groupName" -ForegroundColor Cyan
+            $savedIds   = @($savedConfig.DeployTargetGroupId -split ';;' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $savedNames = @("$($savedConfig.DeployTargetGroupName)" -split ';;')
+            for ($gi = 0; $gi -lt $savedIds.Count; $gi++) {
+                $gName = if ($gi -lt $savedNames.Count -and -not [string]::IsNullOrWhiteSpace($savedNames[$gi])) { $savedNames[$gi].Trim() } else { $savedIds[$gi] }
+                $script:DeployTargetGroups.Add([pscustomobject]@{ Id = $savedIds[$gi]; Name = $gName })
+            }
+            Update-DATDeployGroupList
+            Write-Host "$(($script:DeployTargetGroups | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Cyan
         } else {
-            $panel_DeployGroupSelected.Visibility = 'Collapsed'
+            Update-DATDeployGroupList
             Write-Host "All Devices (default)" -ForegroundColor DarkYellow
         }
 
@@ -25764,6 +26031,21 @@ try {
             Write-Host "$savedHPDl concurrent" -ForegroundColor White
         } else {
             Write-Host "2 (Default)" -ForegroundColor DarkYellow
+        }
+
+        # Restore Latest Drivers update cadence
+        Write-Host "  Latest Cadence: " -NoNewline -ForegroundColor DarkGray
+        if ($null -ne $cmb_LatestDriverCadence) {
+            $savedCadence = if (-not [string]::IsNullOrEmpty($savedConfig.LatestDriverCadence)) { [string]$savedConfig.LatestDriverCadence } else { 'Off' }
+            foreach ($item in $cmb_LatestDriverCadence.Items) {
+                if ([string]$item.Tag -eq $savedCadence) {
+                    $cmb_LatestDriverCadence.SelectedItem = $item
+                    break
+                }
+            }
+            Write-Host "$savedCadence" -ForegroundColor White
+        } else {
+            Write-Host "Off (Default)" -ForegroundColor DarkYellow
         }
 
         # Restore Clean Temp on Exit
@@ -26332,7 +26614,7 @@ if (Test-Path $logoPath) {
 
 # Read version from module manifest
 $manifestPath = Join-Path $AppRoot "Modules\DriverAutomationToolCore\DriverAutomationToolCore.psd1"
-$script:versionString = "v10.2.3"
+$script:versionString = "v10.2.4"
 if (Test-Path $manifestPath) {
     $manifestData = Import-PowerShellDataFile $manifestPath
     $ver = [version]$manifestData.ModuleVersion
@@ -27630,5 +27912,179 @@ $script:UpgradeWatchTimer.Add_Tick({
     } catch { }
 })
 $script:UpgradeWatchTimer.Start()
+
+#region What's New highlighting (Tesla-style nav dots + "New" pills)
+# Declarative manifest -- one entry per newly shipped feature. Add entries each release.
+#   Id        : stable unique key persisted once the user has seen it (registry 'WhatsNewSeen', ;;-list, HKLM)
+#   Dot/Parent: nav-button dot to light up (Parent is the collapsible group's dot, for nested sub-items)
+#   Pill      : the "New" badge element shown in the view
+#   Zone      : the hover region that clears this feature (must be hovered individually)
+#   Controls  : the section's interactive controls -- interacting (click/keyboard) with any of them,
+#               not just hovering the pill/title, also clears the feature
+$script:WhatsNewFeatures = @(
+    [pscustomobject]@{ Id = 'lenovo-latest-10.2.4';  Dot = 'dot_CommonSettings'; Parent = '';                  Pill = 'pill_LenovoLatest'; Zone = 'zone_LenovoLatest'; Controls = @('cmb_HPDriverPackSource') }
+    [pscustomobject]@{ Id = 'update-cadence-10.2.4'; Dot = 'dot_CommonSettings'; Parent = '';                  Pill = 'pill_UpdateCadence'; Zone = 'zone_UpdateCadence'; Controls = @('cmb_LatestDriverCadence') }
+    [pscustomobject]@{ Id = 'multi-deploy-10.2.4';   Dot = 'dot_IntuneOptions';  Parent = 'dot_IntuneSettings'; Pill = 'pill_MultiDeploy';  Zone = 'zone_MultiDeploy';  Controls = @('txt_DeployGroupSearch', 'btn_SearchDeployGroup', 'cmb_DeployGroupResults', 'btn_ClearDeployGroup') }
+)
+
+# Maps a wired element's x:Name to the feature id it clears, so plain (non-closure) handlers can
+# resolve the feature from $this.Name without capturing loop variables (which do not close over
+# reliably here) or clobbering a control's own Tag.
+$script:WhatsNewClearByName = @{}
+
+
+function Get-DATWhatsNewSeen {
+    $raw = (Get-ItemProperty -Path $global:RegPath -Name 'WhatsNewSeen' -ErrorAction SilentlyContinue).WhatsNewSeen
+    if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+    return @($raw -split ';;' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Set-DATWhatsNewSeen {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Id)
+    if ([string]::IsNullOrWhiteSpace($Id)) { return }
+    $seen = @(Get-DATWhatsNewSeen)
+    if ($seen -contains $Id) { return }
+    Set-DATRegistryValue -Name 'WhatsNewSeen' -Value (($seen + $Id) -join ';;') -Type String
+}
+
+# A nav dot lights up while any feature mapped to it (directly or via its parent group) is unseen.
+function Update-DATWhatsNewDots {
+    $seen = @(Get-DATWhatsNewSeen)
+    $unseen = @($script:WhatsNewFeatures | Where-Object { $seen -notcontains $_.Id })
+    $dotNames = @($script:WhatsNewFeatures | ForEach-Object { $_.Dot; $_.Parent } | Where-Object { $_ } | Select-Object -Unique)
+    foreach ($dotName in $dotNames) {
+        $dot = $Window.FindName($dotName)
+        if ($null -eq $dot) { continue }
+        $active = @($unseen | Where-Object { $_.Dot -eq $dotName -or $_.Parent -eq $dotName })
+        $dot.Visibility = if ($active.Count -gt 0) { 'Visible' } else { 'Collapsed' }
+    }
+}
+
+# Marks a feature seen and hides its pill. Idempotent: a no-op once already cleared, so it is safe
+# to fire from high-frequency events (e.g. every keystroke in a section's text box).
+function Clear-DATWhatsNewFeature {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Id)
+    if ([string]::IsNullOrWhiteSpace($Id)) { return }
+    if (@(Get-DATWhatsNewSeen) -contains $Id) { return }
+    Set-DATWhatsNewSeen -Id $Id
+    $f = $script:WhatsNewFeatures | Where-Object { $_.Id -eq $Id } | Select-Object -First 1
+    if ($f) { $p = $Window.FindName($f.Pill); if ($null -ne $p) { $p.Visibility = 'Collapsed' } }
+    Update-DATWhatsNewDots
+}
+
+function Initialize-DATWhatsNew {
+    $seen = @(Get-DATWhatsNewSeen)
+
+    # Clears the feature whose Zone is hovered (feature id carried on the Zone Tag).
+    $clearFromTag = { Clear-DATWhatsNewFeature -Id $this.Tag }
+    # Clears the feature a wired control belongs to, resolved from $this.Name via the shared map.
+    $clearFromName = { Clear-DATWhatsNewFeature -Id ([string]$script:WhatsNewClearByName[$this.Name]) }
+
+    foreach ($feat in $script:WhatsNewFeatures) {
+        $isSeen = $seen -contains $feat.Id
+        $pill = $Window.FindName($feat.Pill)
+        if ($null -ne $pill) { $pill.Visibility = if ($isSeen) { 'Collapsed' } else { 'Visible' } }
+        if ($isSeen) { continue }
+
+        # Hovering, or clicking, the title/pill row clears the feature.
+        $zone = $Window.FindName($feat.Zone)
+        if ($null -ne $zone) {
+            $zone.Tag = $feat.Id
+            $zone.Add_MouseEnter($clearFromTag)
+            $zone.Add_PreviewMouseLeftButtonDown($clearFromTag)
+        }
+
+        # Interacting with the section's own controls (clicking, or keyboard input such as opening a
+        # dropdown or typing in a search box) clears it too -- these sit below the Zone, so a hover
+        # over them never reaches the Zone. Preview events are used so they fire for any child click
+        # and are never marked handled, leaving the control's own behaviour intact. Both are strictly
+        # user-initiated, so a programmatic config load (which raises SelectionChanged) cannot clear
+        # the badge prematurely.
+        foreach ($ctrlName in @($feat.Controls)) {
+            if ([string]::IsNullOrWhiteSpace($ctrlName)) { continue }
+            $ctrl = $Window.FindName($ctrlName)
+            if ($null -eq $ctrl) { continue }
+            $script:WhatsNewClearByName[$ctrlName] = $feat.Id
+            $ctrl.Add_PreviewMouseLeftButtonDown($clearFromName)
+            $ctrl.Add_PreviewKeyDown($clearFromName)
+        }
+    }
+    Update-DATWhatsNewDots
+}
+
+try { Initialize-DATWhatsNew } catch { Write-DATActivityLog "What's New init failed: $($_.Exception.Message)" -Level Warn }
+
+# ---- "What's New" upgrade modal ---------------------------------------------------------------
+# Shown once per version after an upgrade. Update this list each release, aligned with the
+# "What's New & Fixed" changelog. Each entry renders as a bold category lead-in plus a description
+# (no bullets), spaced apart.
+$script:WhatsNewReleaseItems = @(
+    [pscustomobject]@{ Category = 'Latest Drivers -- Lenovo'; Text = 'Lenovo now supports building Latest Drivers packages from the per-model update catalog, joining Dell and HP. Choose it under Driver Package Build Type.' }
+    [pscustomobject]@{ Category = 'Update Cadence';           Text = 'A new cadence control throttles how often a Latest Drivers pack is re-evaluated on repeat or scheduled runs -- Off, Daily, Weekly or Monthly -- so an unchanged driver set is not rebuilt every time.' }
+    [pscustomobject]@{ Category = 'Multi-Group Deployment';   Text = 'Auto-deployed Intune packages can now target one or more specific Entra security groups (for example a pilot ring plus a broad ring) instead of only All Devices.' }
+)
+
+function Get-DATWhatsNewModalShownVersion {
+    return (Get-ItemProperty -Path $global:RegPath -Name 'WhatsNewModalShownVersion' -ErrorAction SilentlyContinue).WhatsNewModalShownVersion
+}
+
+function Show-DATWhatsNewModal {
+    $overlay = $Window.FindName('overlay_WhatsNew')
+    if ($null -eq $overlay) { return }
+
+    $verLbl = $Window.FindName('txt_WhatsNewVersion')
+    if ($null -ne $verLbl) { $verLbl.Text = "Version $($global:ScriptRelease)" }
+
+    $panel = $Window.FindName('panel_WhatsNewItems')
+    if ($null -ne $panel) {
+        $panel.Children.Clear()
+        foreach ($item in $script:WhatsNewReleaseItems) {
+            $block = [System.Windows.Controls.StackPanel]::new()
+            $block.Margin = [System.Windows.Thickness]::new(0, 0, 0, 16)   # spacing between each feature/fix
+
+            $cat = [System.Windows.Controls.TextBlock]::new()
+            $cat.Text = [string]$item.Category
+            $cat.FontSize = 14
+            $cat.FontWeight = [System.Windows.FontWeights]::SemiBold
+            $cat.TextWrapping = 'Wrap'
+            $cat.Margin = [System.Windows.Thickness]::new(0, 0, 0, 3)
+            $cat.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'WindowForeground')
+
+            $desc = [System.Windows.Controls.TextBlock]::new()
+            $desc.Text = [string]$item.Text
+            $desc.FontSize = 13
+            $desc.TextWrapping = 'Wrap'
+            $desc.LineHeight = 19
+            $desc.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'InputPlaceholder')
+
+            [void]$block.Children.Add($cat)
+            [void]$block.Children.Add($desc)
+            [void]$panel.Children.Add($block)
+        }
+    }
+
+    $overlay.Visibility = 'Visible'
+    # Persist as shown immediately so it never reappears for this version, even if the window is
+    # closed without pressing "Got it".
+    try { Set-DATRegistryValue -Name 'WhatsNewModalShownVersion' -Value ([string]$global:ScriptRelease) -Type String } catch {}
+}
+
+function Show-DATWhatsNewModalIfUpgraded {
+    if ([string](Get-DATWhatsNewModalShownVersion) -ne [string]$global:ScriptRelease) {
+        Show-DATWhatsNewModal
+    }
+}
+
+$btn_WhatsNewClose = $Window.FindName('btn_WhatsNewClose')
+if ($null -ne $btn_WhatsNewClose) {
+    $btn_WhatsNewClose.Add_Click({
+        $o = $Window.FindName('overlay_WhatsNew')
+        if ($null -ne $o) { $o.Visibility = 'Collapsed' }
+    })
+}
+
+try { Show-DATWhatsNewModalIfUpgraded } catch { Write-DATActivityLog "What's New modal failed: $($_.Exception.Message)" -Level Warn }
+#endregion
+
 
 $Window.ShowDialog() | Out-Null
