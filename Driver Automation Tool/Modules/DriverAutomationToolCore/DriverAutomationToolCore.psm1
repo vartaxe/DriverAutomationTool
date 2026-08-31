@@ -12921,7 +12921,9 @@ function New-DATIntuneInstallScript {
     $is64 = [Environment]::Is64BitProcess
     Write-CMTraceLog "PowerShell architecture: $(if ($is64) { '64-bit' } else { '32-bit (WOW64)' }) -- scheduled task host: $ps64"
 
-    $snoozeRegPath = 'HKLM:\SOFTWARE\DriverAutomationTool\Toast'
+    # Deferral/snooze state is scoped per update type (Toast\BIOS or Toast\Drivers) so a BIOS
+    # deferral and a driver deferral no longer share -- and overwrite -- one counter.
+    $snoozeRegPath = 'HKLM:\SOFTWARE\DriverAutomationTool\Toast\{{UPDATE_TYPE}}'
     $maxDeferrals  = {{MAX_DEFERRALS}}
     $forceInstall  = $false
     if (-not (Test-Path $snoozeRegPath)) {
@@ -13187,9 +13189,10 @@ function New-DATIntuneInstallScript {
     }
     # --- End Toast Notification Gate ---
 '@
-        # Bake the timeout action and max deferral count into the generated script
+        # Bake the timeout action, max deferral count and update-type key segment into the script
         $toastBlock = $toastBlock.Replace('{{TOAST_TIMEOUT_ACTION}}', $ToastTimeoutAction)
         $toastBlock = $toastBlock.Replace('{{MAX_DEFERRALS}}', [string]$MaxDeferrals)
+        $toastBlock = $toastBlock.Replace('{{UPDATE_TYPE}}', $UpdateType)
     }
 
     # Build status toast blocks (Success on completion, Issues on error)

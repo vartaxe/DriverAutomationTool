@@ -1,30 +1,27 @@
 Release Notes
------------------------------------
+
 IMPORTANT
-- DAT Downloads have been moved to GitHub - https://github.com/maurice-daly/DriverAutomationTool
+** DAT Downloads have been moved to GitHub - https://github.com/maurice-daly/DriverAutomationTool **
 
 Version 10.2.5
 What's New & Fixed
 
-- OEM Support
-Panasonic support — added Panasonic as a supported manufacturer (catalog, model listing, packaging).
-Fujitsu support — added Fujitsu, including its session-gated catalog handling.
-ASUS support — ExpertBook/ExpertCenter commercial models via the DAT API catalog.
-Lenovo Custom Driver Pack detection — model now read from Win32_ComputerSystemProduct.Version and SKU from the first four characters of Win32_ComputerSystem.Model, matching the apply-driver script. (maurice-daly/DriverAutomationTool#921)
-- Intune package management — manage and delete existing BIOS/driver packages directly from the tool.
-- Force BIOS re-application — new -ForceDownload switch / SMSTSForceBIOSDownload task-sequence variable to download and flag the same BIOS version for flashing (e.g. recreating Dell recovery images). Opt-in; default unchanged. (MSEndpointMgr/ModernBIOSManagement#31)
-ASUS BIOS matching — each model now resolves its own BIOS version instead of every model collapsing onto the newest family BIOS (all showing 311).
-- Canonical manifest caching crash — fixed a Dell/Lenovo crash during canonical driver-manifest caching under PowerShell 5.1. (#913)
-Long-path pre-flight advisory — warns before Latest Drivers extraction when Windows long-path support is off and payloads (e.g. Intel DUPs) risk exceeding the path limit. (#912)
-- DCU graphics driver naming — Dell Command | Update graphics-driver revisions now canonicalise/collapse correctly. (#910)
-- Catalog OS matching — generic Windows 11 / win11 * catalog entries now appear for every Windows 11 build across all catalog-driven OEMs (10 vs 11 stay separated).
-- OEM Selections (Common Settings) — restrict which manufacturers are available app-wide via a toggle + multi-select.
-- Interface Scale (Common Settings) — 75–150% scaling slider plus auto-fit-to-screen for small/high-DPI displays.
-- Common Settings reorganised — the settings cards grouped into seven labelled sections.
-- Windows no longer float above other apps — modal dialogs stay above the tool's own window only, not the whole desktop. (maurice-daly/DriverAutomationTool#920)
-- Assorted UI tweaks and feature icons.
-- Shared desktop shortcut — the launcher now creates one shortcut on the public/all-users desktop instead of one per admin profile, cleans up stale per-user copies, and adds a CreateDesktopShortcut toggle / -NoShortcut switch. (maurice-daly/DriverAutomationTool#916)
+- OEM Support — added Panasonic, Fujitsu and ASUS (ExpertBook/ExpertCenter) as supported manufacturers, alongside Dell, HP, Lenovo, Microsoft and Acer.
+- OEM Selections — new Common Settings option to restrict the tool to specific manufacturers via a toggle and multi-select; the model grid, manufacturer picker and pre-flight checks then show only the OEMs you choose.
+- Interface Scale — new Common Settings option to scale the whole interface (75-150%) or auto-fit to the current screen, for small or high-DPI displays.
+- Intune Package Management — review and remove existing BIOS and driver packages directly from the tool.
+- Force BIOS re-application — new -ForceDownload switch and SMSTSForceBIOSDownload task-sequence variable download and re-flag the same BIOS version for flashing, for scenarios such as recreating Dell BIOS recovery images. Opt-in; default behaviour unchanged. (MSEndpointMgr/ModernBIOSManagement#31)
+- Lenovo detection — Custom Driver Pack now reads the model from Win32_ComputerSystemProduct.Version and the SKU from the first four characters of Win32_ComputerSystem.Model. (maurice-daly/DriverAutomationTool#921)
+- ASUS BIOS versions — each model now resolves its own BIOS version instead of every model collapsing onto the newest family value.
+- Catalog OS matching — generic "Windows 11" and "win11" catalog entries now appear for every Windows 11 build across all catalog-driven OEMs, and Windows 10 and 11 stay separated.
+- Canonical manifest caching — fixed a Dell/Lenovo crash during canonical driver-manifest caching under PowerShell 5.1. (#913)
+- DCU graphics driver naming — Dell Command | Update graphics-driver revisions now canonicalise correctly. (#910)
+- Long-path pre-flight advisory — warns before Latest Drivers extraction when Windows long-path support is off and payloads such as Intel DUPs risk exceeding the path limit. (#912)
 - Hardware inventory check — read-only WMI hardware-inventory class availability check. (#865)
+- Shared desktop shortcut — the launcher now creates a single shortcut on the public (all-users) desktop instead of one per admin profile, cleans up stale per-user copies, and adds a CreateDesktopShortcut toggle and -NoShortcut switch. (maurice-daly/DriverAutomationTool#916)
+- Always on top dialogs — modal dialogs now stay above the tool's own window only, not above every other application. (maurice-daly/DriverAutomationTool#920)
+- Intune BIOS deferrals — toast deferral counters now reset once an update is applied and are tracked per update type, so reporting stays accurate and deferrals no longer carry into the next release.
+- Common Settings reorganised — settings grouped into labelled sections, plus assorted UI tweaks and feature icons.
 
 Version 10.2.4
 What's New & Fixed
