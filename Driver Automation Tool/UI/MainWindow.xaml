@@ -1074,7 +1074,10 @@
                                        Foreground="{DynamicResource InputPlaceholder}"/>
                             <Button x:Name="nav_ModelSelection"
                                     Style="{StaticResource NavButtonActive}">
-                                <TextBlock><Run Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Model Selection"/></TextBlock>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock VerticalAlignment="Center"><Run Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Model Selection"/></TextBlock>
+                                    <Ellipse x:Name="dot_ModelSelection" Width="7" Height="7" Fill="{DynamicResource AccentColor}" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                </StackPanel>
                             </Button>
                             <Button x:Name="nav_CustomDriverPack"
                                     Style="{StaticResource NavButton}">
@@ -1126,7 +1129,10 @@
                                 </Button>
                                 <Button x:Name="nav_IntunePackageMgmt"
                                         Style="{StaticResource SubNavButton}">
-                                    <TextBlock><Run Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Package Management"/></TextBlock>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock VerticalAlignment="Center"><Run Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets"/><Run Text="  Package Management"/></TextBlock>
+                                        <Ellipse x:Name="dot_IntunePackageMgmt" Width="7" Height="7" Fill="{DynamicResource AccentColor}" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                    </StackPanel>
                                 </Button>
                                 <Button x:Name="nav_ToastNotifications"
                                         Style="{StaticResource SubNavButton}">
@@ -1206,8 +1212,13 @@
                                     </Grid.RowDefinitions>
 
                                     <!-- Row 1: Labels -->
-                                    <TextBlock Grid.Column="0" Grid.Row="0" Text="OEM" FontSize="11" FontWeight="SemiBold"
-                                               Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,8,4" Padding="4,0,0,0"/>
+                                    <StackPanel x:Name="zone_NewOEMs" Grid.Column="0" Grid.Row="0" Orientation="Horizontal" Background="Transparent" Margin="0,0,8,4">
+                                        <TextBlock Text="OEM" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource InputPlaceholder}" Padding="4,0,0,0"/>
+                                        <Border x:Name="pill_NewOEMs" Visibility="Collapsed" Background="{DynamicResource AccentColor}" CornerRadius="8" Padding="6,0,6,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="New" FontSize="9" FontWeight="SemiBold" Foreground="White"/>
+                                        </Border>
+                                    </StackPanel>
                                     <TextBlock Grid.Column="1" Grid.Row="0" Text="Operating System" FontSize="11" FontWeight="SemiBold"
                                                Foreground="{DynamicResource InputPlaceholder}" Margin="8,0,8,4" Padding="4,0,0,0"/>
                                     <TextBlock Grid.Column="2" Grid.Row="0" Text="Architecture" FontSize="11" FontWeight="SemiBold"
@@ -4898,9 +4909,14 @@
                                 <RowDefinition x:Name="row_IntuneDetail" Height="0" MinHeight="0"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" Style="{StaticResource SectionHeader}">
-                                <Run Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets" FontSize="20"/><Run Text="  Package Management"/>
-                            </TextBlock>
+                            <StackPanel x:Name="zone_IntunePkgMgmt" Grid.Row="0" Orientation="Horizontal" Background="Transparent">
+                                <TextBlock Style="{StaticResource SectionHeader}" VerticalAlignment="Center">
+                                    <Run Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets" FontSize="20"/><Run Text="  Package Management"/>
+                                </TextBlock>
+                                <Border x:Name="pill_IntunePkgMgmt" Visibility="Collapsed" Background="{DynamicResource AccentColor}" CornerRadius="8" Padding="7,1,7,2" Margin="10,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="New" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                                </Border>
+                            </StackPanel>
 
                             <Border Grid.Row="1" Style="{StaticResource CardPanel}" Margin="0,0,0,16">
                                 <Grid>
@@ -5674,10 +5690,15 @@
                                     <!-- Interface Scale -->
                                     <Border Style="{StaticResource CardPanel}" Margin="0,0,0,12">
                                         <StackPanel>
-                                            <TextBlock FontSize="14" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,6">
-                                                <Run Text="&#xE8A3;" FontFamily="Segoe MDL2 Assets" FontSize="14"/><Run Text="  Interface Scale"/>
-                                            </TextBlock>
+                                            <StackPanel x:Name="zone_InterfaceScale" Orientation="Horizontal" Background="Transparent" Margin="0,0,0,6">
+                                                <TextBlock FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource WindowForeground}">
+                                                    <Run Text="&#xE8A3;" FontFamily="Segoe MDL2 Assets" FontSize="14"/><Run Text="  Interface Scale"/>
+                                                </TextBlock>
+                                                <Border x:Name="pill_InterfaceScale" Visibility="Collapsed" Background="{DynamicResource AccentColor}" CornerRadius="8" Padding="7,1,7,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="New" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                                                </Border>
+                                            </StackPanel>
                                             <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="18"
                                                        Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,12">
                                                 Adjust the overall size of the application interface. Use Auto-fit to let the tool pick the largest scale that fits your screen, or turn it off to set a custom scale. Helpful on small or high-resolution displays.
@@ -6035,10 +6056,15 @@
                                     <!-- OEM Selections -->
                                     <Border Style="{StaticResource CardPanel}" Margin="0,0,0,12">
                                         <StackPanel>
-                                            <TextBlock FontSize="14" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,6">
-                                                <Run Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14"/><Run Text="  OEM Selections"/>
-                                            </TextBlock>
+                                            <StackPanel x:Name="zone_OEMSelections" Orientation="Horizontal" Background="Transparent" Margin="0,0,0,6">
+                                                <TextBlock FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource WindowForeground}">
+                                                    <Run Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14"/><Run Text="  OEM Selections"/>
+                                                </TextBlock>
+                                                <Border x:Name="pill_OEMSelections" Visibility="Collapsed" Background="{DynamicResource AccentColor}" CornerRadius="8" Padding="7,1,7,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="New" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                                                </Border>
+                                            </StackPanel>
                                             <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="18"
                                                        Foreground="{DynamicResource InputPlaceholder}" Margin="0,0,0,12">
                                                 By default, all supported hardware manufacturers are available throughout the tool. Enable this option to limit support to specific OEMs -- the manufacturer selector and the pre-flight source checks will then only include the OEMs you tick below.

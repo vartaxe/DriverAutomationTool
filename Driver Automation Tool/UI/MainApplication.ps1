@@ -28522,6 +28522,10 @@ $script:WhatsNewFeatures = @(
     [pscustomobject]@{ Id = 'lenovo-latest-10.2.4';  Dot = 'dot_CommonSettings'; Parent = '';                  Pill = 'pill_LenovoLatest'; Zone = 'zone_LenovoLatest'; Controls = @('cmb_HPDriverPackSource') }
     [pscustomobject]@{ Id = 'update-cadence-10.2.4'; Dot = 'dot_CommonSettings'; Parent = '';                  Pill = 'pill_UpdateCadence'; Zone = 'zone_UpdateCadence'; Controls = @('cmb_LatestDriverCadence') }
     [pscustomobject]@{ Id = 'multi-deploy-10.2.4';   Dot = 'dot_IntuneOptions';  Parent = 'dot_IntuneSettings'; Pill = 'pill_MultiDeploy';  Zone = 'zone_MultiDeploy';  Controls = @('txt_DeployGroupSearch', 'btn_SearchDeployGroup', 'cmb_DeployGroupResults', 'btn_ClearDeployGroup') }
+    [pscustomobject]@{ Id = 'oem-selections-10.2.5'; Dot = 'dot_CommonSettings';    Parent = '';                  Pill = 'pill_OEMSelections'; Zone = 'zone_OEMSelections'; Controls = @('chk_RestrictOEMs') }
+    [pscustomobject]@{ Id = 'interface-scale-10.2.5'; Dot = 'dot_CommonSettings';   Parent = '';                  Pill = 'pill_InterfaceScale'; Zone = 'zone_InterfaceScale'; Controls = @('chk_AutoFitScale', 'sld_InterfaceScale') }
+    [pscustomobject]@{ Id = 'new-oems-10.2.5';       Dot = 'dot_ModelSelection';    Parent = '';                  Pill = 'pill_NewOEMs';       Zone = 'zone_NewOEMs';       Controls = @('btn_OEMToggle') }
+    [pscustomobject]@{ Id = 'intune-pkgmgmt-10.2.5'; Dot = 'dot_IntunePackageMgmt'; Parent = 'dot_IntuneSettings'; Pill = 'pill_IntunePkgMgmt';  Zone = 'zone_IntunePkgMgmt';  Controls = @('nav_IntunePackageMgmt') }
 )
 
 # Maps a wired element's x:Name to the feature id it clears, so plain (non-closure) handlers can
@@ -28616,9 +28620,10 @@ try { Initialize-DATWhatsNew } catch { Write-DATActivityLog "What's New init fai
 # "What's New & Fixed" changelog. Each entry renders as a bold category lead-in plus a description
 # (no bullets), spaced apart.
 $script:WhatsNewReleaseItems = @(
-    [pscustomobject]@{ Category = 'Latest Drivers -- Lenovo'; Text = 'Lenovo now supports building Latest Drivers packages from the per-model update catalog, joining Dell and HP. Choose it under Driver Package Build Type.' }
-    [pscustomobject]@{ Category = 'Update Cadence';           Text = 'A new cadence control throttles how often a Latest Drivers pack is re-evaluated on repeat or scheduled runs -- Off, Daily, Weekly or Monthly -- so an unchanged driver set is not rebuilt every time.' }
-    [pscustomobject]@{ Category = 'Multi-Group Deployment';   Text = 'Auto-deployed Intune packages can now target one or more specific Entra security groups (for example a pilot ring plus a broad ring) instead of only All Devices.' }
+    [pscustomobject]@{ Category = 'OEM Selections';            Text = 'Restrict the tool to specific manufacturers from Common Settings. Turn on "Restrict to selected OEMs" and tick the vendors you support -- the model grid, manufacturer selector and pre-flight checks then show only those OEMs. Off by default (all OEMs available).' }
+    [pscustomobject]@{ Category = 'Interface Scale';           Text = 'Resize the whole application from Common Settings. Use auto-fit to scale to smaller or high-DPI screens automatically, or set a custom 75-150% scale with the slider.' }
+    [pscustomobject]@{ Category = 'More Manufacturers';        Text = 'ASUS, Panasonic and Fujitsu commercial models are now supported alongside Dell, HP, Lenovo, Microsoft and Acer -- select them from the OEM dropdown on the Model Selection page.' }
+    [pscustomobject]@{ Category = 'Intune Package Management'; Text = 'A dedicated Intune Package Management view lists your published driver and BIOS packages and lets you review and remove them without leaving the tool.' }
 )
 
 function Get-DATWhatsNewModalShownVersion {
