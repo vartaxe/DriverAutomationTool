@@ -114,6 +114,24 @@ function Set-DATInstallStatus {
             # Successful (or no-op) run -- clear any prior deferral/failure reason so custom
             # reporting reflects the current healthy state rather than a stale cause.
             Remove-ItemProperty -Path $RegPath -Name 'Reason' -Force -ErrorAction SilentlyContinue
+
+            # Clear the toast deferral/snooze counters now the update has been applied, prestaged
+            # or confirmed current. Only the "max deferrals reached" path cleared these before, so
+            # after a normal "Update Now" / auto-install / already-current completion the old
+            # DeferralCount lingered -- polluting custom reporting AND bleeding into the next driver
+            # update's deferral budget. The counter is scoped per update type (Toast\Drivers); the
+            # legacy shared 'Toast' values are also cleared so devices upgraded from the
+            # pre-scoping build don't leave stale data behind at the old path.
+            foreach ($toastStateKey in @('HKLM:\SOFTWARE\DriverAutomationTool\Toast\Drivers', 'HKLM:\SOFTWARE\DriverAutomationTool\Toast')) {
+                if (-not (Test-Path $toastStateKey)) { continue }
+                $hadDeferralState = ($null -ne (Get-ItemProperty -Path $toastStateKey -Name 'DeferralCount' -ErrorAction SilentlyContinue).DeferralCount) -or `
+                                    ($null -ne (Get-ItemProperty -Path $toastStateKey -Name 'SnoozeUntil'   -ErrorAction SilentlyContinue).SnoozeUntil)
+                Remove-ItemProperty -Path $toastStateKey -Name 'DeferralCount' -Force -ErrorAction SilentlyContinue
+                Remove-ItemProperty -Path $toastStateKey -Name 'SnoozeUntil'   -Force -ErrorAction SilentlyContinue
+                if ($hadDeferralState) {
+                    Write-CMTraceLog "Cleared toast deferral state (DeferralCount/SnoozeUntil) under '$toastStateKey' after '$Result' -- reset for the next update cycle"
+                }
+            }
         } else {
             # Deferral (RetryScheduled) or failure (Failed/NoContent) -- surface a single
             # human-readable reason for reporting. Prefer the supplied message, falling back
