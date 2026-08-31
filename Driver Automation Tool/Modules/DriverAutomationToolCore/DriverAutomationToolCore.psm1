@@ -4,7 +4,7 @@
      Organization:  MSEndpointMgr / Patch My PC
      Filename:      DriverAutomationToolCore.psm1
      Purpose:       Core functions for Driver Automation Tool v2.0
-     Version:       10.2.4.0
+     Version:       10.2.5.0
     ===========================================================================
 #>
 
@@ -37,8 +37,8 @@ if ($PSVersionTable.PSVersion.Major -le 5) {
 
 #region Variables
 
-[version]$global:ScriptRelease = "10.2.4.0"
-$global:ScriptBuildDate = "23-08-2026"
+[version]$global:ScriptRelease = "10.2.5.0"
+$global:ScriptBuildDate = "25-08-2026"
 $global:ReleaseNotesURL = "https://raw.githubusercontent.com/maurice-daly/DriverAutomationTool/master/Data/DriverAutomationToolNotes.txt"
 $global:DATConfigUrl = "https://raw.githubusercontent.com/maurice-daly/DriverAutomationTool/refs/heads/master/Data/DATAPIConfig.json"
 $OEMLinksURL = "https://raw.githubusercontent.com/maurice-daly/DriverAutomationTool/master/Data/OEMLinks.xml"
@@ -245,6 +245,8 @@ $script:DATTrustedPublisherCNs = @(
     'Microsoft Windows*',
     'Acer Incorporated',
     'Acer Inc*',
+    'ASUSTeK*',
+    'Asus*',
     'Fujitsu*',
     'Toshiba*',
     'Panasonic*',
@@ -595,11 +597,54 @@ function Find-DATLenovoModelType {
     return $global:LenovoModelType
 }
 
+function Get-DATCatalogOSMajor {
+    <#
+    .SYNOPSIS
+        Returns the Windows major version ('10' or '11') referenced by a catalog entry's
+        SupportedOS string, tolerating the many spellings present in the DAT driver catalog
+        (e.g. 'Windows 11', 'win11 25H2', 'Windows11', 'win11 *', 'Windows 11 64-bit, 24H2').
+        Returns '' when no Windows major version can be determined.
+    #>
+    param (
+        [string]$SupportedOS
+    )
+    if ([string]::IsNullOrWhiteSpace($SupportedOS)) { return '' }
+    $normalized = $SupportedOS.ToLower()
+    if ($normalized -match 'win(?:dows)?\s*(1[01])') { return $Matches[1] }
+    if ($normalized -match '\b(1[01])\b') { return $Matches[1] }
+    return ''
+}
+
+function Test-DATCatalogOSMatch {
+    <#
+    .SYNOPSIS
+        Determines whether a catalog entry's SupportedOS applies to the requested Windows
+        version. Matching is done on the Windows major version (10 vs 11) only, so an entry
+        tagged generically (e.g. 'Windows 11' or 'win11 *' with no specific build) is treated
+        as applying to every build of that version, and inconsistent spellings ('win11',
+        'Windows11', 'Windows 11 64-bit, 25H2') no longer cause valid packages to be dropped.
+    .NOTES
+        Replaces the previous brittle "$SupportedOS -match 'Windows 11'" substring test, which
+        silently excluded any entry not spelled exactly "Windows 11..." -- the cause of ASUS
+        (and other catalog-driven OEM) models being omitted for builds where only a generic
+        or alternately-spelled catalog entry existed.
+    #>
+    param (
+        [string]$SupportedOS,
+        [string]$WindowsVersion
+    )
+    $targetMajor = ($WindowsVersion -replace '[^\d]', '')   # '10' or '11'
+    if ([string]::IsNullOrEmpty($targetMajor)) { return $true }   # no version constraint supplied
+    $entryMajor = Get-DATCatalogOSMajor -SupportedOS $SupportedOS
+    if ([string]::IsNullOrEmpty($entryMajor)) { return $false }   # undeterminable -> exclude (as before)
+    return ($entryMajor -eq $targetMajor)
+}
+
 function Get-DATOEMModelInfo {
     [CmdletBinding()]
     param (
         [Parameter(Position = 1)]
-        [ValidateSet('HP', 'Dell', 'Lenovo', 'Microsoft', 'Acer')]
+        [ValidateSet('HP', 'Dell', 'Lenovo', 'Microsoft', 'Acer', 'Panasonic', 'Fujitsu', 'ASUS')]
         [array]$RequiredOEMs,
         [Parameter(Position = 2)]
         [ValidateNotNullOrEmpty()]
@@ -807,7 +852,7 @@ function Get-DATOEMModelInfo {
                     if ($DATCatalog -and $DATCatalog.Count -gt 0) {
                         $DATMSFiltered = $DATCatalog | Where-Object {
                             $_.Manufacturer -eq 'Microsoft' -and
-                            $_.SupportedOS -match $WindowsVersion -and
+                            (Test-DATCatalogOSMatch -SupportedOS $_.SupportedOS -WindowsVersion $WindowsVersion) -and
                             $_.SupportedArchitecture -eq $MSArchFilter
                         }
                         $DATMicrosoftModels = $DATMSFiltered | Group-Object -Property DisplayName
@@ -898,7 +943,7 @@ function Get-DATOEMModelInfo {
                             $datEntry = $AcerDATCatalog | Where-Object {
                                 $_.Manufacturer -eq 'Acer' -and
                                 $_.DisplayName -eq $Model -and
-                                $_.SupportedOS -match $WindowsVersion -and
+                                (Test-DATCatalogOSMatch -SupportedOS $_.SupportedOS -WindowsVersion $WindowsVersion) -and
                                 $_.SupportedArchitecture -eq $AcerArchFilter
                             } | Select-Object -First 1
                             if ($datEntry -and -not [string]::IsNullOrEmpty($datEntry.Version)) {
@@ -923,6 +968,138 @@ function Get-DATOEMModelInfo {
                     Write-DATLogEntry -Value "[Error] - Acer model retrieval failed: $($_.Exception.Message)" -Severity 3
                 }
             }
+            "Panasonic" {
+                # Panasonic is API-catalog sourced via an XMLSource link, same shape as Acer.
+                $PanasonicXMLSource = ($OEMLinks.OEM.Manufacturer | Where-Object { $_.Name -match "Panasonic" }).Link | Where-Object { $_.Type -eq "XMLSource" } | Select-Object -ExpandProperty URL -First 1
+                $PanasonicXMLFile = [string]($PanasonicXMLSource | Split-Path -Leaf)
+                try {
+                    Write-DATLogEntry -Value "[Panasonic] Catalog download path: $(Join-Path $global:TempDirectory $PanasonicXMLFile)" -Severity 1
+                    if (-not (Test-Path "$global:TempDirectory\$PanasonicXMLFile")) {
+                        Invoke-DATContentDownload -DownloadURL $PanasonicXMLSource -DownloadDestination $global:TempDirectory
+                    }
+                    [xml]$global:PanasonicModelXML = Get-Content -Path (Join-Path $global:TempDirectory $PanasonicXMLFile)
+                    $global:PanasonicModelDrivers = $global:PanasonicModelXML.ModelList.Model
+                    if (-not ([string]::IsNullOrEmpty($WindowsBuild))) {
+                        $PanasonicModels = ($global:PanasonicModelDrivers | Where-Object {
+                            ($_.SCCM.Version -eq $WindowsBuild -and $_.SCCM.OS -eq $("Win" + "$($WindowsVersion.Split(' ')[1])"))
+                        } | Sort-Object).Name
+                    }
+                    # Load the DAT API driver catalog (preferred version source -- exposes a 'Version' field)
+                    $PanasonicDATCatalog = $null
+                    try { $PanasonicDATCatalog = Get-DATDriverCatalog } catch {
+                        Write-DATLogEntry -Value "[Panasonic] DAT catalog unavailable for version lookup: $($_.Exception.Message)" -Severity 2
+                    }
+                    $PanasonicArchFilter = if ($Architecture -eq 'Arm64') { 'arm64' } else { 'x64' }
+                    foreach ($Model in $PanasonicModels) {
+                        $modelNode = $global:PanasonicModelDrivers | Where-Object { $_.Name -eq $Model } | Select-Object -First 1
+                        # Prefer the DAT API catalog Version field; fall back to the XML SCCM node date
+                        $panasonicVersion = ''
+                        if ($PanasonicDATCatalog) {
+                            $datEntry = $PanasonicDATCatalog | Where-Object {
+                                $_.Manufacturer -eq 'Panasonic' -and
+                                $_.DisplayName -eq $Model -and
+                                (Test-DATCatalogOSMatch -SupportedOS $_.SupportedOS -WindowsVersion $WindowsVersion) -and
+                                $_.SupportedArchitecture -eq $PanasonicArchFilter
+                            } | Select-Object -First 1
+                            if ($datEntry -and -not [string]::IsNullOrEmpty($datEntry.Version)) {
+                                $panasonicVersion = $datEntry.Version
+                            }
+                        }
+                        if ([string]::IsNullOrEmpty($panasonicVersion)) {
+                            # Catalog-provided date from the matching SCCM node
+                            $sccmNode = $modelNode.SCCM | Where-Object { $_.Version -eq $WindowsBuild -and $_.OS -eq $("Win" + "$($WindowsVersion.Split(' ')[1])") } | Select-Object -First 1
+                            $panasonicVersion = if ($sccmNode.date) { $sccmNode.date } else { '' }
+                        }
+                        $OEMSupportedModels += [PSCustomObject]@{
+                            OEM        = "Panasonic"
+                            Model      = $Model
+                            Baseboards = $Model
+                            OS         = $WindowsVersion
+                            'OS Build' = $WindowsBuild
+                            Version    = $panasonicVersion
+                        }
+                    }
+                } catch {
+                    Write-DATLogEntry -Value "[Error] - Panasonic model retrieval failed: $($_.Exception.Message)" -Severity 3
+                }
+            }
+            "Fujitsu" {
+                # Fujitsu is sourced entirely from the DAT API catalog (Manufacturer='Fujitsu').
+                # There is no OEMLinks XML: the pre-built SCCM packs carry a session-gated servlet
+                # DownloadURL, a published hash and a comma-separated SupportedDevices model list.
+                try {
+                    $FujitsuArchFilter = if ($Architecture -eq 'Arm64') { 'arm64' } else { 'x64' }
+                    $FujitsuCatalog = Get-DATDriverCatalog
+                    if ($null -eq $FujitsuCatalog -or @($FujitsuCatalog).Count -eq 0) {
+                        Write-DATLogEntry -Value "[Fujitsu] DAT API catalog unavailable or empty -- no Fujitsu models loaded" -Severity 2
+                    } else {
+                        $FujitsuEntries = $FujitsuCatalog | Where-Object {
+                            $_.Manufacturer -eq 'Fujitsu' -and
+                            (Test-DATCatalogOSMatch -SupportedOS $_.SupportedOS -WindowsVersion $WindowsVersion) -and
+                            $_.SupportedArchitecture -eq $FujitsuArchFilter -and
+                            -not [string]::IsNullOrEmpty($_.DownloadURL)
+                        }
+                        # Newest entry per model display name (packs are re-published quarterly).
+                        foreach ($modelGroup in ($FujitsuEntries | Group-Object -Property DisplayName)) {
+                            $latestEntry = $modelGroup.Group | Sort-Object { try { [datetime]$_.ReleaseDate } catch { [datetime]::MinValue } } -Descending | Select-Object -First 1
+                            $fujitsuVersion = if (-not [string]::IsNullOrEmpty($latestEntry.Version)) { $latestEntry.Version }
+                                              elseif (-not [string]::IsNullOrEmpty($latestEntry.ReleaseDate)) { $latestEntry.ReleaseDate }
+                                              else { '' }
+                            $OEMSupportedModels += [PSCustomObject]@{
+                                OEM         = "Fujitsu"
+                                Model       = $modelGroup.Name
+                                Baseboards  = if ($latestEntry.SupportedDevices) { $latestEntry.SupportedDevices } else { $modelGroup.Name }
+                                OS          = $WindowsVersion
+                                'OS Build'  = $WindowsBuild
+                                Version     = $fujitsuVersion
+                                DownloadURL = $latestEntry.DownloadURL
+                            }
+                        }
+                        Write-DATLogEntry -Value "[Fujitsu] DAT catalog: $(@($FujitsuEntries | Group-Object -Property DisplayName).Count) model(s) found for $WindowsVersion $FujitsuArchFilter" -Severity 1
+                    }
+                } catch {
+                    Write-DATLogEntry -Value "[Error] - Fujitsu model retrieval failed: $($_.Exception.Message)" -Severity 3
+                }
+            }
+            "ASUS" {
+                # ASUS commercial (ExpertBook/ExpertCenter) SCCM driver packs are sourced from the
+                # DAT API catalog (Manufacturer='ASUS'). Unlike Fujitsu, the DownloadURL is a direct
+                # HTTPS .zip on dlcdnets.asus.com, so no session-gated servlet resolver is required --
+                # the pre-resolved direct-file path in Invoke-DATOEMDownloadModule handles it.
+                try {
+                    $AsusArchFilter = if ($Architecture -eq 'Arm64') { 'arm64' } else { 'x64' }
+                    $AsusCatalog = Get-DATDriverCatalog
+                    if ($null -eq $AsusCatalog -or @($AsusCatalog).Count -eq 0) {
+                        Write-DATLogEntry -Value "[ASUS] DAT API catalog unavailable or empty -- no ASUS models loaded" -Severity 2
+                    } else {
+                        $AsusEntries = $AsusCatalog | Where-Object {
+                            $_.Manufacturer -eq 'ASUS' -and
+                            (Test-DATCatalogOSMatch -SupportedOS $_.SupportedOS -WindowsVersion $WindowsVersion) -and
+                            $_.SupportedArchitecture -eq $AsusArchFilter -and
+                            -not [string]::IsNullOrEmpty($_.DownloadURL)
+                        }
+                        # Newest entry per model display name (packs are re-published per driver refresh).
+                        foreach ($modelGroup in ($AsusEntries | Group-Object -Property DisplayName)) {
+                            $latestEntry = $modelGroup.Group | Sort-Object { try { [datetime]$_.ReleaseDate } catch { [datetime]::MinValue } } -Descending | Select-Object -First 1
+                            $asusVersion = if (-not [string]::IsNullOrEmpty($latestEntry.Version)) { $latestEntry.Version }
+                                           elseif (-not [string]::IsNullOrEmpty($latestEntry.ReleaseDate)) { $latestEntry.ReleaseDate }
+                                           else { '' }
+                            $OEMSupportedModels += [PSCustomObject]@{
+                                OEM         = "ASUS"
+                                Model       = $modelGroup.Name
+                                Baseboards  = if ($latestEntry.SupportedDevices) { $latestEntry.SupportedDevices } else { $modelGroup.Name }
+                                OS          = $WindowsVersion
+                                'OS Build'  = $WindowsBuild
+                                Version     = $asusVersion
+                                DownloadURL = $latestEntry.DownloadURL
+                            }
+                        }
+                        Write-DATLogEntry -Value "[ASUS] DAT catalog: $(@($AsusEntries | Group-Object -Property DisplayName).Count) model(s) found for $WindowsVersion $AsusArchFilter" -Severity 1
+                    }
+                } catch {
+                    Write-DATLogEntry -Value "[Error] - ASUS model retrieval failed: $($_.Exception.Message)" -Severity 3
+                }
+            }
         }
     }
     return [array]$OEMSupportedModels
@@ -936,7 +1113,12 @@ function Invoke-DATContentDownload {
     [CmdletBinding()]
     param (
         [ValidateNotNullOrEmpty()]$DownloadDestination,
-        [ValidateNotNullOrEmpty()]$DownloadURL
+        [ValidateNotNullOrEmpty()]$DownloadURL,
+        # Fujitsu-style session-gated packs: force the leaf file name (the servlet URL has no
+        # usable leaf), send a primed-session cookie header, and POST the form fields.
+        [string]$OverrideFileName,
+        [string]$CookieHeader,
+        [System.Collections.IDictionary]$PostData
     )
 
     [Net.ServicePointManager]::SecurityProtocol = (
@@ -968,11 +1150,12 @@ function Invoke-DATContentDownload {
     }
 
     # Strip query strings from the leaf filename -- URLs like .zip?acerid=... produce invalid filenames on Windows
-    $leafName = $DownloadURL | Split-Path -Leaf
+    $leafName = if (-not [string]::IsNullOrEmpty($OverrideFileName)) { $OverrideFileName } else { $DownloadURL | Split-Path -Leaf }
     if ($leafName -match '\?') { $leafName = ($leafName -split '\?')[0] }
     $DownloadDestination = Join-Path -Path "$DownloadDestination" -ChildPath $leafName
 
     $DownloadSize = [long]0
+    if (-not $PostData) {
     try {
         $proxyParams = Get-DATWebRequestProxy
         $DownloadState = Invoke-WebRequest -Uri $DownloadURL -Method Head -UseBasicParsing -TimeoutSec 30 @proxyParams
@@ -985,6 +1168,7 @@ function Invoke-DATContentDownload {
         }
     } catch {
         Write-DATLogEntry -Value "[Warning] - HEAD request failed, size unknown: $($_.Exception.Message)" -Severity 2
+    }
     }
 
     # Skip if already downloaded: size matches, or size unknown but file exists (trust it)
@@ -1128,7 +1312,7 @@ function Invoke-DATContentDownload {
         $curlProxyCfgFile = New-DATCurlProxyConfigFile
 
         # If HEAD request failed to get size, fall back to CURL headers
-        if ($DownloadSize -le 0) {
+        if ($DownloadSize -le 0 -and -not $PostData) {
             try {
                 Write-DATLogEntry -Value "- Using CURL to obtain file size via response headers" -Severity 1
                 # Use -i (include headers) with a real GET request -- many CDNs don't return
@@ -1167,6 +1351,13 @@ function Invoke-DATContentDownload {
         # Proxy server (no credentials) comes from Get-DATCurlProxyArgs; credentials come via --config (security fix #5)
         $CurlArgs = "--location --proto =https --max-redirs 5 --output `"$DownloadDestination`" --url `"$DownloadURL`" --dump-header `"$CurlHeaderDumpFile`" --connect-timeout 30 --retry 10 --retry-delay 60 --retry-max-time 600 --retry-connrefused $(Get-DATCurlProxyArgs)"
         if ($curlProxyCfgFile) { $CurlArgs = "--config `"$curlProxyCfgFile`" $CurlArgs" }
+        # Session-gated POST downloads (Fujitsu): carry the primed-session cookie and POST the
+        # overlay form fields. curl's cookie engine forwards Set-Cookie across the redirect chain.
+        if (-not [string]::IsNullOrEmpty($CookieHeader)) { $CurlArgs += " --cookie `"$CookieHeader`"" }
+        if ($PostData) {
+            $CurlArgs += " --user-agent `"Mozilla/5.0 (Windows NT 10.0; Win64; x64)`""
+            foreach ($k in $PostData.Keys) { $CurlArgs += " --data-urlencode `"$k=$($PostData[$k])`"" }
+        }
 
         try {
             Set-DATRegistryValue -Name "RunningProcess" -Type String -Value "Curl"
@@ -1301,6 +1492,37 @@ function Invoke-DATContentDownload {
         if (Test-Path -Path $DownloadDestination) {
             Remove-Item -Path $DownloadDestination -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    # POST downloads (Fujitsu session-gated packs) cannot use the HttpClient GET loop below.
+    # When curl was unavailable or failed, fall back to a direct Invoke-WebRequest POST that
+    # carries the primed-session cookie and follows the redirect chain to the tokenised CDN URL.
+    if ($PostData) {
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                if (Test-Path -Path $DownloadDestination) { Remove-Item -Path $DownloadDestination -Force -ErrorAction SilentlyContinue }
+                Write-DATLogEntry -Value "- Downloading via Invoke-WebRequest POST (attempt $attempt/3)..." -Severity 1
+                $proxyParams = Get-DATWebRequestProxy
+                if ($proxyParams -isnot [hashtable]) { $proxyParams = @{} }
+                $iwrHeaders = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+                if (-not [string]::IsNullOrEmpty($CookieHeader)) { $iwrHeaders['Cookie'] = $CookieHeader }
+                Invoke-WebRequest -Uri $DownloadURL -Method Post -Body $PostData -Headers $iwrHeaders `
+                    -MaximumRedirection 5 -OutFile $DownloadDestination -UseBasicParsing -TimeoutSec 0 @proxyParams
+                if (Test-Path -Path $DownloadDestination) {
+                    $sz = (Get-Item -Path $DownloadDestination).Length
+                    Set-DATRegistryValue -Name "BytesTransferred" -Value "$sz" -Type String
+                    Set-DATRegistryValue -Name "DownloadSpeed"    -Value "---" -Type String
+                }
+                Set-DATRegistryValue -Name "RunningState" -Value "Running" -Type String
+                Set-DATRegistryValue -Name "RunningMode"  -Value "Download Completed" -Type String
+                return
+            } catch {
+                if ($attempt -ge 3) { throw }
+                Write-DATLogEntry -Value "[Warning] - POST download attempt $attempt failed: $($_.Exception.Message). Retrying in 30s..." -Severity 2
+                Start-Sleep -Seconds 30
+            }
+        }
+        return
     }
 
     # HttpClient download (primary if no CURL, fallback if CURL failed)
@@ -1564,6 +1786,38 @@ function Get-DATHPMetaValue {
     return $null
 }
 
+function Sort-DATCanonicalObjects {
+    <#
+    .SYNOPSIS
+        Orders objects deterministically by their canonical JSON using an ORDINAL comparer so that
+        identical package contents serialize -- and therefore hash -- identically on any machine,
+        culture or PowerShell edition.
+    .DESCRIPTION
+        The canonical key for each element is computed up front and the array is then ordered with
+        [System.Array]::Sort. This deliberately avoids "Sort-Object -Culture" with a calculated
+        property: that evaluates the key via ConvertTo-DATCanonicalJson, which itself runs a nested
+        "Sort-Object -Culture" to order object keys. On Windows PowerShell 5.1 that reentrancy
+        throws "Argument types do not match", which previously broke canonical manifest caching for
+        every Dell and Lenovo build (see issue #913).
+    #>
+    param([object[]]$InputObject = @())
+    $count = $InputObject.Length
+    if ($count -le 1) { return , $InputObject }
+
+    # Build the item and key arrays with explicit indexing. Do NOT use "@($collection)" or
+    # "[object[]]@($collection)" here: wrapping/casting a collection that contains IDictionary
+    # elements (the ordered hashtables used for drivers/components) throws "Argument types do not
+    # match" inside module scope. Callers therefore pass an already-materialized object[].
+    $items = New-Object 'object[]' $count
+    $keys = New-Object 'object[]' $count
+    for ($i = 0; $i -lt $count; $i++) {
+        $items[$i] = $InputObject[$i]
+        $keys[$i] = [string](ConvertTo-DATCanonicalJson -InputObject $InputObject[$i])
+    }
+    [System.Array]::Sort($keys, $items, [System.Collections.IComparer][System.StringComparer]::Ordinal)
+    return , $items
+}
+
 function New-DATDriverManifest {
     <#
     .SYNOPSIS
@@ -1644,8 +1898,8 @@ function New-DATDriverManifest {
         # identical package contents serialize identically on any machine. Covers both SCCM
         # driver-pack builds and individual driver packs (all flow through this function).
         try {
-            $canonicalDrivers = @(@($drivers) | Sort-Object -Property @{ Expression = { ConvertTo-DATCanonicalJson -InputObject $_ } } -Culture ([System.Globalization.CultureInfo]::InvariantCulture))
-            $canonicalComponents = @(@($Components) | Sort-Object -Property @{ Expression = { ConvertTo-DATCanonicalJson -InputObject $_ } } -Culture ([System.Globalization.CultureInfo]::InvariantCulture))
+            $canonicalDrivers = @(Sort-DATCanonicalObjects -InputObject $drivers.ToArray())
+            $canonicalComponents = @(Sort-DATCanonicalObjects -InputObject $Components)
             $canonicalContent = [ordered]@{
                 schema         = 'DAT Driver Package manifest v1'
                 oem            = "$OEM".Trim()
@@ -1707,14 +1961,16 @@ function Invoke-DATDriverFilePackaging {
     Set-DATRegistryValue -Name "RunningMode" -Value "Extracting" -Type String
     Write-DATLogEntry -Value "[$OEM] Extracting $Model drivers to $DriverFolder" -Severity 1
 
-    # Proactive long-path advisory: once the full extraction root is known, warn if it is long
-    # (>120 chars) while Windows long path support is not enabled. Deep driver folders below this
-    # root can then push individual files past the 260-char MAX_PATH limit and be silently omitted
-    # from the WIM. This records the exact extraction path length and the disabled policy state so
-    # a later incomplete-WIM failure can be traced back to the path the user chose.
+    # Proactive long-path advisory (#912): applies to every OEM and build type, since all driver
+    # extraction/packaging flows through here. When Windows long path support is off, deeply nested
+    # driver files (notably vendor graphics payloads) can exceed the 260-char MAX_PATH even from a
+    # short temp root -- being omitted from the WIM and leaving staging content that headless cleanup
+    # cannot remove. Warn whenever the policy is disabled; escalate the wording when the extraction
+    # root is itself already long.
     $extractPathLen = $DriverFolder.Length
-    if ($extractPathLen -gt 120 -and -not (Test-DATLongPathsEnabled)) {
-        Write-DATLogEntry -Value "[$OEM] [Warning] - Full extraction path is $extractPathLen characters ('$DriverFolder') and Windows long path support (LongPathsEnabled) is not enabled. Deeply nested driver files may exceed the 260-character MAX_PATH limit and be omitted from the package. Use a shorter Temporary Storage Path or enable LongPathsEnabled." -Severity 2 -UpdateUI
+    if (-not (Test-DATLongPathsEnabled)) {
+        $lenNote = if ($extractPathLen -gt 120) { " The extraction root is already $extractPathLen characters ('$DriverFolder'), which further increases the risk." } else { '' }
+        Write-DATLogEntry -Value "[$OEM] [Warning] - Windows long path support (LongPathsEnabled) is not enabled. Deeply nested driver files may exceed the 260-character MAX_PATH limit -- being omitted from the package and leaving temporary files that cleanup cannot remove.$lenNote Enable LongPathsEnabled or use a shorter Temporary Storage Path." -Severity 2 -UpdateUI
     }
 
     if (Test-Path -Path $DriverFolder) {
@@ -2957,6 +3213,22 @@ function Get-DATConfigMgrKnownModels {
                 ModelProp = 'Model'
                 NormalizeMake  = 'Acer'
                 NormalizeModel = $false
+            },
+            @{
+                OEM   = 'Panasonic'
+                Query = "SELECT ResourceID, Manufacturer, Model FROM SMS_G_System_COMPUTER_SYSTEM WHERE Manufacturer LIKE 'Panasonic%'"
+                MakeProp  = 'Manufacturer'
+                ModelProp = 'Model'
+                NormalizeMake  = 'Panasonic'
+                NormalizeModel = $false
+            },
+            @{
+                OEM   = 'Fujitsu'
+                Query = "SELECT ResourceID, Manufacturer, Model FROM SMS_G_System_COMPUTER_SYSTEM WHERE Manufacturer LIKE 'Fujitsu%'"
+                MakeProp  = 'Manufacturer'
+                ModelProp = 'Model'
+                NormalizeMake  = 'Fujitsu'
+                NormalizeModel = $false
             }
         )
 
@@ -3128,6 +3400,120 @@ function Get-DATConfigMgrKnownModels {
         Makes   = [string[]]$uniqueMakes
         Models  = [string[]]$uniqueModels
         Devices = $devices
+    }
+}
+
+function Test-DATConfigMgrInventoryClasses {
+    <#
+    .SYNOPSIS
+        Read-only check of the ConfigMgr hardware inventory classes DAT relies on for model matching.
+    .DESCRIPTION
+        Inspects the site server's SMS provider (root/SMS/site_<code>) for the inventory views that
+        back Known Model Lookup and driver/BIOS SystemSKU matching -- Win32_ComputerSystem
+        (SMS_G_System_COMPUTER_SYSTEM), MS_SystemInformation (SMS_G_System_MS_SYSTEMINFORMATION) and
+        Win32_BaseBoard (SMS_G_System_BASEBOARD). This never mutates client settings; it only reports
+        a tri-state per class so an administrator can decide whether to enable them:
+
+          Ok              -- view exists and at least one device reports the key property (green).
+          PropertyMissing -- view exists and has rows, but the key property is never populated (amber).
+          NoData          -- view exists but no inventory has flowed yet / no matching devices (amber).
+          NotEnabled      -- view does not exist, i.e. the class is not enabled in hardware inventory (red).
+          Error           -- the query failed for another reason (red).
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)][string]$SiteServer,
+        [Parameter(Mandatory = $true)][string]$SiteCode,
+        [Parameter()][scriptblock]$OnProgress
+    )
+
+    $namespace = "root/SMS/site_$SiteCode"
+
+    # Each required inventory class: friendly name, SMS_G_System_* view, and the key property DAT reads.
+    $requiredClasses = @(
+        [PSCustomObject]@{ DisplayName = 'Win32_ComputerSystem';  View = 'SMS_G_System_COMPUTER_SYSTEM';      Property = 'Manufacturer' }
+        [PSCustomObject]@{ DisplayName = 'MS_SystemInformation';  View = 'SMS_G_System_MS_SYSTEMINFORMATION'; Property = 'SystemSKU' }
+        [PSCustomObject]@{ DisplayName = 'Win32_BaseBoard';       View = 'SMS_G_System_BASEBOARD';            Property = 'Product' }
+    )
+
+    $cimSession = $null
+    $results = New-Object System.Collections.Generic.List[object]
+
+    try {
+        if ($OnProgress) { & $OnProgress "Connecting to $SiteServer..." }
+        Write-DATLogEntry -Value "[Inventory Classes] Connecting CIM session to $SiteServer" -Severity 1
+        $cimSession = New-DATCimSession -ComputerName $SiteServer
+
+        foreach ($class in $requiredClasses) {
+            if ($OnProgress) { & $OnProgress "Checking $($class.DisplayName)..." }
+            $status = 'Error'; $detail = ''; $total = 0; $withValue = 0
+
+            try {
+                $rows = @(Invoke-DATRemoteQuery -CimSession $cimSession -ComputerName $SiteServer -Namespace $namespace `
+                        -Query "SELECT $($class.Property) FROM $($class.View)")
+                $total = $rows.Count
+                $withValue = @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.$($class.Property)) }).Count
+
+                if ($total -eq 0) {
+                    $status = 'NoData'
+                    $detail = 'Class enabled, but no inventory data yet (or no matching devices).'
+                } elseif ($withValue -eq 0) {
+                    $status = 'PropertyMissing'
+                    $detail = "Class enabled, but the '$($class.Property)' property is not being collected."
+                } else {
+                    $status = 'Ok'
+                    $detail = "$withValue of $total device(s) reporting '$($class.Property)'."
+                }
+            }
+            catch {
+                $msg = $_.Exception.Message
+                # An absent SMS_G_System_* view means the class is not enabled in hardware inventory.
+                if ($msg -match 'Invalid class|not found|0x80041010') {
+                    $status = 'NotEnabled'
+                    $detail = 'Class is not enabled in client hardware inventory.'
+                } else {
+                    $status = 'Error'
+                    $detail = $msg
+                }
+                Write-DATLogEntry -Value "[Inventory Classes] $($class.DisplayName) ($($class.View)) check: $status -- $detail" -Severity 2
+            }
+
+            if ($status -eq 'Ok') {
+                Write-DATLogEntry -Value "[Inventory Classes] $($class.DisplayName): OK ($detail)" -Severity 1
+            }
+
+            $results.Add([PSCustomObject]@{
+                    DisplayName = $class.DisplayName
+                    View        = $class.View
+                    Property    = $class.Property
+                    Status      = $status
+                    Detail      = $detail
+                    Total       = $total
+                    WithValue   = $withValue
+                })
+        }
+    }
+    catch {
+        Write-DATLogEntry -Value "[Inventory Classes] CIM session failed: $($_.Exception.Message)" -Severity 3
+        throw
+    }
+    finally {
+        if ($cimSession) {
+            Remove-CimSession -CimSession $cimSession -ErrorAction SilentlyContinue
+        }
+    }
+
+    $classArray = @($results)
+    $allOk = ($classArray.Count -gt 0) -and (@($classArray | Where-Object { $_.Status -ne 'Ok' }).Count -eq 0)
+
+    if ($OnProgress) {
+        if ($allOk) { & $OnProgress "All required inventory classes are enabled and reporting." }
+        else { & $OnProgress "One or more required inventory classes need attention." }
+    }
+
+    return [PSCustomObject]@{
+        Classes = $classArray
+        AllOk   = $allOk
     }
 }
 
@@ -3918,7 +4304,7 @@ function Get-DATLocalSystemTime {
 function Get-DATOEMDownloadLinks {
     [CmdletBinding()]
     param (
-        [Parameter(Position = 1)][ValidateSet('HP', 'Dell', 'Lenovo', 'Microsoft', 'Acer')][array]$OEM,
+        [Parameter(Position = 1)][ValidateSet('HP', 'Dell', 'Lenovo', 'Microsoft', 'Acer', 'Panasonic', 'Fujitsu', 'ASUS')][array]$OEM,
         [Parameter(Position = 2)][string]$OS,
         [Parameter(Position = 3)][ValidateSet('x64', 'x86', 'Arm64')][string]$Architecture,
         [Parameter(Position = 4)][ValidateSet('driver', 'bios', 'all')][string]$DownloadType,
@@ -6549,6 +6935,36 @@ function Invoke-DATConcurrentDriverDownload {
     return $present.ToArray()
 }
 
+function Get-DcuNameSignature {
+    <#
+    .SYNOPSIS
+        Supersession-collapse key for Dell DCU driver DUP names.
+    .DESCRIPTION
+        Dell revises a driver's name by changing its chipset model list (which contains digits)
+        while keeping the vendor + function words, so digit-bearing tokens are dropped and the
+        remaining sorted alphabetic descriptor identifies the driver across revisions.
+
+        Graphics DUPs are the exception: Dell also varies the GPU-family marketing tokens
+        (arc/iris/xe/uhd/radeon/...) and utility suffixes (software/command/center/application)
+        between revisions of the SAME display driver, so the digit-free signature alone leaves each
+        revision distinct (#910). For graphics names the signature is canonicalized to
+        "<vendor> graphics" so revisions collapse, while keeping distinct GPU vendors (Intel iGPU vs
+        AMD/NVIDIA dGPU) as separate drivers.
+    #>
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return '' }
+    $sigStopWords = @('and', 'the', 'of', 'for', 'with', 'to', 'plus', 'uwd', 'dch', 'a', 'an')
+    $toks = $Name -split '[\s/,()]+' |
+        ForEach-Object { $_.Trim().ToLowerInvariant() } |
+        Where-Object { $_ -and ($_ -notmatch '\d') -and ($sigStopWords -notcontains $_) }
+    $toks = @($toks | Sort-Object -Unique)
+    if ($toks -contains 'graphics' -or $toks -contains 'video' -or $toks -contains 'display') {
+        $vendor = @($toks | Where-Object { $_ -in @('intel', 'amd', 'nvidia') } | Select-Object -First 1)
+        if ($vendor) { return "$vendor graphics" }
+    }
+    return ($toks -join ' ')
+}
+
 function Invoke-DATDellLatestDriverPackage {
     <#
     .SYNOPSIS
@@ -6614,17 +7030,8 @@ function Invoke-DATDellLatestDriverPackage {
         }
         return $null
     }
-    # Supersession-collapse key: sorted set of alphabetic-only words. Dell revises a driver's name
-    # by changing the chipset model list (which contains digits) while keeping the vendor + function
-    # words, so digit-bearing tokens are dropped and the remaining descriptor identifies the driver.
-    $sigStopWords = @('and', 'the', 'of', 'for', 'with', 'to', 'plus', 'uwd', 'dch', 'a', 'an')
-    function Get-DcuNameSignature { param([string]$Name)
-        if ([string]::IsNullOrWhiteSpace($Name)) { return '' }
-        $toks = $Name -split '[\s/,()]+' |
-            ForEach-Object { $_.Trim().ToLowerInvariant() } |
-            Where-Object { $_ -and ($_ -notmatch '\d') -and ($sigStopWords -notcontains $_) }
-        return (($toks | Sort-Object -Unique) -join ' ')
-    }
+    # Supersession-collapse signature is provided by the module-scope Get-DcuNameSignature helper
+    # (lifted out so it can be unit-tested independently -- see #910).
 
     # DCU osCode prefixes (Dell-specific; the arch comes from the separate osArch attribute).
     switch -Wildcard ($WindowsVersion) {
@@ -7339,6 +7746,85 @@ function Invoke-DATLenovoLatestDriverPackage {
     }
 
     return $buildVersion
+}
+
+function Invoke-DATFujitsuDownload {
+    <#
+    .SYNOPSIS
+        Downloads a Fujitsu SCCM driver pack from its session-gated download servlet.
+    .DESCRIPTION
+        Fujitsu DownloadURLs are not static file links -- they are servlet endpoints
+        (Download.asp?SoftwareGUID=<GUID>). Priming an ASPSESSIONID cookie alone is NOT
+        enough: the download is authorised per-file only after the session has opened the
+        file overlay (File_DownOverlay.asp), which grants a server-side download token. The
+        file is then fetched by POSTing the overlay's form (SoftwareGUID + Filename) to
+        Download.asp -- a GET returns an HTML error page. The POST 302-redirects through
+        StreamFileToBrowser.asp to the tokenised CDN URL (webdownloads*.ts.fujitsu.com/...
+        &Token=...), which streams the payload.
+    .PARAMETER DownloadUrl
+        The catalog DownloadURL (https://support.ts.fujitsu.com/Download/Download.asp?SoftwareGUID=...).
+    .PARAMETER OutFile
+        The full destination path (including file name) to stream the download to.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)][string]$DownloadUrl,
+        [Parameter(Mandatory)][string]$OutFile
+    )
+
+    # Enforce HTTPS and restrict to the Fujitsu support host (security: trusted download host).
+    $uriResult = $null
+    if (-not ([System.Uri]::TryCreate($DownloadUrl, [System.UriKind]::Absolute, [ref]$uriResult)) -or
+        $uriResult.Scheme -ne 'https') {
+        throw "Fujitsu download URL must use HTTPS: '$DownloadUrl'"
+    }
+    if ($uriResult.Host -notmatch '(^|\.)fujitsu\.com$') {
+        throw "Fujitsu download URL host not on the trusted allow-list: '$($uriResult.Host)'"
+    }
+
+    # Extract the SoftwareGUID from the servlet URL query string.
+    $guid = ([regex]::Match($DownloadUrl, '(?i)SoftwareGUID=([0-9A-F\-]+)')).Groups[1].Value
+    if ([string]::IsNullOrEmpty($guid)) {
+        throw "Fujitsu download URL does not contain a SoftwareGUID: '$DownloadUrl'"
+    }
+
+    $destDir = Split-Path -Path $OutFile -Parent
+    if (-not (Test-Path -Path $destDir)) { New-Item -Path $destDir -ItemType Directory -Force | Out-Null }
+
+    $headers = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    $proxyParams = Get-DATWebRequestProxy
+    $portalBase = "https://$($uriResult.Host)"
+
+    # 1. Prime the portal session to obtain the ASPSESSIONID cookie.
+    $session = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+    Write-DATLogEntry -Value "[Fujitsu] Priming portal session..." -Severity 1
+    Invoke-WebRequest -Uri "$portalBase/Deskupdate/index.asp?lng=EU" `
+        -WebSession $session -Headers $headers -UseBasicParsing -TimeoutSec 60 @proxyParams | Out-Null
+
+    # 2. Visit the file landing page to establish the GUID context in the session.
+    Invoke-WebRequest -Uri "$portalBase/IndexDownload.asp?SoftwareGUID=$guid" `
+        -WebSession $session -Headers $headers -UseBasicParsing -TimeoutSec 120 @proxyParams | Out-Null
+
+    # 3. Open the file overlay -- this is the token-granting step that authorises the session to
+    #    download this GUID and exposes the real Filename / AdlerSDBCheck the POST must send.
+    Write-DATLogEntry -Value "[Fujitsu] Requesting download authorisation token for $guid..." -Severity 1
+    $overlay = Invoke-WebRequest -Uri "$portalBase/download/File_DownOverlay.asp?lng=EU&id=$guid&SupportOS=&IsSolution=&Produkt=&Version=37" `
+        -WebSession $session -Headers $headers -UseBasicParsing -TimeoutSec 120 @proxyParams
+    $fileName = ([regex]::Match($overlay.Content, '(?i)name="Filename"\s+value="([^"]+)"')).Groups[1].Value
+    $adlerCheck = ([regex]::Match($overlay.Content, '(?i)name="AdlerSDBCheck"\s+value="([^"]*)"')).Groups[1].Value
+    if ([string]::IsNullOrEmpty($fileName)) {
+        throw "Fujitsu overlay did not return a download token/Filename for $guid -- the pack may have been withdrawn."
+    }
+    Write-DATLogEntry -Value "[Fujitsu] Authorised download of '$fileName'; streaming payload..." -Severity 1
+
+    # 4. Hand the tokenised POST to the shared curl download engine so the transfer shows the
+    #    curl window, live progress and honours the Abort button -- exactly like other OEMs.
+    #    The primed-session cookies are forwarded so StreamFileToBrowser.asp resolves the CDN URL.
+    $cookieHeader = (($session.Cookies.GetCookies([Uri]$portalBase) | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ')
+    $postData = [ordered]@{ SoftwareGUID = $guid; Filename = $fileName; AdlerSDBCheck = $adlerCheck }
+    Invoke-DATContentDownload -DownloadURL "$portalBase/Download/Download.asp" `
+        -DownloadDestination $destDir -OverrideFileName (Split-Path -Path $OutFile -Leaf) `
+        -CookieHeader $cookieHeader -PostData $postData
 }
 
 function Invoke-DATOEMDownloadModule {
@@ -8346,7 +8832,7 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
                     $matchingEntry = $driverCatalog | Where-Object {
                         $_.Manufacturer -eq 'Microsoft' -and
                         $_.DisplayName -eq $Model -and
-                        $_.SupportedOS -match $WindowsVersion -and
+                        (Test-DATCatalogOSMatch -SupportedOS $_.SupportedOS -WindowsVersion $WindowsVersion) -and
                         $_.SupportedArchitecture -eq $normalizedArch -and
                         -not [string]::IsNullOrEmpty($_.DownloadURL) -and
                         $_.DownloadURL -match '\.(msi|exe|cab|zip|wim)(\?|$)'
@@ -8449,6 +8935,88 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
                 throw "No matching Acer driver package found for $Model ($WinVer $WindowsBuild)"
             }
         }
+        "Panasonic" {
+            $PanasonicLink = ($OEMLinks.OEM.Manufacturer | Where-Object { $_.Name -match "Panasonic" }).Link |
+                Where-Object { $_.Type -eq "XMLSource" } | Select-Object -ExpandProperty URL -First 1
+            if ([string]::IsNullOrEmpty($PanasonicLink)) { throw "Panasonic catalog URL not found in OEM links" }
+
+            $PanasonicFile = [string]($PanasonicLink | Split-Path -Leaf)
+            $PanasonicFilePath = Join-Path $TempDirectory $PanasonicFile
+
+            if (-not (Test-Path $PanasonicFilePath)) {
+                Write-DATLogEntry -Value "[$OEM] Downloading Panasonic catalog..." -Severity 1
+                Write-DATLogEntry -Value "[$OEM] Catalog download path: $PanasonicFilePath" -Severity 1
+                Set-DATRegistryValue -Name "RunningMessage" -Value "Downloading Panasonic driver catalog..." -Type String
+                Invoke-CatalogDownload -Uri $PanasonicLink -OutFile $PanasonicFilePath
+            } else {
+                Write-DATLogEntry -Value "[$OEM] Using cached Panasonic catalog: $PanasonicFilePath" -Severity 1
+            }
+
+            [xml]$PanasonicModelXML = Get-Content -Path $PanasonicFilePath
+            $PanasonicDrivers = $PanasonicModelXML.ModelList.Model
+            $WinVer = "Win" + "$($WindowsVersion.Split(' ')[1])"
+
+            Write-DATLogEntry -Value "[$OEM] Searching catalog for: Name='$Model' OS='$WinVer' Build='$WindowsBuild'" -Severity 1
+
+            $matchingModel = $PanasonicDrivers | Where-Object {
+                $_.Name -eq $Model -and $_.SCCM.Version -eq $WindowsBuild -and $_.SCCM.OS -eq $WinVer
+            } | Select-Object -First 1
+
+            if ($null -eq $matchingModel) {
+                # Fuzzy fallback -- partial name match
+                Write-DATLogEntry -Value "[$OEM] Exact match not found, attempting partial name match for '$Model'" -Severity 2
+                $matchingModel = $PanasonicDrivers | Where-Object {
+                    $_.Name -like "*$Model*" -and $_.SCCM.Version -eq $WindowsBuild -and $_.SCCM.OS -eq $WinVer
+                } | Select-Object -First 1
+            }
+
+            if ($null -ne $matchingModel -and $null -ne $matchingModel.SCCM) {
+                $downloadURL = $matchingModel.SCCM.'#text'
+                if ($downloadURL -is [array]) { $downloadURL = $downloadURL[0] }
+                if ([string]::IsNullOrEmpty($downloadURL)) { $downloadURL = [string]$matchingModel.SCCM }
+                $downloadFileName = $downloadURL | Split-Path -Leaf
+                Write-DATLogEntry -Value "[$OEM] Found driver pack: $downloadFileName" -Severity 1
+                Write-DATLogEntry -Value "[$OEM] Resolved download URL: $downloadURL" -Severity 1
+            } else {
+                # Log all available models/builds to aid diagnostics
+                $available = $PanasonicDrivers | Where-Object { $_.SCCM.OS -eq $WinVer } | Select-Object -ExpandProperty Name -Unique
+                Write-DATLogEntry -Value "[$OEM] Available models for ${WinVer}: $($available -join ', ')" -Severity 2
+                throw "No matching Panasonic driver package found for $Model ($WinVer $WindowsBuild)"
+            }
+        }
+        "Fujitsu" {
+            # Fujitsu packs are sourced from the DAT API catalog. The DownloadURL is a session-gated
+            # servlet (Download.asp?SoftwareGUID=...) which does not match the direct-file regex, so
+            # it is never accepted by the pre-resolved block above. Resolve it here from either the
+            # caller-provided CatalogDownloadURL or a fresh DAT catalog lookup.
+            if (-not [string]::IsNullOrEmpty($CatalogDownloadURL)) {
+                $downloadURL = $CatalogDownloadURL
+                if (-not [string]::IsNullOrEmpty($callerCatalogVersion)) { $catalogVersion = $callerCatalogVersion }
+            } else {
+                $FujitsuArchFilter = if ($Architecture -eq 'Arm64') { 'arm64' } else { 'x64' }
+                $FujitsuCatalog = Get-DATDriverCatalog
+                $matchingEntry = $FujitsuCatalog | Where-Object {
+                    $_.Manufacturer -eq 'Fujitsu' -and
+                    $_.DisplayName -eq $Model -and
+                    (Test-DATCatalogOSMatch -SupportedOS $_.SupportedOS -WindowsVersion $WindowsVersion) -and
+                    $_.SupportedArchitecture -eq $FujitsuArchFilter -and
+                    -not [string]::IsNullOrEmpty($_.DownloadURL)
+                } | Sort-Object { try { [datetime]$_.ReleaseDate } catch { [datetime]::MinValue } } -Descending | Select-Object -First 1
+                if ($null -eq $matchingEntry) { throw "No matching Fujitsu driver package found for $Model ($WindowsVersion $Architecture)" }
+                $downloadURL = $matchingEntry.DownloadURL
+                $catalogVersion = if (-not [string]::IsNullOrEmpty($matchingEntry.Version)) { $matchingEntry.Version } elseif (-not [string]::IsNullOrEmpty($matchingEntry.ReleaseDate)) { $matchingEntry.ReleaseDate } else { $callerCatalogVersion }
+                if (-not [string]::IsNullOrEmpty($matchingEntry.FileHash)) {
+                    $catalogFileHash = $matchingEntry.FileHash
+                    $catalogHashMethod = if (-not [string]::IsNullOrEmpty($matchingEntry.HashMethod)) { $matchingEntry.HashMethod } else { 'SHA256' }
+                }
+            }
+            # The servlet returns the real name via Content-Disposition, but the common download path
+            # needs a deterministic .zip file name for hashing/extraction. Build a safe one.
+            $safeFjModel = ConvertTo-DATSafePathSegment -Segment $Model
+            $downloadFileName = "Fujitsu_${safeFjModel}_$($WindowsVersion.Replace(' ',''))_$WindowsBuild.zip"
+            Write-DATLogEntry -Value "[$OEM] Resolved session-gated download URL: $downloadURL" -Severity 1
+            Write-DATLogEntry -Value "[$OEM] Target file name: $downloadFileName" -Severity 1
+        }
         default {
             throw "Unsupported OEM: $OEM"
         }
@@ -8536,7 +9104,13 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
         Write-DATLogEntry -Value "[$OEM] Starting download: $downloadURL" -Severity 1
 
         try {
-            Invoke-DATContentDownload -DownloadURL $downloadURL -DownloadDestination $DownloadDestination
+            if ($OEM -eq 'Fujitsu') {
+                # Fujitsu requires a primed portal session; the standard downloader would fetch the
+                # HTML error page. Stream to the pre-computed deterministic file name instead.
+                Invoke-DATFujitsuDownload -DownloadUrl $downloadURL -OutFile $downloadedFile
+            } else {
+                Invoke-DATContentDownload -DownloadURL $downloadURL -DownloadDestination $DownloadDestination
+            }
 
             if (-not (Test-Path $downloadedFile)) {
                 Write-DATLogEntry -Value "[Warning] - Downloaded file not found after transfer (attempt $dlAttempt): $downloadedFile" -Severity 2
@@ -8580,7 +9154,11 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
                     if ($dlAttempt -lt $maxDownloadAttempts) { continue }
                     # Final attempt failed -- download anyway but warn
                     Write-DATLogEntry -Value "[Warning] - Hash verification failed after $maxDownloadAttempts attempts. Re-downloading and proceeding without hash verification." -Severity 2
-                    Invoke-DATContentDownload -DownloadURL $downloadURL -DownloadDestination $DownloadDestination
+                    if ($OEM -eq 'Fujitsu') {
+                        Invoke-DATFujitsuDownload -DownloadUrl $downloadURL -OutFile $downloadedFile
+                    } else {
+                        Invoke-DATContentDownload -DownloadURL $downloadURL -DownloadDestination $DownloadDestination
+                    }
                     $downloadVerified = $false
                     break
                 }
@@ -10386,6 +10964,155 @@ function Update-DATIntuneAppMetadata {
         Version    = $meta.Version
         UpdateType = $meta.UpdateType
     }
+}
+
+function Set-DATIntuneAppDeploymentState {
+    <#
+    .SYNOPSIS
+        Renames a DAT-created Win32 app's displayName prefix to move it between deployment states
+        (Production / Pilot / Retired) -- the Intune equivalent of the ConfigMgr package "Move to ..."
+        action. Only the displayName changes; installer content, rules and assignments are untouched.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)][string]$AppId,
+        [Parameter(Mandatory)][ValidateSet('Production', 'Pilot', 'Retired')][string]$State
+    )
+
+    $app = Invoke-DATGraphRequest -Uri "/deviceAppManagement/mobileApps/$AppId" -NoPagination
+    if ($null -eq $app) { throw "Intune app '$AppId' was not found." }
+
+    $oldName = [string]$app.displayName
+    # Match the DAT driver/BIOS prefix with any existing state qualifier, e.g. "Drivers -",
+    # "Drivers Pilot -", "BIOS Retired -".
+    $prefixPattern = '^(Drivers|BIOS)(?:\s+(?:Pilot|Retired))?\s+-'
+    if ($oldName -notmatch $prefixPattern) {
+        return [PSCustomObject]@{ AppId = $AppId; Changed = $false; OldName = $oldName; NewName = $oldName; Reason = 'Name does not match a DAT driver/BIOS package pattern.' }
+    }
+
+    $baseType = $Matches[1]
+    $newPrefix = switch ($State) {
+        'Production' { "$baseType -" }
+        'Pilot'      { "$baseType Pilot -" }
+        'Retired'    { "$baseType Retired -" }
+    }
+    $newName = $oldName -replace $prefixPattern, $newPrefix
+    if ($newName -eq $oldName) {
+        return [PSCustomObject]@{ AppId = $AppId; Changed = $false; OldName = $oldName; NewName = $newName; Reason = "Already in $State state." }
+    }
+
+    $patchBody = @{ "@odata.type" = "#microsoft.graph.win32LobApp"; displayName = $newName }
+    Invoke-DATGraphRequest -Uri "/deviceAppManagement/mobileApps/$AppId" -Method PATCH -Body $patchBody | Out-Null
+    Write-DATLogEntry -Value "[Intune] Moved app $AppId to ${State}: '$oldName' -> '$newName'" -Severity 1
+
+    return [PSCustomObject]@{ AppId = $AppId; Changed = $true; OldName = $oldName; NewName = $newName; Reason = '' }
+}
+
+function Set-DATIntuneAppOSTarget {
+    <#
+    .SYNOPSIS
+        Re-targets a DAT-created driver Win32 app to a different Windows feature update. Unlike the
+        ConfigMgr package rename (name only), Intune enforces the build in the requirement rule, so
+        this renames the OS token in the displayName/description AND regenerates the requirement and
+        detection rule scripts for the new build. BIOS packages (OS-agnostic) and Dell driver packs
+        (major-OS only, no build gate) are skipped rather than changed.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)][string]$AppId,
+        [Parameter(Mandatory)][string]$NewOS
+    )
+
+    $app = Invoke-DATGraphRequest -Uri "/deviceAppManagement/mobileApps/$AppId" -NoPagination
+    if ($null -eq $app) { throw "Intune app '$AppId' was not found." }
+    $oldName = [string]$app.displayName
+
+    $rules = @($app.rules)
+    $detRule = $rules | Where-Object { $_.'@odata.type' -match 'PowerShellScriptRule' -and $_.ruleType -eq 'detection' }   | Select-Object -First 1
+    $reqRule = $rules | Where-Object { $_.'@odata.type' -match 'PowerShellScriptRule' -and $_.ruleType -eq 'requirement' } | Select-Object -First 1
+    $detText = if ($detRule -and $detRule.scriptContent) { [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($detRule.scriptContent)) } else { '' }
+    $reqText = if ($reqRule -and $reqRule.scriptContent) { [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($reqRule.scriptContent)) } else { '' }
+
+    $meta = Get-DATIntuneAppScriptMetadata -DetectionScript $detText -RequirementScript $reqText
+    if ([string]::IsNullOrWhiteSpace($meta.OEM) -or [string]::IsNullOrWhiteSpace($meta.Model) -or [string]::IsNullOrWhiteSpace($meta.Baseboards)) {
+        throw "Could not read the package metadata (OEM / Model / Baseboards) from the existing scripts -- this may not be a Driver Automation Tool package."
+    }
+
+    if ($meta.UpdateType -eq 'BIOS') {
+        return [PSCustomObject]@{ AppId = $AppId; Changed = $false; OldName = $oldName; NewName = $oldName; Reason = 'BIOS packages are OS-agnostic.' }
+    }
+    if ($meta.OEM -match 'Dell') {
+        return [PSCustomObject]@{ AppId = $AppId; Changed = $false; OldName = $oldName; NewName = $oldName; Reason = 'Dell driver packs are major-OS only (no build target).' }
+    }
+
+    $osPattern = 'Windows\s+1[01]\s+\d{2}H[12]'
+    if ($oldName -notmatch $osPattern) {
+        return [PSCustomObject]@{ AppId = $AppId; Changed = $false; OldName = $oldName; NewName = $oldName; Reason = 'Package name has no Windows build to change.' }
+    }
+    $newName = $oldName -replace $osPattern, $NewOS
+    if ($newName -eq $oldName) {
+        return [PSCustomObject]@{ AppId = $AppId; Changed = $false; OldName = $oldName; NewName = $newName; Reason = "Already targets $NewOS." }
+    }
+
+    # Architecture for the regenerated description (Arm64 vs x64), matching the metadata republish.
+    $archValue = [string]$app.applicableArchitectures
+    $arch = if (-not [string]::IsNullOrWhiteSpace($archValue) -and $archValue -match 'arm64' -and $archValue -notmatch 'x64') { 'Arm64' } else { 'x64' }
+
+    # Regenerate both rule scripts against the new OS so the applicability build-gate matches.
+    $tmpReq = Join-Path $env:TEMP ("DAT_Req_{0}.ps1" -f ([Guid]::NewGuid().ToString('N')))
+    $tmpDet = Join-Path $env:TEMP ("DAT_Det_{0}.ps1" -f ([Guid]::NewGuid().ToString('N')))
+    try {
+        New-DATIntuneRequirementScript -OutputPath $tmpReq -OEM $meta.OEM -Model $meta.Model `
+            -Baseboards $meta.Baseboards -OS $NewOS -Version $meta.Version `
+            -UpdateType $meta.UpdateType -ReleaseDate $meta.ReleaseDate `
+            -MaintenanceWindowsJson $meta.MaintenanceWindowsJson | Out-Null
+        New-DATIntuneDetectionScript -OutputPath $tmpDet -OEM $meta.OEM -Model $meta.Model `
+            -Baseboards $meta.Baseboards -OS $NewOS -Version $meta.Version `
+            -UpdateType $meta.UpdateType -ReleaseDate $meta.ReleaseDate | Out-Null
+        $reqB64 = ConvertTo-DATNoBomScriptBase64 -Path $tmpReq
+        $detB64 = ConvertTo-DATNoBomScriptBase64 -Path $tmpDet
+    } finally {
+        if (Test-Path $tmpReq) { Remove-Item $tmpReq -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $tmpDet) { Remove-Item $tmpDet -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Graph requires the full rules set on a Win32 app PATCH, so both rules are always sent.
+    $newRules = @(
+        @{
+            "@odata.type"         = "#microsoft.graph.win32LobAppPowerShellScriptRule"
+            ruleType              = "detection"
+            scriptContent         = $detB64
+            enforceSignatureCheck = $false
+            runAs32Bit            = $false
+        },
+        @{
+            "@odata.type"         = "#microsoft.graph.win32LobAppPowerShellScriptRule"
+            ruleType              = "requirement"
+            scriptContent         = $reqB64
+            enforceSignatureCheck = $false
+            runAs32Bit            = $false
+            runAsAccount          = "system"
+            displayName           = "DAT Model Requirement"
+            operationType         = "string"
+            comparisonValue       = "Requirement met"
+            operator              = "equal"
+        }
+    )
+
+    $description = Get-DATIntunePackageDescription -OEM $meta.OEM -Model $meta.Model -OS $NewOS `
+        -Architecture $arch -Baseboards $meta.Baseboards -Version $meta.Version `
+        -ReleaseDate $meta.ReleaseDate -UpdateType $meta.UpdateType
+
+    $patchBody = @{
+        "@odata.type" = "#microsoft.graph.win32LobApp"
+        displayName   = $newName
+        description   = $description
+        rules         = $newRules
+    }
+    Invoke-DATGraphRequest -Uri "/deviceAppManagement/mobileApps/$AppId" -Method PATCH -Body $patchBody | Out-Null
+    Write-DATLogEntry -Value "[Intune] Re-targeted app $AppId to ${NewOS}: '$oldName' -> '$newName' (rules regenerated)" -Severity 1
+
+    return [PSCustomObject]@{ AppId = $AppId; Changed = $true; OldName = $oldName; NewName = $newName; Reason = '' }
 }
 
 function Get-DATIntuneAssignmentTargetKey {
@@ -12938,6 +13665,8 @@ try {{
         "Lenovo"    {{ $oemMatch = ($manufacturer -match "Lenovo") }}
         "Microsoft" {{ $oemMatch = ($manufacturer -match "Microsoft") }}
         "Acer"      {{ $oemMatch = ($manufacturer -match "Acer") }}
+        "Panasonic" {{ $oemMatch = ($manufacturer -match "Panasonic") }}
+        "Fujitsu"   {{ $oemMatch = ($manufacturer -match "Fujitsu") }}
         default     {{ $oemMatch = ($manufacturer -match $expectedOEM) }}
     }}
 
@@ -13194,6 +13923,8 @@ try {{
         "Lenovo"    {{ $oemMatch = ($manufacturer -match "Lenovo") }}
         "Microsoft" {{ $oemMatch = ($manufacturer -match "Microsoft") }}
         "Acer"      {{ $oemMatch = ($manufacturer -match "Acer") }}
+        "Panasonic" {{ $oemMatch = ($manufacturer -match "Panasonic") }}
+        "Fujitsu"   {{ $oemMatch = ($manufacturer -match "Fujitsu") }}
         default     {{ $oemMatch = ($manufacturer -match $expectedOEM) }}
     }}
 
@@ -15386,9 +16117,14 @@ function Find-DATBiosPackage {
     if ($oemEntries.Count -gt 0) {
         # Find entries where any of the model's baseboards match any of the entry's SupportedDevices
         $matches = @()
+        # ASUS SupportedDevices is comma-delimited (full model name + short code, e.g.
+        # "ExpertBook B1402CBA,B1402CBA"), so it must split on comma as well as semicolon --
+        # otherwise the whole value stays one token and never matches the model's code, and BIOS
+        # resolution fails for every ASUS model. Other OEMs use single/semicolon-delimited tokens.
+        $entryDeviceSplit = if ($OEM -eq 'ASUS') { '[;,]+' } else { ';' }
         foreach ($entry in $oemEntries) {
             if ([string]::IsNullOrEmpty($entry.SupportedDevices)) { continue }
-            $entryDevices = @($entry.SupportedDevices -split ';' | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ })
+            $entryDevices = @($entry.SupportedDevices -split $entryDeviceSplit | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ })
             foreach ($board in $modelBoards) {
                 if ($board -in $entryDevices) { $matches += $entry; break }
             }

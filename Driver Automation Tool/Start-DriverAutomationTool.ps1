@@ -6,7 +6,11 @@
 [CmdletBinding()]
 param (
     [ValidateSet('Dark', 'Light')]
-    [string]$Theme = 'Dark'
+    [string]$Theme = 'Dark',
+
+    # Skip desktop shortcut creation/management for this launch (for admins who manage
+    # shortcuts manually). A persistent equivalent is the CreateDesktopShortcut registry value.
+    [switch]$NoShortcut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -135,34 +139,65 @@ if (-not (Test-Path $RegPath)) {
 }
 New-ItemProperty -Path $RegPath -Name "InstallDirectory" -Value $AppRoot -PropertyType String -Force | Out-Null
 
-# Create desktop shortcut (idempotent -- only creates if missing or pointing to wrong location)
-$desktopPath = [Environment]::GetFolderPath('Desktop')
-$shortcutPath = Join-Path $desktopPath 'Driver Automation Tool.lnk'
+# Create the desktop shortcut on the PUBLIC (all-users) desktop, so a single shortcut is
+# shared across every admin profile on a machine instead of one copy per user (#916).
+# Honors the CreateDesktopShortcut registry toggle (default on) and the -NoShortcut switch
+# for admins who manage shortcuts manually.
+$shortcutName = 'Driver Automation Tool.lnk'
 $launcherPath = Join-Path $AppRoot 'Start-DriverAutomationTool.ps1'
 $iconPath = Join-Path $AppRoot 'Branding\DATLogo.ico'
-$needsShortcut = $true
-if (Test-Path $shortcutPath) {
-    $existing = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
-    if ($existing.Arguments -like "*$launcherPath*") {
-        $needsShortcut = $false
+$shortcutToggle = (Get-ItemProperty -Path $RegPath -Name 'CreateDesktopShortcut' -ErrorAction SilentlyContinue).CreateDesktopShortcut
+$shortcutDisabled = $NoShortcut -or ($shortcutToggle -eq 0)
+
+if ($shortcutDisabled) {
+    Write-Host "Desktop shortcut management skipped (disabled)." -ForegroundColor DarkGray
+} else {
+    $desktopPath = [Environment]::GetFolderPath('CommonDesktopDirectory')
+    $shortcutPath = Join-Path $desktopPath $shortcutName
+
+    # Idempotent -- only create if missing or pointing to a different launcher
+    $needsShortcut = $true
+    if (Test-Path $shortcutPath) {
+        $existing = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
+        if ($existing.Arguments -like "*$launcherPath*") {
+            $needsShortcut = $false
+        }
     }
-}
-if ($needsShortcut) {
-    $wshShell = New-Object -ComObject WScript.Shell
-    $shortcut = $wshShell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$launcherPath`""
-    $shortcut.WorkingDirectory = $AppRoot
-    $shortcut.Description = 'Driver Automation Tool'
-    if (Test-Path $iconPath) {
-        $shortcut.IconLocation = "$iconPath,0"
+    if ($needsShortcut) {
+        $wshShell = New-Object -ComObject WScript.Shell
+        $shortcut = $wshShell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+        $shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$launcherPath`""
+        $shortcut.WorkingDirectory = $AppRoot
+        $shortcut.Description = 'Driver Automation Tool'
+        if (Test-Path $iconPath) {
+            $shortcut.IconLocation = "$iconPath,0"
+        }
+        $shortcut.Save()
+        # Set "Run as administrator" flag (byte 21, bit 0x20 in the .lnk binary)
+        $bytes = [System.IO.File]::ReadAllBytes($shortcutPath)
+        $bytes[21] = $bytes[21] -bor 0x20
+        [System.IO.File]::WriteAllBytes($shortcutPath, $bytes)
+        Write-Host "Desktop shortcut created: $shortcutPath" -ForegroundColor Green
     }
-    $shortcut.Save()
-    # Set "Run as administrator" flag (byte 21, bit 0x20 in the .lnk binary)
-    $bytes = [System.IO.File]::ReadAllBytes($shortcutPath)
-    $bytes[21] = $bytes[21] -bor 0x20
-    [System.IO.File]::WriteAllBytes($shortcutPath, $bytes)
-    Write-Host "Desktop shortcut created: $shortcutPath" -ForegroundColor Green
+
+    # Clean up the current user's legacy per-user desktop shortcut left by pre-common-desktop
+    # versions. Only the current profile's copy is reachable; other admins' stale copies are
+    # removed the next time each of them launches. Guarded so we only delete a shortcut that
+    # points to this launcher, never an unrelated same-named shortcut.
+    try {
+        $userDesktop = [Environment]::GetFolderPath('Desktop')
+        $userShortcut = Join-Path $userDesktop $shortcutName
+        if ((Test-Path $userShortcut) -and ($userShortcut -ne $shortcutPath)) {
+            $userLnk = (New-Object -ComObject WScript.Shell).CreateShortcut($userShortcut)
+            if ($userLnk.Arguments -like "*$launcherPath*") {
+                Remove-Item -Path $userShortcut -Force -ErrorAction Stop
+                Write-Host "Removed legacy per-user desktop shortcut: $userShortcut" -ForegroundColor DarkYellow
+            }
+        }
+    } catch {
+        Write-Host "Could not remove legacy per-user shortcut: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
 }
 
 # Launch the application

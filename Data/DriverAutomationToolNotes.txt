@@ -3,6 +3,29 @@ Release Notes
 IMPORTANT
 - DAT Downloads have been moved to GitHub - https://github.com/maurice-daly/DriverAutomationTool
 
+Version 10.2.5
+What's New & Fixed
+
+- OEM Support
+Panasonic support — added Panasonic as a supported manufacturer (catalog, model listing, packaging).
+Fujitsu support — added Fujitsu, including its session-gated catalog handling.
+ASUS support — ExpertBook/ExpertCenter commercial models via the DAT API catalog.
+Lenovo Custom Driver Pack detection — model now read from Win32_ComputerSystemProduct.Version and SKU from the first four characters of Win32_ComputerSystem.Model, matching the apply-driver script. (maurice-daly/DriverAutomationTool#921)
+- Intune package management — manage and delete existing BIOS/driver packages directly from the tool.
+- Force BIOS re-application — new -ForceDownload switch / SMSTSForceBIOSDownload task-sequence variable to download and flag the same BIOS version for flashing (e.g. recreating Dell recovery images). Opt-in; default unchanged. (MSEndpointMgr/ModernBIOSManagement#31)
+ASUS BIOS matching — each model now resolves its own BIOS version instead of every model collapsing onto the newest family BIOS (all showing 311).
+- Canonical manifest caching crash — fixed a Dell/Lenovo crash during canonical driver-manifest caching under PowerShell 5.1. (#913)
+Long-path pre-flight advisory — warns before Latest Drivers extraction when Windows long-path support is off and payloads (e.g. Intel DUPs) risk exceeding the path limit. (#912)
+- DCU graphics driver naming — Dell Command | Update graphics-driver revisions now canonicalise/collapse correctly. (#910)
+- Catalog OS matching — generic Windows 11 / win11 * catalog entries now appear for every Windows 11 build across all catalog-driven OEMs (10 vs 11 stay separated).
+- OEM Selections (Common Settings) — restrict which manufacturers are available app-wide via a toggle + multi-select.
+- Interface Scale (Common Settings) — 75–150% scaling slider plus auto-fit-to-screen for small/high-DPI displays.
+- Common Settings reorganised — the settings cards grouped into seven labelled sections.
+- Windows no longer float above other apps — modal dialogs stay above the tool's own window only, not the whole desktop. (maurice-daly/DriverAutomationTool#920)
+- Assorted UI tweaks and feature icons.
+- Shared desktop shortcut — the launcher now creates one shortcut on the public/all-users desktop instead of one per admin profile, cleans up stale per-user copies, and adds a CreateDesktopShortcut toggle / -NoShortcut switch. (maurice-daly/DriverAutomationTool#916)
+- Hardware inventory check — read-only WMI hardware-inventory class availability check. (#865)
+
 Version 10.2.4
 What's New & Fixed
 - OEM Support — Dell and Lenovo now join HP with a Latest Drivers build type. Instead of the OEM's monthly SCCM driver pack, packages can be built from the newest individual drivers pulled straight from the Dell Command Update catalog (Dell) and the Lenovo per-model update catalog (Lenovo). Other manufacturers continue to use their SCCM driver pack.
