@@ -1,6 +1,6 @@
 @{
     RootModule        = 'DriverAutomationToolCore.psm1'
-    ModuleVersion     = '10.2.4.0'
+    ModuleVersion     = '10.2.5.0'
     GUID              = 'a3e0e746-8e3a-4c5b-b8d0-3b2e4f6a9c1d'
     Author            = 'Maurice Daly'
     CompanyName       = 'MSEndpointMgr'
@@ -23,6 +23,7 @@
         'Start-DATModelProcessing',
         'Connect-DATConfigMgr',
         'Get-DATConfigMgrKnownModels',
+        'Test-DATConfigMgrInventoryClasses',
         'Get-DATSiteCode',
         'Get-DATDistributionPoints',
         'Get-DATDistributionPointGroups',
@@ -57,6 +58,8 @@
         'Get-DATIntuneAppScriptMetadata',
         'Update-DATIntuneAppRuleScript',
         'Update-DATIntuneAppMetadata',
+        'Set-DATIntuneAppDeploymentState',
+        'Set-DATIntuneAppOSTarget',
         'Get-DATIntuneAppAssignmentTargetKeys',
         'Remove-DATIntuneAppAssignmentTargets',
         'New-DATIntuneWin32App',

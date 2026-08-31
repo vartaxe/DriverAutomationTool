@@ -436,7 +436,7 @@ $btn_FeedbackDown.Add_Click({
     $dlg.Owner = $Window
     $dlg.Width = 460
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
     $feedbackState.Dialog = $dlg
@@ -1011,7 +1011,7 @@ function Show-DATConfirmDialog {
     $dlg.Owner = $Window
     $dlg.Width = 440
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -1165,7 +1165,7 @@ function Show-DATInfoDialog {
     }
     $dlg.Width = 440
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -1277,7 +1277,7 @@ function Show-DATInputDialog {
     }
     $dlg.Width = 440
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -1432,7 +1432,7 @@ function Show-DATProgressDialog {
     }
     $dlg.Width = 380
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -1649,7 +1649,7 @@ function Show-DATConnectivityWarningDialog {
     $dlg.Width = 560
     $dlg.SizeToContent = 'Height'
     $dlg.MaxHeight = 600
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -1935,7 +1935,7 @@ function Show-DATConfirmDialog {
     $dlg.Owner = $Window
     $dlg.Width = 440
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -2100,7 +2100,7 @@ function Show-DATLoadingSourcesModal {
         $dlg.WindowStartupLocation = 'CenterScreen'
     }
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -2352,7 +2352,7 @@ function Show-DATLenovoFlashKilledModal {
         $dlg.WindowStartupLocation = 'CenterScreen'
     }
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -2585,7 +2585,7 @@ function Show-DATBuildFailuresDialog {
     $dlg.Background = [System.Windows.Media.Brushes]::Transparent
     $dlg.Width = 580
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
     try {
@@ -2893,7 +2893,7 @@ function Show-DATBuildSummaryDialog {
     $dlg.Owner = $Window
     $dlg.Width = 440
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -3221,7 +3221,7 @@ function Show-DATBiosNamePromptModal {
     $dlg.Background = [System.Windows.Media.Brushes]::Transparent
     $dlg.Width = 500
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
     try {
@@ -3490,7 +3490,7 @@ function Show-DATBugNoticeModal {
     $dlg.Background = [System.Windows.Media.Brushes]::Transparent
     $dlg.Width = 560
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
     try {
@@ -3690,7 +3690,7 @@ function Show-DATBiosNameRepairModal {
     $dlg.Width = 560
     $dlg.MaxHeight = 600
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
     try {
@@ -4043,7 +4043,7 @@ function Show-DATCustomDriverDialog {
     $dlg.Owner = $Window
     $dlg.Width = 520
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -4316,7 +4316,7 @@ function Show-DATEntraGroupSearchDialog {
     $dlg.Width = 750
     $dlg.SizeToContent = 'Height'
     $dlg.MaxHeight = 820
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -5148,7 +5148,7 @@ function Show-DATPackageRetentionModal {
     $dlg.Owner            = $Window
     $dlg.Width            = 520
     $dlg.SizeToContent    = 'Height'
-    $dlg.Topmost          = $true
+    $dlg.Topmost          = $false
     $dlg.ResizeMode       = 'NoResize'
     $dlg.ShowInTaskbar    = $false
 
@@ -5604,7 +5604,7 @@ function Show-DATCustomBuildCompleteDialog {
     $dlg.Owner = $Window
     $dlg.Width = 440
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -7481,6 +7481,9 @@ $script:OEMCheckboxes = @{
     'HP'        = $Window.FindName('chk_OEM_HP')
     'Lenovo'    = $Window.FindName('chk_OEM_Lenovo')
     'Microsoft' = $Window.FindName('chk_OEM_Microsoft')
+    'Panasonic' = $Window.FindName('chk_OEM_Panasonic')
+    'Fujitsu'   = $Window.FindName('chk_OEM_Fujitsu')
+    'ASUS'      = $Window.FindName('chk_OEM_ASUS')
 }
 $script:OEMBorders = @{
     'Acer'      = $Window.FindName('border_OEM_Acer')
@@ -7488,6 +7491,9 @@ $script:OEMBorders = @{
     'HP'        = $Window.FindName('border_OEM_HP')
     'Lenovo'    = $Window.FindName('border_OEM_Lenovo')
     'Microsoft' = $Window.FindName('border_OEM_Microsoft')
+    'Panasonic' = $Window.FindName('border_OEM_Panasonic')
+    'Fujitsu'   = $Window.FindName('border_OEM_Fujitsu')
+    'ASUS'      = $Window.FindName('border_OEM_ASUS')
 }
 
 function Get-DATSelectedOEMs {
@@ -7813,6 +7819,8 @@ $grid_Models.Add_SelectionChanged({
     $item = $grid_Models.SelectedItem -as [ModelItem]
     if ($null -eq $item) {
         $panel_ModelDetail.Visibility = 'Collapsed'
+        $split_ModelDetail.Visibility = 'Collapsed'
+        $row_ModelDetail.Height = [System.Windows.GridLength]::new(0)
         return
     }
     $txt_ModelDetail_OEM.Text        = $item.OEM
@@ -7874,6 +7882,19 @@ $grid_Models.Add_SelectionChanged({
     $txt_ModelDetail_CustomPath.Text = if (-not [string]::IsNullOrEmpty($item.CustomDriverPath)) { $item.CustomDriverPath } else { 'None' }
 
     $panel_ModelDetail.Visibility = 'Visible'
+    $split_ModelDetail.Visibility = 'Visible'
+    # Default to Auto so the card is only as tall as its content; the splitter can still resize it.
+    if ($row_ModelDetail.Height.IsAbsolute -and $row_ModelDetail.Height.Value -le 0) {
+        $row_ModelDetail.Height = [System.Windows.GridLength]::Auto
+    }
+})
+
+# Close the model package detail card
+$btn_ModelCloseDetail.Add_Click({
+    $grid_Models.SelectedItem = $null
+    $panel_ModelDetail.Visibility = 'Collapsed'
+    $split_ModelDetail.Visibility = 'Collapsed'
+    $row_ModelDetail.Height = [System.Windows.GridLength]::new(0)
 })
 
 # Context menu: Add Custom Drivers
@@ -8190,7 +8211,7 @@ $btn_RefreshModels.Add_Click({
                                     # SoftPaq mode uses a date stamp (real version is fingerprint-based).
                                     if (-not [string]::IsNullOrEmpty($entry.Version) -and $entry.Version -notmatch '^\d+H\d+$') { $hpPackVersion = $entry.Version }
                                     $displayVersion = if ($HPDriverPackSource -eq 'DriverPack' -and -not [string]::IsNullOrEmpty($hpPackVersion)) { $hpPackVersion } else { (Get-Date -Format 'ddMMyyyy') }
-                                } elseif ($entry.Manufacturer -eq 'Acer') {
+                                } elseif ($entry.Manufacturer -in @('Acer', 'Panasonic')) {
                                     $displayVersion = (Get-Date -Format 'ddMMyyyy')
                                 } elseif (-not [string]::IsNullOrEmpty($entry.Version) -and $entry.Version -notmatch '^\d+H\d+$') {
                                     $displayVersion = $entry.Version
@@ -8248,7 +8269,7 @@ $btn_RefreshModels.Add_Click({
                                     # SoftPaq mode uses a date stamp (real version is fingerprint-based).
                                     if (-not [string]::IsNullOrEmpty($entry.Version) -and $entry.Version -notmatch '^\d+H\d+$') { $hpPackVersion = $entry.Version }
                                     $displayVersion = if ($HPDriverPackSource -eq 'DriverPack' -and -not [string]::IsNullOrEmpty($hpPackVersion)) { $hpPackVersion } else { (Get-Date -Format 'ddMMyyyy') }
-                                } elseif ($entry.Manufacturer -eq 'Acer') {
+                                } elseif ($entry.Manufacturer -in @('Acer', 'Panasonic')) {
                                     # Acer uses current date as version (matches OEM XML method)
                                     $displayVersion = (Get-Date -Format 'ddMMyyyy')
                                 } elseif (-not [string]::IsNullOrEmpty($entry.Version) -and $entry.Version -notmatch '^\d+H\d+$') {
@@ -8338,9 +8359,16 @@ $btn_RefreshModels.Add_Click({
                             }
                             continue
                         }
-                        # Acer model names contain spaces (e.g. "TravelMate P214-42") -- don't split on whitespace
-                        $devices = if ($bEntry.Manufacturer -eq 'Acer') {
+                        # Acer/Panasonic model names contain spaces (e.g. "TravelMate P214-42") -- don't split on whitespace
+                        $devices = if ($bEntry.Manufacturer -in @('Acer', 'Panasonic')) {
                             @($bEntry.SupportedDevices.Trim().ToUpper())
+                        } elseif ($bEntry.Manufacturer -eq 'ASUS') {
+                            # ASUS SupportedDevices is a comma-delimited pair of the full model name and
+                            # its short model code (e.g. "ExpertBook B1402CBA,B1402CBA"). Split on comma/
+                            # semicolon only -- NOT whitespace -- otherwise the family word ("ExpertBook"/
+                            # "ExpertCenter") becomes a shared token that collides every model onto the
+                            # latest-dated family BIOS (e.g. all ExpertBook models showing v311).
+                            $bEntry.SupportedDevices -split '[,;]+' | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ }
                         } else {
                             $bEntry.SupportedDevices -split '[;\s]+' | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ }
                         }
@@ -8363,20 +8391,20 @@ $btn_RefreshModels.Add_Click({
                                 }
                                 continue
                             }
-                            if ($model.OEM -eq 'Acer') {
-                                # Acer BIOS SupportedDevices is the platform product code (e.g.
+                            if ($model.OEM -in @('Acer', 'Panasonic')) {
+                                # Acer/Panasonic BIOS SupportedDevices is the platform product code (e.g.
                                 # Trumpet_RBU), identical to the driver catalog -- so match on that
                                 # via Baseboards, exactly like the other OEMs. Fall back to the model
                                 # DisplayName only for any legacy entries keyed by name.
                                 $biosEntry = $null
                                 $boards = $model.Baseboards -split '[,;\s]+' | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ }
                                 foreach ($board in $boards) {
-                                    $biosEntry = $biosDeviceMap["Acer|$board"]
+                                    $biosEntry = $biosDeviceMap["$($model.OEM)|$board"]
                                     if ($null -ne $biosEntry) { break }
                                 }
                                 if ($null -eq $biosEntry) {
                                     # Fallback: DisplayName-keyed map (legacy entries without SupportedDevices)
-                                    $biosEntry = $biosNameMap["Acer|$($model.Model)"]
+                                    $biosEntry = $biosNameMap["$($model.OEM)|$($model.Model)"]
                                 }
                             } else {
                                 $biosEntry = $null
@@ -8846,6 +8874,128 @@ $btn_RefreshModels.Add_Click({
                         $LogQueue.Enqueue('[SOURCE:Acer:Error]')
                     }
                 }
+                "Panasonic" {
+                    $PanasonicLink = ($OEMLinks.OEM.Manufacturer | Where-Object { $_.Name -match "Panasonic" }).Link | Where-Object { $_.Type -eq "XMLSource" } | Select-Object -ExpandProperty URL -First 1
+                    if ([string]::IsNullOrEmpty($PanasonicLink)) {
+                        Write-Log "No Panasonic XMLSource URL found in OEM catalog." -Level Error
+                        $LogQueue.Enqueue('[SOURCE:Panasonic:Error:No catalog URL]')
+                        continue
+                    }
+                    Write-Log "Panasonic catalog URL: $PanasonicLink"
+                    $PanasonicFile = [string]($PanasonicLink | Split-Path -Leaf)
+                    try {
+                        $PanasonicFilePath = Join-Path $TempDir $PanasonicFile
+                        if (Test-CatalogFresh -FilePath $PanasonicFilePath) {
+                            Write-Log "Using cached Panasonic catalog (less than 24h old)."
+                            $LogQueue.Enqueue('[SOURCE:Panasonic:Cached]')
+                        } else {
+                            Write-Log "Downloading Panasonic model catalog..."
+                            $proxyParams = Get-DATWebRequestProxy
+                            Invoke-WebRequest -Uri $PanasonicLink -OutFile $PanasonicFilePath -UseBasicParsing -TimeoutSec $WebRequestTimeoutSec @proxyParams
+                        }
+                        [xml]$PanasonicModelXML = Get-Content -Path $PanasonicFilePath
+                        $PanasonicDrivers = $PanasonicModelXML.ModelList.Model
+                        $allPanasonicDriverModels = @()
+                        foreach ($SingleOS in $OSList) {
+                            $WindowsBuild = $($SingleOS).Split(" ")[2]
+                            $WindowsVersion = $SingleOS.Replace(" $WindowsBuild", "").TrimEnd()
+                            $WinVer = "Win" + "$($WindowsVersion.Split(' ')[1])"
+                            $PanasonicModels = ($PanasonicDrivers | Where-Object {
+                                ($_.SCCM.Version -eq $WindowsBuild -and $_.SCCM.OS -eq $WinVer)
+                            } | Sort-Object).Name
+                            $count = @($PanasonicModels).Count
+                            Write-Log "Panasonic: Found $count matching models for $SingleOS." -Level Success
+                            $allPanasonicDriverModels += @($PanasonicModels)
+                            foreach ($Model in $PanasonicModels) {
+                                $OEMSupportedModels += [PSCustomObject]@{
+                                    OEM        = "Panasonic"
+                                    Model      = $Model
+                                    Baseboards = $Model
+                                    OS         = $WindowsVersion
+                                    'OS Build' = $WindowsBuild
+                                    Version    = (Get-Date -Format 'ddMMyyyy')
+                                }
+                            }
+                        }
+
+                        # Panasonic BIOS lives in the Panasonic XML catalog (not the JSON BIOS catalog).
+                        # When BIOS or All is selected, include all Panasonic models from the XML catalog
+                        # that don't already have a driver pack for any selected OS/build.
+                        if ($PackageType -in @('BIOS', 'All', 'BIOS Pilot', 'All Pilot')) {
+                            $existingPanasonicNames = @($allPanasonicDriverModels) | Select-Object -Unique
+                            $allPanasonicNames = ($PanasonicDrivers | Where-Object { $_.Name -gt $null } | Sort-Object).Name | Select-Object -Unique
+                            # Use the first OS for BIOS-only entries (BIOS is OS-agnostic)
+                            $firstOS = $OSList | Select-Object -First 1
+                            $firstWindowsBuild = $($firstOS).Split(" ")[2]
+                            $firstWindowsVersion = $firstOS.Replace(" $firstWindowsBuild", "").TrimEnd()
+                            foreach ($extraModel in $allPanasonicNames) {
+                                if ($extraModel -notin $existingPanasonicNames) {
+                                    $OEMSupportedModels += [PSCustomObject]@{
+                                        OEM        = "Panasonic"
+                                        Model      = $extraModel
+                                        Baseboards = $extraModel
+                                        OS         = $firstWindowsVersion
+                                        'OS Build' = $firstWindowsBuild
+                                        Version    = ''
+                                        BIOSOnly   = $true
+                                    }
+                                }
+                            }
+                        }
+                        $uniqueCount = @($OEMSupportedModels | Where-Object { $_.OEM -eq 'Panasonic' } | Select-Object -Property Model -Unique).Count
+                        Write-Log "Panasonic: $uniqueCount unique models across all selected OS versions." -Level Success
+                        $LogQueue.Enqueue("[SOURCE:Panasonic:OK:$uniqueCount models]")
+                    } catch {
+                        Write-Log "Panasonic processing failed: $($_.Exception.Message)" -Level Error
+                        $LogQueue.Enqueue('[SOURCE:Panasonic:Error]')
+                    }
+                }
+                "Fujitsu" {
+                    # Fujitsu has no OEMLinks XML -- it is sourced from the DAT API catalog. The
+                    # DownloadURL is a session-gated servlet resolved at build time.
+                    try {
+                        $fujitsuCatalog = Get-DATDriverCatalog
+                        if ($null -eq $fujitsuCatalog -or @($fujitsuCatalog).Count -eq 0) {
+                            Write-Log "Fujitsu: DAT API catalog unavailable or empty." -Level Warn
+                            $LogQueue.Enqueue('[SOURCE:Fujitsu:Error:Catalog unavailable]')
+                            continue
+                        }
+                        foreach ($SingleOS in $OSList) {
+                            $WindowsBuild = $($SingleOS).Split(" ")[2]
+                            $WindowsVersion = $SingleOS.Replace(" $WindowsBuild", "").TrimEnd()
+                            $FujitsuArchFilter = if ($Architecture -eq 'Arm64') { 'arm64' } else { 'x64' }
+                            $fujitsuEntries = $fujitsuCatalog | Where-Object {
+                                $_.Manufacturer -eq 'Fujitsu' -and
+                                $_.SupportedOS -match $WindowsVersion -and
+                                $_.SupportedArchitecture -eq $FujitsuArchFilter -and
+                                -not [string]::IsNullOrEmpty($_.DownloadURL)
+                            }
+                            $count = @($fujitsuEntries | Group-Object -Property DisplayName).Count
+                            Write-Log "Fujitsu: Found $count matching models for $SingleOS." -Level Success
+                            foreach ($modelGroup in ($fujitsuEntries | Group-Object -Property DisplayName)) {
+                                $latestEntry = $modelGroup.Group | Sort-Object { try { [datetime]$_.ReleaseDate } catch { [datetime]::MinValue } } -Descending | Select-Object -First 1
+                                $fujitsuVersion = if (-not [string]::IsNullOrEmpty($latestEntry.Version)) { $latestEntry.Version }
+                                                  elseif (-not [string]::IsNullOrEmpty($latestEntry.ReleaseDate)) { $latestEntry.ReleaseDate }
+                                                  else { '' }
+                                $OEMSupportedModels += [PSCustomObject]@{
+                                    OEM         = "Fujitsu"
+                                    Model       = $modelGroup.Name
+                                    Baseboards  = if ($latestEntry.SupportedDevices) { $latestEntry.SupportedDevices } else { $modelGroup.Name }
+                                    OS          = $WindowsVersion
+                                    'OS Build'  = $WindowsBuild
+                                    Version     = $fujitsuVersion
+                                    DownloadURL = $latestEntry.DownloadURL
+                                }
+                            }
+                        }
+                        $uniqueCount = @($OEMSupportedModels | Where-Object { $_.OEM -eq 'Fujitsu' } | Select-Object -Property Model -Unique).Count
+                        Write-Log "Fujitsu: $uniqueCount unique models across all selected OS versions." -Level Success
+                        $LogQueue.Enqueue("[SOURCE:Fujitsu:OK:$uniqueCount models]")
+                    } catch {
+                        Write-Log "Fujitsu processing failed: $($_.Exception.Message)" -Level Error
+                        $LogQueue.Enqueue('[SOURCE:Fujitsu:Error]')
+                    }
+                }
             }
         } # end foreach ($OEM in $RequiredOEMs)
 
@@ -8893,9 +9043,15 @@ $btn_RefreshModels.Add_Click({
                     }
                     continue
                 }
-                # Acer model names contain spaces (e.g. "TravelMate P214-42") -- don't split on whitespace
-                $devices = if ($entry.Manufacturer -eq 'Acer') {
+                # Acer/Panasonic model names contain spaces (e.g. "TravelMate P214-42") -- don't split on whitespace
+                $devices = if ($entry.Manufacturer -in @('Acer', 'Panasonic')) {
                     @($entry.SupportedDevices.Trim().ToUpper())
+                } elseif ($entry.Manufacturer -eq 'ASUS') {
+                    # ASUS SupportedDevices is a comma-delimited pair of the full model name and its
+                    # short model code (e.g. "ExpertBook B1402CBA,B1402CBA"). Split on comma/semicolon
+                    # only -- NOT whitespace -- otherwise the family word ("ExpertBook"/"ExpertCenter")
+                    # becomes a shared token that collides every model onto the latest-dated family BIOS.
+                    $entry.SupportedDevices -split '[,;]+' | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ }
                 } else {
                     $entry.SupportedDevices -split '[;\s]+' | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ }
                 }
@@ -8926,12 +9082,12 @@ $btn_RefreshModels.Add_Click({
                         }
                         continue
                     }
-                    if ($model.OEM -eq 'Acer') {
-                        # Acer SupportedDevices == model name; look up by uppercased model name
-                        $biosEntry = $biosDeviceMap["Acer|$($model.Model.ToUpper())"]
+                    if ($model.OEM -in @('Acer', 'Panasonic')) {
+                        # Acer/Panasonic SupportedDevices == model name; look up by uppercased model name
+                        $biosEntry = $biosDeviceMap["$($model.OEM)|$($model.Model.ToUpper())"]
                         if ($null -eq $biosEntry) {
                             # Fallback: DisplayName-keyed map (legacy entries without SupportedDevices)
-                            $biosEntry = $biosNameMap["Acer|$($model.Model)"]
+                            $biosEntry = $biosNameMap["$($model.OEM)|$($model.Model)"]
                         }
                     } else {
                         # Fast hashtable lookup for Dell/HP/Lenovo/Microsoft
@@ -9249,6 +9405,8 @@ function ConvertTo-DATNormalizedMake {
     if ($m -match '^Lenovo$') { return 'Lenovo' }
     if ($m -match '^Microsoft') { return 'Microsoft' }
     if ($m -match '^Acer') { return 'Acer' }
+    if ($m -match '^(ASUS|ASUSTeK)') { return 'ASUS' }
+    if ($m -match '^Fujitsu') { return 'Fujitsu' }
     return $m
 }
 
@@ -9304,7 +9462,8 @@ function Test-DATKnownDeviceMatch {
         name-based matching is used as a fallback.
     .NOTES
         Baseboard sources by OEM:
-          HP/Dell/Lenovo/Acer: Win32_BaseBoard.Product
+          HP/Dell/Acer:        Win32_BaseBoard.Product
+          Lenovo:              first 4 chars of Win32_ComputerSystem.Model (machine-type code)
           Microsoft Surface:   MS_SystemInformation.SystemSKU
     #>
     param (
@@ -11443,12 +11602,14 @@ $arc_Mfr_HP = $Window.FindName('arc_Mfr_HP')
 $arc_Mfr_Lenovo = $Window.FindName('arc_Mfr_Lenovo')
 $arc_Mfr_Microsoft = $Window.FindName('arc_Mfr_Microsoft')
 $arc_Mfr_Acer = $Window.FindName('arc_Mfr_Acer')
+$arc_Mfr_Panasonic = $Window.FindName('arc_Mfr_Panasonic')
 $arc_Mfr_Other = $Window.FindName('arc_Mfr_Other')
 $txt_MfrDellCount = $Window.FindName('txt_MfrDellCount')
 $txt_MfrHPCount = $Window.FindName('txt_MfrHPCount')
 $txt_MfrLenovoCount = $Window.FindName('txt_MfrLenovoCount')
 $txt_MfrMicrosoftCount = $Window.FindName('txt_MfrMicrosoftCount')
 $txt_MfrAcerCount = $Window.FindName('txt_MfrAcerCount')
+$txt_MfrPanasonicCount = $Window.FindName('txt_MfrPanasonicCount')
 $txt_MfrOtherCount = $Window.FindName('txt_MfrOtherCount')
 
 # Intune chart controls
@@ -11464,12 +11625,14 @@ $arc_IntuneMfr_HP = $Window.FindName('arc_IntuneMfr_HP')
 $arc_IntuneMfr_Lenovo = $Window.FindName('arc_IntuneMfr_Lenovo')
 $arc_IntuneMfr_Microsoft = $Window.FindName('arc_IntuneMfr_Microsoft')
 $arc_IntuneMfr_Acer = $Window.FindName('arc_IntuneMfr_Acer')
+$arc_IntuneMfr_Panasonic = $Window.FindName('arc_IntuneMfr_Panasonic')
 $arc_IntuneMfr_Other = $Window.FindName('arc_IntuneMfr_Other')
 $txt_IntuneMfrDellCount = $Window.FindName('txt_IntuneMfrDellCount')
 $txt_IntuneMfrHPCount = $Window.FindName('txt_IntuneMfrHPCount')
 $txt_IntuneMfrLenovoCount = $Window.FindName('txt_IntuneMfrLenovoCount')
 $txt_IntuneMfrMicrosoftCount = $Window.FindName('txt_IntuneMfrMicrosoftCount')
 $txt_IntuneMfrAcerCount = $Window.FindName('txt_IntuneMfrAcerCount')
+$txt_IntuneMfrPanasonicCount = $Window.FindName('txt_IntuneMfrPanasonicCount')
 $txt_IntuneMfrOtherCount = $Window.FindName('txt_IntuneMfrOtherCount')
 
 function New-DATDonutArc {
@@ -11546,6 +11709,7 @@ function Update-DATManufacturerDonutChart {
     $txt_MfrLenovoCount.Text = ($Counts['Lenovo']).ToString('N0')
     $txt_MfrMicrosoftCount.Text = ($Counts['Microsoft']).ToString('N0')
     $txt_MfrAcerCount.Text = ($Counts['Acer']).ToString('N0')
+    $txt_MfrPanasonicCount.Text = ($Counts['Panasonic']).ToString('N0')
     $txt_MfrOtherCount.Text = ($Counts['Other']).ToString('N0')
 
     $total = ($Counts.Values | Measure-Object -Sum).Sum
@@ -11555,6 +11719,7 @@ function Update-DATManufacturerDonutChart {
         'Lenovo'    = $arc_Mfr_Lenovo
         'Microsoft' = $arc_Mfr_Microsoft
         'Acer'      = $arc_Mfr_Acer
+        'Panasonic' = $arc_Mfr_Panasonic
         'Other'     = $arc_Mfr_Other
     }
 
@@ -11564,7 +11729,7 @@ function Update-DATManufacturerDonutChart {
     }
 
     $startAngle = 0.0
-    foreach ($key in @('Dell', 'HP', 'Lenovo', 'Microsoft', 'Acer', 'Other')) {
+    foreach ($key in @('Dell', 'HP', 'Lenovo', 'Microsoft', 'Acer', 'Panasonic', 'Other')) {
         $sweep = ($Counts[$key] / $total) * 360
         $arcMap[$key].Data = New-DATDonutArc -StartAngle $startAngle -SweepAngle $sweep
         $startAngle += $sweep
@@ -11606,6 +11771,7 @@ function Update-DATIntuneManufacturerDonutChart {
     $txt_IntuneMfrLenovoCount.Text = ($Counts['Lenovo']).ToString('N0')
     $txt_IntuneMfrMicrosoftCount.Text = ($Counts['Microsoft']).ToString('N0')
     $txt_IntuneMfrAcerCount.Text = ($Counts['Acer']).ToString('N0')
+    $txt_IntuneMfrPanasonicCount.Text = ($Counts['Panasonic']).ToString('N0')
     $txt_IntuneMfrOtherCount.Text = ($Counts['Other']).ToString('N0')
 
     $total = ($Counts.Values | Measure-Object -Sum).Sum
@@ -11615,6 +11781,7 @@ function Update-DATIntuneManufacturerDonutChart {
         'Lenovo'    = $arc_IntuneMfr_Lenovo
         'Microsoft' = $arc_IntuneMfr_Microsoft
         'Acer'      = $arc_IntuneMfr_Acer
+        'Panasonic' = $arc_IntuneMfr_Panasonic
         'Other'     = $arc_IntuneMfr_Other
     }
 
@@ -11624,7 +11791,7 @@ function Update-DATIntuneManufacturerDonutChart {
     }
 
     $startAngle = 0.0
-    foreach ($key in @('Dell', 'HP', 'Lenovo', 'Microsoft', 'Acer', 'Other')) {
+    foreach ($key in @('Dell', 'HP', 'Lenovo', 'Microsoft', 'Acer', 'Panasonic', 'Other')) {
         $sweep = ($Counts[$key] / $total) * 360
         $arcMap[$key].Data = New-DATDonutArc -StartAngle $startAngle -SweepAngle $sweep
         $startAngle += $sweep
@@ -11652,6 +11819,7 @@ function Update-DATIntuneChartFromApps {
         'Lenovo'    = ($apps | Where-Object { $_.DisplayName -match '- Lenovo ' } | Measure-Object).Count
         'Microsoft' = ($apps | Where-Object { $_.DisplayName -match '- Microsoft ' } | Measure-Object).Count
         'Acer'      = ($apps | Where-Object { $_.DisplayName -match '- Acer ' } | Measure-Object).Count
+        'Panasonic' = ($apps | Where-Object { $_.DisplayName -match '- Panasonic ' } | Measure-Object).Count
     }
     $mfrCounts['Other'] = $total - ($mfrCounts.Values | Measure-Object -Sum).Sum
 
@@ -11761,6 +11929,7 @@ function Invoke-DATConfigMgrConnect {
                     'Lenovo'    = ($allPackages | Where-Object { $_.Name -match '- Lenovo ' } | Measure-Object).Count
                     'Microsoft' = ($allPackages | Where-Object { $_.Name -match '- Microsoft ' } | Measure-Object).Count
                     'Acer'      = ($allPackages | Where-Object { $_.Name -match '- Acer ' } | Measure-Object).Count
+                    'Panasonic' = ($allPackages | Where-Object { $_.Name -match '- Panasonic ' } | Measure-Object).Count
                 }
                 $mfrCounts['Other'] = $packageCount - ($mfrCounts.Values | Measure-Object -Sum).Sum
 
@@ -11884,6 +12053,9 @@ function Invoke-DATConfigMgrConnect {
                 # grid rows (avoids overwriting the user's manual model selection).
                 Invoke-DATConfigMgrKnownModelLookup -AutoSelectMatches:$false
             }
+
+            # Inventory class check is a read-only diagnostic -- available whenever connected.
+            if ($null -ne $btn_CheckInventoryClasses) { $btn_CheckInventoryClasses.IsEnabled = $true }
         } else {
             $txt_SiteCode.Foreground = $Window.FindResource('StatusWarning')
             $txt_SiteCode.Text = "Connection failed - no site code returned."
@@ -11919,6 +12091,9 @@ $txt_KnownModelsState = $Window.FindName('txt_KnownModelsState')
 $btn_ConfigMgrKnownModelLookup = $Window.FindName('btn_ConfigMgrKnownModelLookup')
 $btn_ConfigMgrViewModels = $Window.FindName('btn_ConfigMgrViewModels')
 $txt_ConfigMgrKnownModelStatus = $Window.FindName('txt_ConfigMgrKnownModelStatus')
+$btn_CheckInventoryClasses = $Window.FindName('btn_CheckInventoryClasses')
+$txt_InventoryClassSummary = $Window.FindName('txt_InventoryClassSummary')
+$panel_InventoryClassStatus = $Window.FindName('panel_InventoryClassStatus')
 
 function Update-DATConfigMgrKnownModelSelection {
     <#
@@ -12088,7 +12263,7 @@ function Show-DATConfigMgrKnownModelsDialog {
     $dlg.Owner = $Window
     $dlg.Width = 700
     $dlg.Height = 550
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -12298,6 +12473,157 @@ $btn_ConfigMgrViewModels.Add_Click({
         return
     }
     Show-DATConfigMgrKnownModelsDialog
+})
+
+function Show-DATInventoryClassResults {
+    param ($Result)
+    $panel_InventoryClassStatus.Children.Clear()
+
+    $theme = Get-DATTheme -ThemeName $script:CurrentTheme
+    $mdl2  = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+
+    foreach ($class in $Result.Classes) {
+        switch ($class.Status) {
+            'Ok'              { $glyph = [char]0xE73E; $colorKey = 'StatusSuccess'; $label = 'Enabled & reporting' }
+            'PropertyMissing' { $glyph = [char]0xE7BA; $colorKey = 'StatusWarning'; $label = 'Enabled, property not collected' }
+            'NoData'          { $glyph = [char]0xE7BA; $colorKey = 'StatusWarning'; $label = 'Enabled, no data yet' }
+            'NotEnabled'      { $glyph = [char]0xE711; $colorKey = 'StatusError';   $label = 'Not enabled' }
+            default           { $glyph = [char]0xE711; $colorKey = 'StatusError';   $label = 'Check failed' }
+        }
+        $brush = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.ColorConverter]::ConvertFromString($theme[$colorKey]))
+
+        $row = [System.Windows.Controls.StackPanel]::new()
+        $row.Orientation = 'Horizontal'
+        $row.Margin = [System.Windows.Thickness]::new(0, 3, 0, 3)
+
+        $icon = [System.Windows.Controls.TextBlock]::new()
+        $icon.Text = [string]$glyph
+        $icon.FontFamily = $mdl2
+        $icon.FontSize = 14
+        $icon.Foreground = $brush
+        $icon.VerticalAlignment = 'Top'
+        $icon.Margin = [System.Windows.Thickness]::new(0, 1, 8, 0)
+        [void]$row.Children.Add($icon)
+
+        $text = [System.Windows.Controls.TextBlock]::new()
+        $text.TextWrapping = 'Wrap'
+        $text.FontSize = 12
+        $text.MaxWidth = 560
+        $text.Foreground = $brush
+        $namePart = [System.Windows.Documents.Run]::new("$($class.DisplayName) ($($class.Property)) -- $label")
+        $namePart.FontWeight = [System.Windows.FontWeights]::SemiBold
+        [void]$text.Inlines.Add($namePart)
+        if (-not [string]::IsNullOrWhiteSpace($class.Detail)) {
+            [void]$text.Inlines.Add([System.Windows.Documents.LineBreak]::new())
+            $detailRun = [System.Windows.Documents.Run]::new($class.Detail)
+            $detailRun.Foreground = $Window.FindResource('InputPlaceholder')
+            [void]$text.Inlines.Add($detailRun)
+        }
+        [void]$row.Children.Add($text)
+
+        [void]$panel_InventoryClassStatus.Children.Add($row)
+    }
+}
+
+function Invoke-DATInventoryClassCheck {
+    if ([string]::IsNullOrEmpty($global:SiteCode) -or [string]::IsNullOrEmpty($global:SiteServer)) {
+        $txt_InventoryClassSummary.Text = 'Please connect to Configuration Manager first.'
+        $txt_InventoryClassSummary.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.ColorConverter]::ConvertFromString(
+                (Get-DATTheme -ThemeName $script:CurrentTheme)['StatusError']))
+        return
+    }
+
+    $panel_InventoryClassStatus.Children.Clear()
+    $btn_CheckInventoryClasses.IsEnabled = $false
+    $txt_InventoryClassSummary.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.ColorConverter]::ConvertFromString(
+            (Get-DATTheme -ThemeName $script:CurrentTheme)['StatusInfo']))
+    $txt_InventoryClassSummary.Text = "Connecting to $($global:SiteServer)..."
+    Write-DATActivityLog "Starting hardware inventory class check via CIM on $($global:SiteServer)" -Level Info
+
+    $siteServer = $global:SiteServer
+    $siteCode = $global:SiteCode
+
+    $script:InventoryClassCheckState = [hashtable]::Synchronized(@{
+            Status   = 'Running'
+            Progress = "Connecting to $siteServer..."
+            Result   = $null
+            Error    = $null
+        })
+
+    $script:InventoryClassCheckPS = [powershell]::Create()
+    $script:InventoryClassCheckPS.AddScript({
+            param ($CoreModulePath, $State, $Server, $Code)
+            Import-Module $CoreModulePath -Force
+            try {
+                $result = Test-DATConfigMgrInventoryClasses -SiteServer $Server -SiteCode $Code -OnProgress {
+                    param ($msg)
+                    $State.Progress = $msg
+                }
+                $State.Result = $result
+                $State.Status = 'Complete'
+            }
+            catch {
+                $State.Error = $_.Exception.Message
+                $State.Status = 'Failed'
+            }
+        })
+    [void]$script:InventoryClassCheckPS.AddArgument($CoreModulePath)
+    [void]$script:InventoryClassCheckPS.AddArgument($script:InventoryClassCheckState)
+    [void]$script:InventoryClassCheckPS.AddArgument($siteServer)
+    [void]$script:InventoryClassCheckPS.AddArgument($siteCode)
+
+    $script:InventoryClassCheckAsync = $script:InventoryClassCheckPS.BeginInvoke()
+
+    $script:InventoryClassCheckTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:InventoryClassCheckTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+    $script:InventoryClassCheckTimer.Add_Tick({
+            $state = $script:InventoryClassCheckState
+            $txt_InventoryClassSummary.Text = $state.Progress
+
+            if ($state.Status -eq 'Complete') {
+                $script:InventoryClassCheckTimer.Stop()
+                $result = $state.Result
+                Show-DATInventoryClassResults -Result $result
+
+                $colorKey = if ($result.AllOk) { 'StatusSuccess' } else { 'StatusWarning' }
+                $txt_InventoryClassSummary.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+                    [System.Windows.Media.ColorConverter]::ConvertFromString(
+                        (Get-DATTheme -ThemeName $script:CurrentTheme)[$colorKey]))
+                $txt_InventoryClassSummary.Text = if ($result.AllOk) {
+                    'All required inventory classes are enabled and reporting.'
+                } else {
+                    'One or more required inventory classes need attention (see below).'
+                }
+                Write-DATActivityLog "Hardware inventory class check complete (AllOk = $($result.AllOk))" -Level Success
+                foreach ($c in $result.Classes) {
+                    Write-DATActivityLog "  $($c.DisplayName) [$($c.View)]: $($c.Status) -- $($c.Detail)" -Level Info
+                }
+
+                $btn_CheckInventoryClasses.IsEnabled = $true
+                $script:InventoryClassCheckPS.Dispose()
+                $script:InventoryClassCheckPS = $null
+            }
+            elseif ($state.Status -eq 'Failed') {
+                $script:InventoryClassCheckTimer.Stop()
+                $txt_InventoryClassSummary.Text = "Failed: $($state.Error)"
+                $txt_InventoryClassSummary.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+                    [System.Windows.Media.ColorConverter]::ConvertFromString(
+                        (Get-DATTheme -ThemeName $script:CurrentTheme)['StatusError']))
+                Write-DATActivityLog "Hardware inventory class check failed: $($state.Error)" -Level Error
+
+                $btn_CheckInventoryClasses.IsEnabled = $true
+                $script:InventoryClassCheckPS.Dispose()
+                $script:InventoryClassCheckPS = $null
+            }
+        })
+    $script:InventoryClassCheckTimer.Start()
+}
+
+$btn_CheckInventoryClasses.Add_Click({
+    Invoke-DATInventoryClassCheck
 })
 
 #endregion Known Model Lookup
@@ -12549,7 +12875,7 @@ function Show-DATIntuneKnownModelsDialog {
     $dlg.Owner = $Window
     $dlg.Width = 700
     $dlg.Height = 550
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -13174,7 +13500,7 @@ function Show-DATConsoleFolderBrowseDialog {
     $dlg.Owner = $Window
     $dlg.Width = 500
     $dlg.Height = 480
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -13556,7 +13882,7 @@ function Show-DATConsoleFolderBrowseDialog {
         $inputDlg.Owner = $dlg
         $inputDlg.Width = 380
         $inputDlg.SizeToContent = 'Height'
-        $inputDlg.Topmost = $true
+        $inputDlg.Topmost = $false
         $inputDlg.ResizeMode = 'NoResize'
         $inputDlg.ShowInTaskbar = $false
 
@@ -14151,7 +14477,7 @@ function Update-DATCmPackageFilter {
                     $item.Version -notlike "*$searchText*") { return $false }
             }
             return $true
-        }
+        }.GetNewClosure()
     }
 }
 
@@ -14232,7 +14558,7 @@ $btn_CmDeleteSelected.Add_Click({
     $script:cmDeleteModal.Owner = $Window
     $script:cmDeleteModal.Width = 440
     $script:cmDeleteModal.SizeToContent = 'Height'
-    $script:cmDeleteModal.Topmost = $true
+    $script:cmDeleteModal.Topmost = $false
     $script:cmDeleteModal.ResizeMode = 'NoResize'
     $script:cmDeleteModal.ShowInTaskbar = $false
 
@@ -14485,6 +14811,8 @@ $btn_CmDeleteSelected.Add_Click({
                 try { $script:cmDeletePS.Dispose(); $script:cmDeleteRunspace.Dispose() } catch {}
 
                 $panel_PkgDetails.Visibility = 'Collapsed'
+                $split_CmDetail.Visibility = 'Collapsed'
+                $row_CmDetail.Height = [System.Windows.GridLength]::new(0)
                 Invoke-DATPackageRefresh
                 $delTotal = [int]$script:cmDeleteProgressBar.Maximum
                 $delDeleted = $script:cmDeleteState.Deleted
@@ -14525,10 +14853,20 @@ $txt_PkgDetailUpdated = $Window.FindName('txt_PkgDetailUpdated')
 $txt_PkgDetailContentStatus = $Window.FindName('txt_PkgDetailContentStatus')
 $btn_CmDeletePackage = $Window.FindName('btn_CmDeletePackage')
 
+# Close the package detail card
+$btn_CmCloseDetail.Add_Click({
+    $grid_Packages.SelectedItem = $null
+    $panel_PkgDetails.Visibility = 'Collapsed'
+    $split_CmDetail.Visibility = 'Collapsed'
+    $row_CmDetail.Height = [System.Windows.GridLength]::new(0)
+})
+
 $grid_Packages.Add_SelectionChanged({
     $selected = $grid_Packages.SelectedItem
     if ($null -eq $selected -or [string]::IsNullOrEmpty($selected.PackageID)) {
         $panel_PkgDetails.Visibility = 'Collapsed'
+        $split_CmDetail.Visibility = 'Collapsed'
+        $row_CmDetail.Height = [System.Windows.GridLength]::new(0)
         $btn_CmReportIssue.IsEnabled = $false
         $btn_CmDeletePackage.IsEnabled = $false
         return
@@ -14616,6 +14954,11 @@ $grid_Packages.Add_SelectionChanged({
             $txt_PkgDetailContentStatus.Text = $statusText
 
             $panel_PkgDetails.Visibility = 'Visible'
+            $split_CmDetail.Visibility = 'Visible'
+            # Default to Auto so the card is only as tall as its content; the splitter can still resize it.
+            if ($row_CmDetail.Height.IsAbsolute -and $row_CmDetail.Height.Value -le 0) {
+                $row_CmDetail.Height = [System.Windows.GridLength]::Auto
+            }
 
             # Update Report Issue button text based on current state
             $make = if ($pkg.Manufacturer) { $pkg.Manufacturer } else { '' }
@@ -14639,6 +14982,8 @@ $grid_Packages.Add_SelectionChanged({
     } catch {
         Write-DATLogEntry -Value "[Warning] - Failed to load package details: $($_.Exception.Message)" -Severity 2
         $panel_PkgDetails.Visibility = 'Collapsed'
+        $split_CmDetail.Visibility = 'Collapsed'
+        $row_CmDetail.Height = [System.Windows.GridLength]::new(0)
     }
 })
 
@@ -14730,6 +15075,8 @@ $btn_CmDeletePackage.Add_Click({
             $txt_PkgStatus.Text = "Deleted: $($selected.Name)"
             $txt_PkgStatus.Visibility = 'Visible'
             $panel_PkgDetails.Visibility = 'Collapsed'
+            $split_CmDetail.Visibility = 'Collapsed'
+            $row_CmDetail.Height = [System.Windows.GridLength]::new(0)
             Invoke-DATPackageRefresh
             Show-DATInfoDialog -Title "Package Deleted" `
                 -Message "'$($selected.Name)' ($($selected.PackageID)) has been successfully removed from ConfigMgr." `
@@ -14765,7 +15112,7 @@ function Show-DATChangeOSTargetDialog {
     $dlg.Owner = $Window
     $dlg.Width = 460
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -15396,6 +15743,168 @@ $chk_UseDATAPICatalog.Add_Unchecked({
     $txt_DATAPIStatusIcon.Foreground = $Window.FindResource('InputPlaceholder')
     $txt_DATAPIStatus.Text = "OEM catalog sources enabled -- catalogs will be downloaded from each OEM directly"
     Write-DATLogEntry -Value "DAT API catalog mode disabled -- individual OEM catalog sources will be used" -Severity 1
+})
+
+# -- OEM Selections (restrict supported manufacturers) --
+# When enabled, only the ticked OEMs are made available on the main-page manufacturer
+# selector; every OEM-consuming path (dropdown, pre-flight source checks, refresh/build,
+# scheduled tasks) funnels through Get-DATSelectedOEMs, which reads the main-page checkbox
+# state -- so hiding/unchecking the disallowed boxes here restricts all of them at once.
+$script:chk_RestrictOEMs = $Window.FindName('chk_RestrictOEMs')
+$script:panel_OEMSelectionList = $Window.FindName('panel_OEMSelectionList')
+$script:AllowOEMCheckboxes = @{
+    'Acer'      = $Window.FindName('chk_AllowOEM_Acer')
+    'ASUS'      = $Window.FindName('chk_AllowOEM_ASUS')
+    'Dell'      = $Window.FindName('chk_AllowOEM_Dell')
+    'Fujitsu'   = $Window.FindName('chk_AllowOEM_Fujitsu')
+    'HP'        = $Window.FindName('chk_AllowOEM_HP')
+    'Lenovo'    = $Window.FindName('chk_AllowOEM_Lenovo')
+    'Microsoft' = $Window.FindName('chk_AllowOEM_Microsoft')
+    'Panasonic' = $Window.FindName('chk_AllowOEM_Panasonic')
+}
+# Guard so restore / programmatic changes don't fire persistence or refresh loops
+$script:SuppressOEMRestrictionHandler = $false
+
+function Get-DATAllowedOEMs {
+    # Returns the set of OEMs the user is allowed to work with. Fail-open: when restriction
+    # is off, or on with nothing ticked, every supported OEM is returned.
+    $allKeys = @($script:OEMCheckboxes.Keys)
+    if ($script:chk_RestrictOEMs.IsChecked -ne $true) { return $allKeys }
+    $allowed = @()
+    foreach ($entry in $script:AllowOEMCheckboxes.GetEnumerator()) {
+        if ($entry.Value.IsChecked -eq $true) { $allowed += $entry.Key }
+    }
+    if ($allowed.Count -eq 0) { return $allKeys }
+    return $allowed
+}
+
+function Update-DATOEMAvailability {
+    # Applies the allowed-OEM set to the main-page manufacturer control: OEMs that are not
+    # allowed are unchecked, hidden and disabled so they cannot be selected; allowed OEMs are
+    # shown and enabled. Called on startup and whenever the restriction setting changes.
+    $allowed = Get-DATAllowedOEMs
+    $prevSuppress = $script:SuppressModelRefresh
+    $script:SuppressModelRefresh = $true
+    foreach ($entry in $script:OEMCheckboxes.GetEnumerator()) {
+        $oem = $entry.Key
+        $chk = $entry.Value
+        $border = $script:OEMBorders[$oem]
+        if ($allowed -contains $oem) {
+            $chk.IsEnabled = $true
+            if ($null -ne $border) { $border.Visibility = 'Visible' }
+        } else {
+            if ($chk.IsChecked -eq $true) { $chk.IsChecked = $false }
+            $chk.IsEnabled = $false
+            if ($null -ne $border) { $border.Visibility = 'Collapsed' }
+        }
+    }
+    $script:SuppressModelRefresh = $prevSuppress
+    Update-DATOEMDisplayText
+    Update-DATOEMSelectionHighlight
+    # Grey out the OEM checkbox list unless the master toggle is on
+    if ($null -ne $script:panel_OEMSelectionList) {
+        $script:panel_OEMSelectionList.IsEnabled = ($script:chk_RestrictOEMs.IsChecked -eq $true)
+    }
+}
+
+$persistOEMRestriction = {
+    if ($script:SuppressOEMRestrictionHandler) { return }
+    $restrictOn = ($script:chk_RestrictOEMs.IsChecked -eq $true)
+    Set-DATRegistryValue -Name "RestrictOEMs" -Value ([int]$restrictOn) -Type DWord
+    $allowedList = @()
+    foreach ($entry in $script:AllowOEMCheckboxes.GetEnumerator()) {
+        if ($entry.Value.IsChecked -eq $true) { $allowedList += $entry.Key }
+    }
+    Set-DATRegistryValue -Name "AllowedOEMs" -Value ($allowedList -join ',') -Type String
+    Update-DATOEMAvailability
+    # Keep the persisted main-page selection in sync with the now-available OEMs
+    Set-DATRegistryValue -Name "SelectedOEMs" -Value ((Get-DATSelectedOEMs) -join ',') -Type String
+    Write-DATLogEntry -Value "OEM restriction updated -- restrict=$restrictOn, allowed=[$($allowedList -join ',')]" -Severity 1
+}
+
+$script:chk_RestrictOEMs.Add_Checked($persistOEMRestriction)
+$script:chk_RestrictOEMs.Add_Unchecked($persistOEMRestriction)
+foreach ($chk in $script:AllowOEMCheckboxes.Values) {
+    $chk.Add_Checked($persistOEMRestriction)
+    $chk.Add_Unchecked($persistOEMRestriction)
+}
+
+# -- Interface Scale --
+# Zoom the whole UI by applying a ScaleTransform (LayoutTransform, so layout reflows) to the
+# root grid, and resize the window by the same factor clamped to the screen work area. Auto-fit
+# picks the largest scale (<=100%) that fits the current display.
+$script:root_ScaleHost = $Window.FindName('root_ScaleHost')
+$script:chk_AutoFitScale = $Window.FindName('chk_AutoFitScale')
+$script:sld_InterfaceScale = $Window.FindName('sld_InterfaceScale')
+$script:txt_InterfaceScaleValue = $Window.FindName('txt_InterfaceScaleValue')
+$script:BaseWindowWidth = 1200.0
+$script:BaseWindowHeight = 780.0
+$script:BaseWindowMinWidth = 1000.0
+$script:BaseWindowMinHeight = 650.0
+$script:MinInterfaceScale = 0.75
+$script:MaxInterfaceScale = 1.5
+$script:SuppressScaleHandler = $false
+
+function Get-DATAutoFitScale {
+    # Largest scale (capped at 1.0) at which the base window fits the current work area.
+    try {
+        $wa = [System.Windows.SystemParameters]::WorkArea
+        $fit = [Math]::Min($wa.Width / $script:BaseWindowWidth, $wa.Height / $script:BaseWindowHeight)
+        if ($fit -gt 1.0) { $fit = 1.0 }
+        if ($fit -lt $script:MinInterfaceScale) { $fit = $script:MinInterfaceScale }
+        return [Math]::Round($fit, 2)
+    } catch { return 1.0 }
+}
+
+function Set-DATInterfaceScale {
+    param([double]$Scale)
+    if ($Scale -lt $script:MinInterfaceScale) { $Scale = $script:MinInterfaceScale }
+    if ($Scale -gt $script:MaxInterfaceScale) { $Scale = $script:MaxInterfaceScale }
+    if ($null -ne $script:root_ScaleHost) {
+        $script:root_ScaleHost.LayoutTransform = [System.Windows.Media.ScaleTransform]::new($Scale, $Scale)
+    }
+    try {
+        $wa = [System.Windows.SystemParameters]::WorkArea
+        $w = [Math]::Min($script:BaseWindowWidth  * $Scale, $wa.Width)
+        $h = [Math]::Min($script:BaseWindowHeight * $Scale, $wa.Height)
+        $Window.MinWidth  = [Math]::Min($script:BaseWindowMinWidth  * $Scale, $w)
+        $Window.MinHeight = [Math]::Min($script:BaseWindowMinHeight * $Scale, $h)
+        $Window.Width  = $w
+        $Window.Height = $h
+    } catch { }
+    if ($null -ne $script:txt_InterfaceScaleValue) {
+        $script:txt_InterfaceScaleValue.Text = ("{0}%" -f [int][Math]::Round($Scale * 100))
+    }
+}
+
+function Update-DATInterfaceScaleFromControls {
+    if ($script:chk_AutoFitScale.IsChecked -eq $true) {
+        $script:sld_InterfaceScale.IsEnabled = $false
+        $auto = Get-DATAutoFitScale
+        # Reflect the computed value on the slider without recursing into the change handlers
+        $prev = $script:SuppressScaleHandler
+        $script:SuppressScaleHandler = $true
+        try { $script:sld_InterfaceScale.Value = [int][Math]::Round($auto * 100) } finally { $script:SuppressScaleHandler = $prev }
+        Set-DATInterfaceScale -Scale $auto
+    } else {
+        $script:sld_InterfaceScale.IsEnabled = $true
+        Set-DATInterfaceScale -Scale ($script:sld_InterfaceScale.Value / 100.0)
+    }
+}
+
+$persistInterfaceScale = {
+    if ($script:SuppressScaleHandler) { return }
+    Set-DATRegistryValue -Name "InterfaceScaleAuto" -Value ([int]($script:chk_AutoFitScale.IsChecked -eq $true)) -Type DWord
+    Set-DATRegistryValue -Name "InterfaceScale" -Value ([int][Math]::Round($script:sld_InterfaceScale.Value)) -Type DWord
+}
+
+$script:chk_AutoFitScale.Add_Checked({ Update-DATInterfaceScaleFromControls; & $persistInterfaceScale })
+$script:chk_AutoFitScale.Add_Unchecked({ Update-DATInterfaceScaleFromControls; & $persistInterfaceScale })
+$script:sld_InterfaceScale.Add_ValueChanged({
+    if ($script:SuppressScaleHandler) { return }
+    if ($script:chk_AutoFitScale.IsChecked -eq $true) { return }
+    Set-DATInterfaceScale -Scale ($script:sld_InterfaceScale.Value / 100.0)
+    & $persistInterfaceScale
 })
 
 $btn_CopyTelemetryGuid = $Window.FindName('btn_CopyTelemetryGuid')
@@ -16704,10 +17213,28 @@ function Get-DATLocalDeviceInfo {
     try {
         $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
         $bb = Get-CimInstance -ClassName Win32_BaseBoard -ErrorAction Stop
-        $txt_CustomMake.Text = ($cs.Manufacturer -replace '^\s+|\s+$','' -replace '\.$','')
-        $txt_CustomModel.Text = ($cs.Model -replace '^\s+|\s+$','' -replace '\.$','')
-        $txt_CustomBaseBoard.Text = ($bb.Product -replace '^\s+|\s+$','')
-        Write-DATActivityLog "Custom Driver Pack: WMI device info loaded -- $($cs.Manufacturer) $($cs.Model) ($($bb.Product))" -Level Info
+        $make = ($cs.Manufacturer -replace '^\s+|\s+$','' -replace '\.$','')
+
+        if ($make -match 'Lenovo') {
+            # Lenovo is the exception: the friendly model name lives in
+            # Win32_ComputerSystemProduct.Version, while Win32_ComputerSystem.Model holds
+            # the machine-type code. The catalog/SystemSKU value is the first 4 characters
+            # of that machine-type code. This mirrors Get-ComputerData in
+            # Invoke-CMApplyDriverPackage.ps1 so custom packages match at deployment time.
+            $csp = Get-CimInstance -ClassName Win32_ComputerSystemProduct -ErrorAction Stop
+            $model = ($csp.Version -replace '^\s+|\s+$','' -replace '\.$','')
+            $rawModel = ($cs.Model -replace '^\s+|\s+$','')
+            $sku = if ($rawModel.Length -ge 4) { $rawModel.Substring(0, 4) } else { $rawModel }
+            $txt_CustomMake.Text = 'Lenovo'
+            $txt_CustomModel.Text = $model
+            $txt_CustomBaseBoard.Text = $sku
+            Write-DATActivityLog "Custom Driver Pack: WMI device info loaded -- Lenovo $model (SKU $sku)" -Level Info
+        } else {
+            $txt_CustomMake.Text = $make
+            $txt_CustomModel.Text = ($cs.Model -replace '^\s+|\s+$','' -replace '\.$','')
+            $txt_CustomBaseBoard.Text = ($bb.Product -replace '^\s+|\s+$','')
+            Write-DATActivityLog "Custom Driver Pack: WMI device info loaded -- $($cs.Manufacturer) $($cs.Model) ($($bb.Product))" -Level Info
+        }
     } catch {
         Write-DATActivityLog "Custom Driver Pack: Failed to read WMI -- $($_.Exception.Message)" -Level Warn
         $txt_CustomStatus.Text = "Could not read device information from WMI."
@@ -17769,7 +18296,7 @@ $btn_BrowseCodeSigningCert.Add_Click({
     $dlg.Width = 560
     $dlg.MaxHeight = 500
     $dlg.SizeToContent = 'Height'
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
     $selState.Dialog = $dlg
@@ -18675,7 +19202,7 @@ $btn_QueryFilters.Add_Click({
         $dlg.Owner            = $Window
         $dlg.Width            = 620
         $dlg.Height           = 500
-        $dlg.Topmost          = $true
+        $dlg.Topmost          = $false
         $dlg.ResizeMode       = 'NoResize'
         $dlg.ShowInTaskbar    = $false
         $qfState.Dialog = $dlg
@@ -20155,7 +20682,8 @@ $btn_ShowToastPreview.Add_Click({
     $previewWin.AllowsTransparency = $true
     $previewWin.Background = [System.Windows.Media.Brushes]::Transparent
     $previewWin.WindowStartupLocation = 'Manual'
-    $previewWin.Topmost = $true
+    $previewWin.Owner = $Window
+    $previewWin.Topmost = $false
     $previewWin.ResizeMode = 'NoResize'
     $previewWin.ShowInTaskbar = $false
     $previewWin.Width = 420
@@ -21053,8 +21581,9 @@ function Invoke-DATIntuneBulkAppProgress {
     #>
     param (
         [array]$Apps,
-        [ValidateSet('RemoveAssignments','UpdateDetection','UpdateRequirement','UpdateMetadata','UpdateScopeTags')][string]$Operation,
-        [string[]]$RoleScopeTagIds = @()
+        [ValidateSet('RemoveAssignments','UpdateDetection','UpdateRequirement','UpdateMetadata','UpdateScopeTags','MoveToProduction','MoveToPilot','MoveToRetired','ChangeOSTarget')][string]$Operation,
+        [string[]]$RoleScopeTagIds = @(),
+        [string]$TargetOS = ''
     )
 
     switch ($Operation) {
@@ -21063,6 +21592,10 @@ function Invoke-DATIntuneBulkAppProgress {
         'UpdateRequirement' { $titleIcon = [char]0xE90F; $titleText = 'Updating Requirement Script';                 $doneLabel = 'Updated';  $doneSummary = 'script updated on' }
         'UpdateMetadata'    { $titleIcon = [char]0xE898; $titleText = 'Republishing Metadata';                       $doneLabel = 'Updated';  $doneSummary = 'metadata republished on' }
         'UpdateScopeTags'   { $titleIcon = [char]0xE8D7; $titleText = 'Updating Scope Tags';                         $doneLabel = 'Updated';  $doneSummary = 'scope tags updated on' }
+        'MoveToProduction'  { $titleIcon = [char]0xE7B8; $titleText = 'Moving to Production';                        $doneLabel = 'Moved';    $doneSummary = 'moved to Production:' }
+        'MoveToPilot'       { $titleIcon = [char]0xE7B8; $titleText = 'Moving to Pilot';                             $doneLabel = 'Moved';    $doneSummary = 'moved to Pilot:' }
+        'MoveToRetired'     { $titleIcon = [char]0xE7B8; $titleText = 'Moving to Retired';                           $doneLabel = 'Moved';    $doneSummary = 'moved to Retired:' }
+        'ChangeOSTarget'    { $titleIcon = [char]0xE770; $titleText = 'Changing OS Target';                         $doneLabel = 'Retargeted'; $doneSummary = 'retargeted:' }
     }
 
     $theme = Get-DATTheme -ThemeName $script:CurrentTheme
@@ -21221,7 +21754,7 @@ function Invoke-DATIntuneBulkAppProgress {
     $script:BulkPS = [powershell]::Create()
     Add-DATCoreRunspaceBootstrap -PowerShell $script:BulkPS -CaptureIntuneAuthContext
     $script:BulkPS.AddScript({
-        param ($State, $AppList, $Operation, $RoleScopeTagIds)
+        param ($State, $AppList, $Operation, $RoleScopeTagIds, $TargetOS)
         $scopeTags = @($RoleScopeTagIds | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
         foreach ($app in $AppList) {
             $entry = @{ AppId = $app.AppId; DisplayName = $app.DisplayName; Success = $false; Error = ''; Count = 0 }
@@ -21235,6 +21768,10 @@ function Invoke-DATIntuneBulkAppProgress {
                         $applyTags = if ($scopeTags.Count -gt 0) { $scopeTags } else { @('0') }
                         Set-DATIntuneAppScopeTags -AppId $app.AppId -RoleScopeTagIds $applyTags | Out-Null
                     }
+                    'MoveToProduction' { $r = Set-DATIntuneAppDeploymentState -AppId $app.AppId -State 'Production'; $entry.Count = [int][bool]$r.Changed }
+                    'MoveToPilot'      { $r = Set-DATIntuneAppDeploymentState -AppId $app.AppId -State 'Pilot';      $entry.Count = [int][bool]$r.Changed }
+                    'MoveToRetired'    { $r = Set-DATIntuneAppDeploymentState -AppId $app.AppId -State 'Retired';    $entry.Count = [int][bool]$r.Changed }
+                    'ChangeOSTarget'   { $r = Set-DATIntuneAppOSTarget -AppId $app.AppId -NewOS $TargetOS;           $entry.Count = [int][bool]$r.Changed }
                 }
                 $entry.Success = $true
             } catch {
@@ -21248,6 +21785,7 @@ function Invoke-DATIntuneBulkAppProgress {
     [void]$script:BulkPS.AddArgument($appList)
     [void]$script:BulkPS.AddArgument($Operation)
     [void]$script:BulkPS.AddArgument($RoleScopeTagIds)
+    [void]$script:BulkPS.AddArgument($TargetOS)
     $script:BulkAsync = $script:BulkPS.BeginInvoke()
 
     $script:BulkLastSeen = 0
@@ -21274,6 +21812,14 @@ function Invoke-DATIntuneBulkAppProgress {
                         } else {
                             if ($label) { $label.Text = 'None' }
                             Write-DATActivityLog "No assignments to remove for '$($entry.DisplayName)'" -Level Info
+                        }
+                    } elseif ($Operation -in @('MoveToProduction','MoveToPilot','MoveToRetired','ChangeOSTarget')) {
+                        if ([int]$entry.Count -gt 0) {
+                            $script:BulkAnyChanges = $true
+                            Write-DATActivityLog "$doneLabel '$($entry.DisplayName)'" -Level Success
+                        } else {
+                            if ($label) { $label.Text = 'No change'; $label.Foreground = $mutedBrush }
+                            Write-DATActivityLog "No change for '$($entry.DisplayName)' (not applicable or already targeted)" -Level Info
                         }
                     } else {
                         $script:BulkAnyChanges = $true
@@ -21318,6 +21864,10 @@ function Invoke-DATIntuneBulkAppProgress {
 
             # Refresh the grid so the Assigned column reflects any assignment removal
             if ($Operation -eq 'RemoveAssignments' -and $script:BulkAnyChanges) {
+                try { Invoke-DATIntuneAppRefresh } catch { }
+            }
+            # Refresh so renamed/retargeted display names are reflected in the grid.
+            if ($script:BulkAnyChanges -and ($Operation -in @('MoveToProduction','MoveToPilot','MoveToRetired','ChangeOSTarget'))) {
                 try { Invoke-DATIntuneAppRefresh } catch { }
             }
         }
@@ -21467,7 +22017,7 @@ $ctx_UpdateRemoveFilter.Add_Click({
     $filterDlg.Width            = 520
     $filterDlg.SizeToContent    = 'Height'
     $filterDlg.MaxHeight        = 420
-    $filterDlg.Topmost          = $true
+    $filterDlg.Topmost          = $false
     $filterDlg.ResizeMode       = 'NoResize'
     $filterDlg.ShowInTaskbar    = $false
 
@@ -22068,6 +22618,7 @@ function Update-DATIntuneAuthUI {
         $btn_VerifyIntunePermissions.Visibility = 'Visible'
         $grid_IntuneApps.IsEnabled = $true
         $btn_RefreshIntuneApps.IsEnabled = $true
+        if ($null -ne $cmb_IntunePkgAction) { $cmb_IntunePkgAction.IsEnabled = $true }
         $panel_AuthStatus.Visibility = 'Collapsed'
         $txt_IntunePkgStatus.Visibility = 'Collapsed'
         # Enable Intune known model lookup if toggle is on
@@ -22120,6 +22671,7 @@ function Update-DATIntuneAuthUI {
         $btn_VerifyIntunePermissions.Visibility = 'Collapsed'
         $grid_IntuneApps.IsEnabled = $false
         $btn_RefreshIntuneApps.IsEnabled = $false
+        if ($null -ne $cmb_IntunePkgAction) { $cmb_IntunePkgAction.IsEnabled = $false }
         $btn_DeleteIntuneApp.IsEnabled = $false
         $btn_IntuneKnownModelLookup.IsEnabled = $false
         $txt_IntunePkgStatus.Text = 'Not connected to Intune. Please connect first.'
@@ -22290,6 +22842,7 @@ $script:IntuneTokenTimer.Add_Tick({
                         (Get-DATTheme -ThemeName $script:CurrentTheme)['StatusWarning']))
                 $grid_IntuneApps.IsEnabled = $false
                 $btn_RefreshIntuneApps.IsEnabled = $false
+                if ($null -ne $cmb_IntunePkgAction) { $cmb_IntunePkgAction.IsEnabled = $false }
                 $btn_DeleteIntuneApp.IsEnabled = $false
                 Write-DATActivityLog "Intune token expired" -Level Warn
             }
@@ -22484,7 +23037,7 @@ function Update-DATIntuneAppFilter {
             if ($item.DisplayName -notlike "*$searchText*" -and $item.Publisher -notlike "*$searchText*") { return $false }
         }
         return $true
-    }
+    }.GetNewClosure()
 }
 
 # Intune package type filter
@@ -22496,6 +23049,36 @@ $cmb_IntunePkgOS.Add_SelectionChanged({ Update-DATIntuneAppFilter })
 
 # Intune apps search filter
 $txt_IntuneAppSearch.Add_TextChanged({ Update-DATIntuneAppFilter })
+
+# Intune package Action dropdown -- mirrors the ConfigMgr package "Action" combo. Operates on the
+# checked packages and runs the change through the shared bulk-progress modal.
+$cmb_IntunePkgAction = $Window.FindName('cmb_IntunePkgAction')
+$cmb_IntunePkgAction.Add_SelectionChanged({
+    $action = if ($null -ne $cmb_IntunePkgAction.SelectedItem) { $cmb_IntunePkgAction.SelectedItem.Content } else { $null }
+    if ([string]::IsNullOrEmpty($action)) { return }
+
+    $checkedApps = @($script:IntuneAppsData | Where-Object { $_.Selected -eq $true })
+    if ($checkedApps.Count -eq 0) {
+        $txt_IntunePkgStatus.Foreground = $Window.FindResource('StatusWarning')
+        $txt_IntunePkgStatus.Text = "No packages selected. Please check one or more packages first."
+        $txt_IntunePkgStatus.Visibility = 'Visible'
+        $cmb_IntunePkgAction.SelectedIndex = -1
+        return
+    }
+
+    switch ($action) {
+        'Move to Production' { Invoke-DATIntuneBulkAppProgress -Apps $checkedApps -Operation 'MoveToProduction' }
+        'Move to Pilot'      { Invoke-DATIntuneBulkAppProgress -Apps $checkedApps -Operation 'MoveToPilot' }
+        'Move to Retired'    { Invoke-DATIntuneBulkAppProgress -Apps $checkedApps -Operation 'MoveToRetired' }
+        'Change OS Target'   {
+            $newOS = Show-DATChangeOSTargetDialog
+            if ([string]::IsNullOrEmpty($newOS)) { $cmb_IntunePkgAction.SelectedIndex = -1; return }
+            Invoke-DATIntuneBulkAppProgress -Apps $checkedApps -Operation 'ChangeOSTarget' -TargetOS $newOS
+        }
+    }
+
+    $cmb_IntunePkgAction.SelectedIndex = -1
+})
 
 # Intune Select All / Select None
 $btn_IntunePkgSelectAll = $Window.FindName('btn_IntunePkgSelectAll')
@@ -23381,6 +23964,8 @@ $grid_IntuneApps.Add_SelectionChanged({
     $selected = $grid_IntuneApps.SelectedItem
     if ($null -eq $selected) {
         $panel_IntuneAppDetail.Visibility = 'Collapsed'
+        $split_IntuneDetail.Visibility = 'Collapsed'
+        $row_IntuneDetail.Height = [System.Windows.GridLength]::new(0)
         $btn_IntuneReportIssue.IsEnabled = $false
         return
     }
@@ -23391,6 +23976,11 @@ $grid_IntuneApps.Add_SelectionChanged({
     $txt_Detail_Description.Text = $selected.Description
     $txt_Detail_Version.Text     = $selected.Version
     $panel_IntuneAppDetail.Visibility = 'Visible'
+    $split_IntuneDetail.Visibility = 'Visible'
+    # Default to Auto so the card is only as tall as its content; the splitter can still resize it.
+    if ($row_IntuneDetail.Height.IsAbsolute -and $row_IntuneDetail.Height.Value -le 0) {
+        $row_IntuneDetail.Height = [System.Windows.GridLength]::Auto
+    }
 
     # Enable Report Issue only if telemetry is opted in
     $btn_IntuneReportIssue.IsEnabled = $chk_TelemetryOptOut.IsChecked -eq $true
@@ -23473,6 +24063,8 @@ $btn_IntuneDeletePackage.Add_Click({
         Remove-DATIntuneApp -AppId $selected.AppId
         Write-DATActivityLog "Deleted: $($selected.DisplayName)" -Level Success
         $panel_IntuneAppDetail.Visibility = 'Collapsed'
+        $split_IntuneDetail.Visibility = 'Collapsed'
+        $row_IntuneDetail.Height = [System.Windows.GridLength]::new(0)
         Invoke-DATIntuneAppRefresh
         Show-DATInfoDialog -Title "Application Deleted" `
             -Message "'$($selected.DisplayName)' has been successfully removed from Intune." `
@@ -23480,6 +24072,14 @@ $btn_IntuneDeletePackage.Add_Click({
     } catch {
         Write-DATActivityLog "Failed to delete $($selected.DisplayName): $($_.Exception.Message)" -Level Error
     }
+})
+
+# Close the package detail panel
+$btn_IntuneCloseDetail.Add_Click({
+    $grid_IntuneApps.SelectedItem = $null
+    $panel_IntuneAppDetail.Visibility = 'Collapsed'
+    $split_IntuneDetail.Visibility = 'Collapsed'
+    $row_IntuneDetail.Height = [System.Windows.GridLength]::new(0)
 })
 
 # Copy App ID from detail panel
@@ -23530,7 +24130,7 @@ $btn_DeleteIntuneApp.Add_Click({
     $script:deleteModal.Owner = $Window
     $script:deleteModal.Width = 440
     $script:deleteModal.SizeToContent = 'Height'
-    $script:deleteModal.Topmost = $true
+    $script:deleteModal.Topmost = $false
     $script:deleteModal.ResizeMode = 'NoResize'
     $script:deleteModal.ShowInTaskbar = $false
 
@@ -24371,15 +24971,16 @@ function Restore-DATMaintenanceWindowSettings {
 
 function Import-DATLogEntries {
     $logPath = Join-Path -Path $global:LogDirectory -ChildPath "$global:ProductName.log"
-    $lst_LogEntries.Items.Clear()
 
     if (-not (Test-Path $logPath)) {
+        $lst_LogEntries.ItemsSource = $null
         $txt_LogStats.Text = "No log file found."
         return
     }
 
     $rawLines = Get-Content -Path $logPath -ErrorAction SilentlyContinue
     if ($null -eq $rawLines -or $rawLines.Count -eq 0) {
+        $lst_LogEntries.ItemsSource = $null
         $txt_LogStats.Text = "Log file is empty."
         return
     }
@@ -24395,7 +24996,6 @@ function Import-DATLogEntries {
     $infoBg = [System.Windows.Media.ColorConverter]::ConvertFromString($themeColors['SidebarBackground'])
     $warnBg = [System.Windows.Media.ColorConverter]::ConvertFromString("#2D2A1A")
     $errorBg = [System.Windows.Media.ColorConverter]::ConvertFromString("#2D1A1E")
-    $dimColor = [System.Windows.Media.ColorConverter]::ConvertFromString($themeColors['InputPlaceholder'])
 
     if ($script:CurrentTheme -eq 'Light') {
         $warnBg = [System.Windows.Media.ColorConverter]::ConvertFromString("#FFF8E1")
@@ -24408,7 +25008,6 @@ function Import-DATLogEntries {
     $infoFgBrush = [System.Windows.Media.SolidColorBrush]::new($infoColor); $infoFgBrush.Freeze()
     $warnFgBrush = [System.Windows.Media.SolidColorBrush]::new($warnColor); $warnFgBrush.Freeze()
     $errorFgBrush = [System.Windows.Media.SolidColorBrush]::new($errorColor); $errorFgBrush.Freeze()
-    $dimBrush = [System.Windows.Media.SolidColorBrush]::new($dimColor); $dimBrush.Freeze()
 
     # Severity icon brushes
     $infoIconBrush = [System.Windows.Media.SolidColorBrush]::new(
@@ -24421,96 +25020,45 @@ function Import-DATLogEntries {
         [System.Windows.Media.ColorConverter]::ConvertFromString($themeColors['StatusError']))
     $errorIconBrush.Freeze()
 
+    $infoIcon = [string][char]0xE946
+    $warnIcon = [string][char]0xE7BA
+    $errorIcon = [string][char]0xEA39
+
+    # Build lightweight data objects; the virtualized ListBox realizes only visible rows.
+    $entries = [System.Collections.Generic.List[object]]::new()
     foreach ($line in $rawLines) {
         if ($line -match $cmtracePattern) {
-            $msg = $Matches['msg']
             $timeRaw = $Matches['time']
-            $dateRaw = $Matches['date']
             $severity = $Matches['type']
 
             # Parse time (take HH:mm:ss)
             $timePart = $timeRaw.Split('.')[0]
             if ($timePart.Length -gt 8) { $timePart = $timePart.Substring(0, 8) }
 
-            # Determine styling
             switch ($severity) {
-                '1' { $fgBrush = $infoFgBrush; $bgBrush = $infoBrush; $iconChar = [char]0xE946; $iconBrush = $infoIconBrush; $infoCount++ }
-                '2' { $fgBrush = $warnFgBrush; $bgBrush = $warnBrush; $iconChar = [char]0xE7BA; $iconBrush = $warnIconBrush; $warnCount++ }
-                '3' { $fgBrush = $errorFgBrush; $bgBrush = $errorBrush; $iconChar = [char]0xEA39; $iconBrush = $errorIconBrush; $errorCount++ }
-                default { $fgBrush = $infoFgBrush; $bgBrush = $infoBrush; $iconChar = [char]0xE946; $iconBrush = $infoIconBrush; $infoCount++ }
+                '2'     { $fgBrush = $warnFgBrush;  $bgBrush = $warnBrush;  $iconChar = $warnIcon;  $iconBrush = $warnIconBrush;  $warnCount++ }
+                '3'     { $fgBrush = $errorFgBrush; $bgBrush = $errorBrush; $iconChar = $errorIcon; $iconBrush = $errorIconBrush; $errorCount++ }
+                default { $fgBrush = $infoFgBrush;  $bgBrush = $infoBrush;  $iconChar = $infoIcon;  $iconBrush = $infoIconBrush;  $infoCount++ }
             }
 
-            # Build row
-            $grid = New-Object System.Windows.Controls.Grid
-            $col0 = New-Object System.Windows.Controls.ColumnDefinition; $col0.Width = [System.Windows.GridLength]::new(28)
-            $col1 = New-Object System.Windows.Controls.ColumnDefinition; $col1.Width = [System.Windows.GridLength]::new(80)
-            $col2 = New-Object System.Windows.Controls.ColumnDefinition; $col2.Width = [System.Windows.GridLength]::new(80)
-            $col3 = New-Object System.Windows.Controls.ColumnDefinition; $col3.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
-            $grid.ColumnDefinitions.Add($col0)
-            $grid.ColumnDefinitions.Add($col1)
-            $grid.ColumnDefinitions.Add($col2)
-            $grid.ColumnDefinitions.Add($col3)
-
-            # Icon
-            $icon = New-Object System.Windows.Controls.TextBlock
-            $icon.Text = [string]$iconChar
-            $icon.FontFamily = New-Object System.Windows.Media.FontFamily("Segoe MDL2 Assets")
-            $icon.FontSize = 10
-            $icon.Foreground = $iconBrush
-            $icon.VerticalAlignment = 'Center'
-            $icon.HorizontalAlignment = 'Center'
-            [System.Windows.Controls.Grid]::SetColumn($icon, 0)
-            $grid.Children.Add($icon) | Out-Null
-
-            # Time
-            $tbTime = New-Object System.Windows.Controls.TextBlock
-            $tbTime.Text = $timePart
-            $tbTime.FontFamily = New-Object System.Windows.Media.FontFamily("Cascadia Code,Consolas,monospace")
-            $tbTime.FontSize = 11
-            $tbTime.Foreground = $dimBrush
-            $tbTime.VerticalAlignment = 'Center'
-            $tbTime.Padding = [System.Windows.Thickness]::new(8, 0, 0, 0)
-            [System.Windows.Controls.Grid]::SetColumn($tbTime, 1)
-            $grid.Children.Add($tbTime) | Out-Null
-
-            # Date
-            $tbDate = New-Object System.Windows.Controls.TextBlock
-            $tbDate.Text = $dateRaw
-            $tbDate.FontFamily = New-Object System.Windows.Media.FontFamily("Cascadia Code,Consolas,monospace")
-            $tbDate.FontSize = 11
-            $tbDate.Foreground = $dimBrush
-            $tbDate.VerticalAlignment = 'Center'
-            $tbDate.Padding = [System.Windows.Thickness]::new(8, 0, 0, 0)
-            [System.Windows.Controls.Grid]::SetColumn($tbDate, 2)
-            $grid.Children.Add($tbDate) | Out-Null
-
-            # Message
-            $tbMsg = New-Object System.Windows.Controls.TextBlock
-            $tbMsg.Text = $msg
-            $tbMsg.FontFamily = New-Object System.Windows.Media.FontFamily("Cascadia Code,Consolas,monospace")
-            $tbMsg.FontSize = 11
-            $tbMsg.Foreground = $fgBrush
-            $tbMsg.TextWrapping = 'Wrap'
-            $tbMsg.VerticalAlignment = 'Center'
-            $tbMsg.Padding = [System.Windows.Thickness]::new(8, 0, 8, 0)
-            [System.Windows.Controls.Grid]::SetColumn($tbMsg, 3)
-            $grid.Children.Add($tbMsg) | Out-Null
-
-            # ListBoxItem
-            $item = New-Object System.Windows.Controls.ListBoxItem
-            $item.Content = $grid
-            $item.Background = $bgBrush
-            $item.Padding = [System.Windows.Thickness]::new(0, 4, 0, 4)
-            $item.BorderThickness = [System.Windows.Thickness]::new(0)
-            $lst_LogEntries.Items.Add($item) | Out-Null
+            $entries.Add([PSCustomObject]@{
+                IconChar   = $iconChar
+                IconBrush  = $iconBrush
+                Time       = $timePart
+                Date       = $Matches['date']
+                Message    = $Matches['msg']
+                Foreground = $fgBrush
+                Background = $bgBrush
+            })
         }
     }
 
-    $txt_LogStats.Text = "$($lst_LogEntries.Items.Count) entries  |  $infoCount info  |  $warnCount warnings  |  $errorCount errors"
+    $lst_LogEntries.ItemsSource = $entries
+    $txt_LogStats.Text = "$($entries.Count) entries  |  $infoCount info  |  $warnCount warnings  |  $errorCount errors"
 
     # Scroll to bottom (newest)
-    if ($lst_LogEntries.Items.Count -gt 0) {
-        $lst_LogEntries.ScrollIntoView($lst_LogEntries.Items[$lst_LogEntries.Items.Count - 1])
+    if ($entries.Count -gt 0) {
+        $lst_LogEntries.ScrollIntoView($entries[$entries.Count - 1])
     }
 }
 
@@ -24933,7 +25481,7 @@ function Show-DATTelemetryConsentModal {
     $dlg.Owner              = $Window
     $dlg.Width              = 520
     $dlg.SizeToContent      = 'Height'
-    $dlg.Topmost            = $true
+    $dlg.Topmost            = $false
     $dlg.ResizeMode         = 'NoResize'
     $dlg.ShowInTaskbar      = $false
 
@@ -25414,7 +25962,7 @@ function Show-DATReleaseNotesDialog {
     $dlg.Owner = $Window
     $dlg.Width = 600
     $dlg.Height = 520
-    $dlg.Topmost = $true
+    $dlg.Topmost = $false
     $dlg.ResizeMode = 'NoResize'
     $dlg.ShowInTaskbar = $false
 
@@ -25697,6 +26245,55 @@ try {
             # Default to ON for new installs or when explicitly enabled
             $chk_UseDATAPICatalog.IsChecked = $true
             Write-Host "Enabled (DAT API catalog)" -ForegroundColor Green
+        }
+
+        # Restore OEM Selections (restrict supported manufacturers).
+        # Must run BEFORE the "Restore OEM selections" block below, which only re-checks
+        # main-page OEMs whose checkbox .IsEnabled -- disabling disallowed OEMs here keeps
+        # them out of the restored selection.
+        Write-Host "  OEM Restrict  : " -NoNewline -ForegroundColor DarkGray
+        $script:SuppressOEMRestrictionHandler = $true
+        try {
+            $restrictOn = ($null -ne $savedConfig.RestrictOEMs -and $savedConfig.RestrictOEMs -eq 1)
+            $script:chk_RestrictOEMs.IsChecked = $restrictOn
+            if (-not [string]::IsNullOrEmpty($savedConfig.AllowedOEMs)) {
+                $allowedSaved = @($savedConfig.AllowedOEMs -split ',' | ForEach-Object { $_.Trim() })
+                foreach ($entry in $script:AllowOEMCheckboxes.GetEnumerator()) {
+                    $entry.Value.IsChecked = ($allowedSaved -contains $entry.Key)
+                }
+            }
+            Update-DATOEMAvailability
+            if ($restrictOn) {
+                Write-Host "Enabled -- $((Get-DATAllowedOEMs) -join ', ')" -ForegroundColor Green
+            } else {
+                Write-Host "Disabled (all OEMs)" -ForegroundColor DarkYellow
+            }
+        } finally {
+            $script:SuppressOEMRestrictionHandler = $false
+        }
+
+        # Restore Interface Scale. Applied before the window is shown so it opens at the
+        # correct size. Auto-fit defaults ON for new installs (no-op on displays large
+        # enough for the base 1200x780 window; shrinks to fit on smaller screens).
+        Write-Host "  UI Scale      : " -NoNewline -ForegroundColor DarkGray
+        $script:SuppressScaleHandler = $true
+        try {
+            $autoFit = if ($null -ne $savedConfig.InterfaceScaleAuto) { $savedConfig.InterfaceScaleAuto -eq 1 } else { $true }
+            $savedPct = if ($null -ne $savedConfig.InterfaceScale) { [int]$savedConfig.InterfaceScale } else { 100 }
+            if ($savedPct -lt 75)  { $savedPct = 75 }
+            if ($savedPct -gt 150) { $savedPct = 150 }
+            $script:sld_InterfaceScale.Value = $savedPct
+            $script:chk_AutoFitScale.IsChecked = $autoFit
+            Update-DATInterfaceScaleFromControls
+            if ($autoFit) {
+                Write-Host "Auto-fit ($($script:txt_InterfaceScaleValue.Text))" -ForegroundColor Green
+            } else {
+                Write-Host "$($script:txt_InterfaceScaleValue.Text) (manual)" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "default (100%)" -ForegroundColor DarkYellow
+        } finally {
+            $script:SuppressScaleHandler = $false
         }
 
         # Restore Deploy All Devices
@@ -26614,7 +27211,7 @@ if (Test-Path $logoPath) {
 
 # Read version from module manifest
 $manifestPath = Join-Path $AppRoot "Modules\DriverAutomationToolCore\DriverAutomationToolCore.psd1"
-$script:versionString = "v10.2.4"
+$script:versionString = "v10.2.5"
 if (Test-Path $manifestPath) {
     $manifestData = Import-PowerShellDataFile $manifestPath
     $ver = [version]$manifestData.ModuleVersion
@@ -27654,7 +28251,7 @@ $Window.Add_ContentRendered({
         $connDlg.Owner = $Window
         $connDlg.Width = 400
         $connDlg.SizeToContent = 'Height'
-        $connDlg.Topmost = $true
+        $connDlg.Topmost = $false
         $connDlg.ResizeMode = 'NoResize'
         $connDlg.ShowInTaskbar = $false
 
