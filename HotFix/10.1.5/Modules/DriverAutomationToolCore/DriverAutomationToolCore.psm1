@@ -1,4 +1,4 @@
-<#
+﻿<#
     ===========================================================================
      Created by:    Maurice Daly
      Organization:  MSEndpointMgr / Patch My PC
@@ -249,6 +249,13 @@ $script:DATTrustedPublisherCNs = @(
     'Dynabook*'
 )
 
+# Acer TravelMate B312R-31 (Celesta_TKN) BIOS 1.17 contains a self-signed
+# Authenticode certificate. The pin is used only when WinVerifyTrust reports
+# CERT_E_UNTRUSTEDROOT, which still distinguishes a modified PE as TRUST_E_BAD_DIGEST.
+$script:DATAcerUntrustedRootSignerThumbprints = @(
+    'E456B946A5848AF5A8FAEDAA7DF2888EA03B5C4C'
+)
+
 # SHA-256 hash pin for the bundled curl.exe (security fix #23 / #809).
 # Leave empty to require Authenticode validation. Administrators can set a trusted hash
 # at runtime via the 'CurlSHA256Pin' registry value (Settings > External Utilities >
@@ -256,6 +263,138 @@ $script:DATTrustedPublisherCNs = @(
 # so a pin is the supported way to use a bundled curl.exe.
 # Compute with: (Get-FileHash -Algorithm SHA256 -Path '.\Tools\curl.exe').Hash
 [string]$script:DATCurlSHA256Pin = ''
+
+function Test-DATAcerDownloadUri {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)][string]$Uri
+    )
+
+    $parsed = $null
+    if (-not [System.Uri]::TryCreate($Uri, [System.UriKind]::Absolute, [ref]$parsed)) { return $false }
+    return (
+        $parsed.Scheme -eq 'https' -and
+        $parsed.Host -ieq 'global-download.acer.com' -and
+        [string]::IsNullOrEmpty($parsed.UserInfo) -and
+        ($parsed.IsDefaultPort -or $parsed.Port -eq 443)
+    )
+}
+
+function Test-DATPinnedUntrustedRootSignature {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)]$Signature,
+        [Parameter(Mandatory)][string[]]$AllowedThumbprints,
+        [scriptblock]$NativeVerifier
+    )
+
+    if ($Signature.Status -ne 'UnknownError' -or $null -eq $Signature.SignerCertificate) {
+        return $false
+    }
+
+    $signerThumbprint = $Signature.SignerCertificate.Thumbprint -replace '\s', ''
+    $thumbprintMatched = @($AllowedThumbprints | Where-Object {
+        ($_ -replace '\s', '') -ieq $signerThumbprint
+    }).Count -gt 0
+    if (-not $thumbprintMatched) {
+        return $false
+    }
+
+    try {
+        if ($NativeVerifier) {
+            $winTrustResult = & $NativeVerifier $FilePath
+        } else {
+            if (-not ('DAT.Authenticode.WinTrust' -as [type])) {
+                Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace DAT.Authenticode
+{
+    public static class WinTrust
+    {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WINTRUST_FILE_INFO
+        {
+            public uint cbStruct;
+            public IntPtr pcwszFilePath;
+            public IntPtr hFile;
+            public IntPtr pgKnownSubject;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINTRUST_DATA
+        {
+            public uint cbStruct;
+            public IntPtr pPolicyCallbackData;
+            public IntPtr pSIPClientData;
+            public uint dwUIChoice;
+            public uint fdwRevocationChecks;
+            public uint dwUnionChoice;
+            public IntPtr pFile;
+            public uint dwStateAction;
+            public IntPtr hWVTStateData;
+            public IntPtr pwszURLReference;
+            public uint dwProvFlags;
+            public uint dwUIContext;
+        }
+
+        [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int WinVerifyTrust(
+            IntPtr hwnd,
+            [MarshalAs(UnmanagedType.LPStruct)] Guid actionId,
+            IntPtr trustData);
+
+        public static int VerifyEmbeddedSignature(string filePath)
+        {
+            WINTRUST_FILE_INFO fileInfo = new WINTRUST_FILE_INFO();
+            fileInfo.cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_FILE_INFO));
+            fileInfo.pcwszFilePath = Marshal.StringToCoTaskMemUni(filePath);
+            IntPtr fileInfoPointer = IntPtr.Zero;
+            IntPtr trustDataPointer = IntPtr.Zero;
+
+            try
+            {
+                fileInfoPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(WINTRUST_FILE_INFO)));
+                Marshal.StructureToPtr(fileInfo, fileInfoPointer, false);
+
+                WINTRUST_DATA trustData = new WINTRUST_DATA();
+                trustData.cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_DATA));
+                trustData.dwUIChoice = 2;
+                trustData.dwUnionChoice = 1;
+                trustData.pFile = fileInfoPointer;
+                trustData.dwProvFlags = 0x10;
+
+                trustDataPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(WINTRUST_DATA)));
+                Marshal.StructureToPtr(trustData, trustDataPointer, false);
+
+                Guid actionId = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+                return WinVerifyTrust(new IntPtr(-1), actionId, trustDataPointer);
+            }
+            finally
+            {
+                if (trustDataPointer != IntPtr.Zero) Marshal.FreeCoTaskMem(trustDataPointer);
+                if (fileInfoPointer != IntPtr.Zero) Marshal.FreeCoTaskMem(fileInfoPointer);
+                if (fileInfo.pcwszFilePath != IntPtr.Zero) Marshal.FreeCoTaskMem(fileInfo.pcwszFilePath);
+            }
+        }
+    }
+}
+'@ -ErrorAction Stop
+            }
+            $winTrustResult = [DAT.Authenticode.WinTrust]::VerifyEmbeddedSignature($FilePath)
+        }
+
+        # 0x800B0109 (CERT_E_UNTRUSTEDROOT) means Authenticode validated the PE
+        # and certificate chain, with root trust as the sole failure.
+        return $winTrustResult -eq -2146762487
+    } catch {
+        return $false
+    }
+}
 
 function Test-DATFileSignature {
     <#
@@ -269,10 +408,15 @@ function Test-DATFileSignature {
           2. The signer certificate's CN matches one of the entries in
              $script:DATTrustedPublisherCNs (or one supplied via -AllowedPublishers).
 
+        A caller may additionally supply exact certificate thumbprints for a narrowly
+        scoped self-signed legacy fallback. Such a signature is accepted only when native
+        WinVerifyTrust returns CERT_E_UNTRUSTEDROOT; hash mismatches and all other
+        UnknownError outcomes remain rejected.
+
         For archive files (.zip) that cannot carry Authenticode signatures, the function
-        extracts the archive to a temporary folder, locates PE executables (.exe, .dll, .sys)
-        inside, and validates at least one is signed by a trusted publisher. The temp folder
-        is cleaned up after validation.
+        extracts the archive to a temporary folder and requires every security-relevant member
+        to have a valid signature from a trusted publisher. Archives without a verifiable
+        security-relevant member are rejected.
 
         Any other outcome returns $false and writes a Severity-3 log entry. Callers should
         treat $false as an integrity failure and refuse to use / repackage the file.
@@ -301,6 +445,8 @@ function Test-DATFileSignature {
 
         [string[]]$AllowedPublishers = $script:DATTrustedPublisherCNs,
 
+        [string[]]$AllowedUntrustedRootThumbprints = @(),
+
         [string]$Context = 'File'
     )
 
@@ -316,23 +462,26 @@ function Test-DATFileSignature {
         $tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) "DATSigCheck_$([guid]::NewGuid().ToString('N').Substring(0,8))"
         try {
             Expand-Archive -Path $FilePath -DestinationPath $tempExtractDir -Force -ErrorAction Stop
-            # Find PE files inside the archive
-            $peFiles = Get-ChildItem -Path $tempExtractDir -Recurse -File -Include '*.exe','*.dll','*.sys' -ErrorAction SilentlyContinue
-            if ($null -eq $peFiles -or @($peFiles).Count -eq 0) {
-                Write-DATLogEntry -Value "[Integrity] [$Context] Archive contains no PE files (.exe/.dll/.sys) to validate -- skipping signature check (hash-only integrity)" -Severity 2
-                # No PE files to check -- allow the archive (integrity was confirmed by download success over HTTPS)
-                return $true
+            $nestedCabFiles = @(Get-ChildItem -Path $tempExtractDir -Recurse -File -Filter '*.cab' -ErrorAction SilentlyContinue)
+            if ($nestedCabFiles.Count -gt 0) {
+                Write-DATLogEntry -Value "[Integrity] [$Context] Archive contains nested CAB content that cannot establish trust for the outer ZIP. A matching published SHA-256 for the ZIP is required -- rejecting: $FilePath" -Severity 3
+                return $false
             }
-            # Validate at least one PE file is signed by a trusted publisher
-            foreach ($pe in $peFiles) {
-                $innerResult = Test-DATFileSignature -FilePath $pe.FullName -AllowedPublishers $AllowedPublishers -Context "$Context|Inner:$($pe.Name)"
-                if ($innerResult) {
-                    Write-DATLogEntry -Value "[Integrity] [$Context] Archive validated via inner file: $($pe.Name)" -Severity 1
-                    return $true
+            $securityRelevantExtensions = @('.exe', '.dll', '.sys', '.msi', '.msp', '.ps1', '.psm1', '.psd1', '.bat', '.cmd', '.cpl', '.scr')
+            $securityRelevantFiles = @(Get-ChildItem -Path $tempExtractDir -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $securityRelevantExtensions -contains $_.Extension.ToLowerInvariant() })
+            if ($securityRelevantFiles.Count -eq 0) {
+                Write-DATLogEntry -Value "[Integrity] [$Context] Archive contains no security-relevant member that can establish publisher trust -- rejecting: $FilePath" -Severity 3
+                return $false
+            }
+            foreach ($member in $securityRelevantFiles) {
+                if (-not (Test-DATFileSignature -FilePath $member.FullName -AllowedPublishers $AllowedPublishers -AllowedUntrustedRootThumbprints $AllowedUntrustedRootThumbprints -Context "$Context|Inner:$($member.Name)")) {
+                    Write-DATLogEntry -Value "[Integrity] [$Context] Archive member failed trusted-publisher validation: $($member.FullName)" -Severity 3
+                    return $false
                 }
             }
-            Write-DATLogEntry -Value "[Integrity] [$Context] No PE files inside archive are signed by a trusted publisher -- file: $FilePath" -Severity 3
-            return $false
+            Write-DATLogEntry -Value "[Integrity] [$Context] All $($securityRelevantFiles.Count) security-relevant archive members are signed by trusted publishers" -Severity 1
+            return $true
         } catch {
             Write-DATLogEntry -Value "[Integrity] [$Context] Failed to extract archive for signature check: $($_.Exception.Message) -- file: $FilePath" -Severity 3
             return $false
@@ -350,7 +499,17 @@ function Test-DATFileSignature {
         return $false
     }
 
-    if ($null -eq $sig -or $sig.Status -ne 'Valid') {
+    if ($null -eq $sig) {
+        Write-DATLogEntry -Value "[Integrity] [$Context] Authenticode signature was not returned -- file: $FilePath" -Severity 3
+        return $false
+    }
+
+    if ($sig.Status -ne 'Valid') {
+        if ($AllowedUntrustedRootThumbprints.Count -gt 0 -and
+            (Test-DATPinnedUntrustedRootSignature -FilePath $FilePath -Signature $sig -AllowedThumbprints $AllowedUntrustedRootThumbprints)) {
+            Write-DATLogEntry -Value "[Integrity] [$Context] Authenticode signature and PE digest are intact; accepted pinned untrusted-root signer '$($sig.SignerCertificate.Thumbprint)' -- file: $FilePath" -Severity 2
+            return $true
+        }
         $statusText = if ($sig) { $sig.Status } else { 'NoSignature' }
         $statusMsg  = if ($sig -and $sig.StatusMessage) { $sig.StatusMessage } else { '' }
         Write-DATLogEntry -Value "[Integrity] [$Context] Authenticode signature is not Valid (Status: $statusText) $statusMsg -- file: $FilePath" -Severity 3
@@ -4967,179 +5126,26 @@ function Get-DATAvailableUpdate {
 function Update-DATApplication {
     <#
     .SYNOPSIS
-        Downloads and applies the latest Driver Automation Tool release from GitHub.
-        Downloads the master branch ZIP, extracts it over the current install directory,
-        and relaunches the application.
+        Directs administrators to the canonical download locations for a manually reviewed update.
+    .DESCRIPTION
+        Automatic replacement is disabled because the upstream project does not publish an
+        independently signed release artifact or digest. Version checking remains available, but
+        mutable branch archives are never downloaded or installed by this function.
     #>
     [CmdletBinding()]
     param (
         [string]$InstallDirectory = $global:ScriptDirectory
     )
 
-    $downloadUrl = "https://github.com/maurice-daly/DriverAutomationTool/archive/refs/heads/master.zip"
-    $tempDir = Join-Path $env:TEMP "DATUpdate_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
-    $zipPath = Join-Path $tempDir "DriverAutomationTool.zip"
-
-    # Resilient copy -- the running application may hold a read lock on files such as
-    # Branding\DATLogo.ico (the WPF window icon). Retry briefly, then skip the locked
-    # file with a warning rather than aborting (and rolling back) the entire update.
-    # Skipped files are non-critical and refresh on the next launch (issue #819).
-    function Copy-DATUpdateFile {
-        param([string]$Source, [string]$Destination)
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
-            try {
-                Copy-Item -Path $Source -Destination $Destination -Force -ErrorAction Stop
-                return $true
-            } catch {
-                if ($attempt -lt 3) {
-                    Start-Sleep -Milliseconds 400
-                } else {
-                    Write-DATLogEntry -Value "[Update] WARNING: Could not replace locked file '$Destination' -- $($_.Exception.Message). Skipping (will refresh on next launch)." -Severity 2
-                    return $false
-                }
-            }
-        }
-    }
-
-    Write-DATLogEntry -Value "[Update] Starting self-update from GitHub..." -Severity 1
-    Write-DATLogEntry -Value "[Update] Install directory: $InstallDirectory" -Severity 1
-
-    try {
-        # Create temp directory
-        New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
-
-        # Download ZIP
-        Write-DATLogEntry -Value "[Update] Downloading release from $downloadUrl..." -Severity 1
-        $proxyParams = Get-DATWebRequestProxy
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 120 @proxyParams -ErrorAction Stop
-
-        if (-not (Test-Path $zipPath)) {
-            throw "Download failed -- ZIP file not found at $zipPath"
-        }
-        $zipSize = (Get-Item $zipPath).Length
-        Write-DATLogEntry -Value "[Update] Downloaded $([math]::Round($zipSize / 1MB, 2)) MB" -Severity 1
-
-        # Extract ZIP
-        Write-DATLogEntry -Value "[Update] Extracting update package..." -Severity 1
-        $extractPath = Join-Path $tempDir "Extracted"
-        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-
-        # The ZIP extracts to a subfolder like DriverAutomationTool-master
-        $extractedRoot = Get-ChildItem -Path $extractPath -Directory | Select-Object -First 1
-        if (-not $extractedRoot) {
-            throw "Extracted archive does not contain an expected root folder"
-        }
-
-        # The GitHub archive nests the app inside a subfolder (e.g. 'Driver Automation Tool').
-        # Detect the correct source by looking for the launcher script.
-        $sourceDir = $extractedRoot.FullName
-        $launcherName = 'Start-DriverAutomationTool.ps1'
-        if (-not (Test-Path (Join-Path $sourceDir $launcherName))) {
-            $subFolder = Get-ChildItem -Path $sourceDir -Directory | Where-Object {
-                Test-Path (Join-Path $_.FullName $launcherName)
-            } | Select-Object -First 1
-            if ($subFolder) {
-                $sourceDir = $subFolder.FullName
-                Write-DATLogEntry -Value "[Update] App files located in subfolder: $($subFolder.Name)" -Severity 1
-            } else {
-                throw "Cannot locate $launcherName in extracted archive"
-            }
-        }
-
-        # Back up Modules and UI folders as a ZIP to the install directory's Backup folder
-        $backupRoot = Join-Path $InstallDirectory 'Backup'
-        if (-not (Test-Path $backupRoot)) { New-Item -Path $backupRoot -ItemType Directory -Force | Out-Null }
-        $backupZip = Join-Path $backupRoot "DATBackup_$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
-        Write-DATLogEntry -Value "[Update] Backing up Modules and UI to $backupZip..." -Severity 1
-        $backupSources = @()
-        foreach ($folder in @('Modules', 'UI')) {
-            $src = Join-Path $InstallDirectory $folder
-            if (Test-Path $src) { $backupSources += $src }
-        }
-        Compress-Archive -Path $backupSources -DestinationPath $backupZip -Force
-
-        # Remove previous backup ZIPs (keep only the one just created)
-        $backupZipName = Split-Path -Leaf $backupZip
-        Get-ChildItem -Path $backupRoot -File -Filter 'DATBackup_*.zip' -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ne $backupZipName } |
-            ForEach-Object {
-                Write-DATLogEntry -Value "[Update] Removing previous backup: $($_.Name)" -Severity 1
-                Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
-            }
-        # Clean up any legacy uncompressed backup folders
-        Get-ChildItem -Path $backupRoot -Directory -Filter 'DATBackup_*' -ErrorAction SilentlyContinue |
-            ForEach-Object { Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
-
-        # Copy new files over existing installation (preserve user data like Settings, Logs, Temp)
-        $preserveFolders = @('Settings', 'Logs', 'Temp', 'Packages', 'Backup')
-        Write-DATLogEntry -Value "[Update] Applying update files..." -Severity 1
-        $sourceItems = Get-ChildItem -Path $sourceDir
-        foreach ($item in $sourceItems) {
-            if ($item.PSIsContainer -and $item.Name -in $preserveFolders) {
-                # Merge -- don't overwrite user data folders, but add new files
-                $destFolder = Join-Path $InstallDirectory $item.Name
-                if (-not (Test-Path $destFolder)) {
-                    Copy-Item -Path $item.FullName -Destination $destFolder -Recurse -Force
-                }
-                continue
-            }
-            $destPath = Join-Path $InstallDirectory $item.Name
-            if ($item.PSIsContainer) {
-                # For folders, copy contents file-by-file to avoid Copy-Item nesting
-                # the source folder inside the existing destination folder.
-                if (-not (Test-Path $destPath)) {
-                    New-Item -Path $destPath -ItemType Directory -Force | Out-Null
-                }
-                $sourceFiles = Get-ChildItem -Path $item.FullName -Recurse -File
-                foreach ($srcFile in $sourceFiles) {
-                    $relativePath = $srcFile.FullName.Substring($item.FullName.Length)
-                    $destFile = Join-Path $destPath $relativePath
-                    $destFileDir = Split-Path -Parent $destFile
-                    if (-not (Test-Path $destFileDir)) {
-                        New-Item -Path $destFileDir -ItemType Directory -Force | Out-Null
-                    }
-                    Copy-DATUpdateFile -Source $srcFile.FullName -Destination $destFile | Out-Null
-                }
-                Write-DATLogEntry -Value "[Update] Replaced folder: $($item.Name) ($($sourceFiles.Count) files)" -Severity 1
-            } else {
-                Copy-DATUpdateFile -Source $item.FullName -Destination $destPath | Out-Null
-                Write-DATLogEntry -Value "[Update] Replaced file: $($item.Name)" -Severity 1
-            }
-        }
-
-        Write-DATLogEntry -Value "[Update] Update applied successfully. Backup saved to $backupZip" -Severity 1
-
-        # Clean up temp download
-        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-
-        return @{
-            Success   = $true
-            BackupDir = $backupZip
-            Error     = $null
-        }
-    } catch {
-        Write-DATLogEntry -Value "[Update] Self-update failed: $($_.Exception.Message)" -Severity 3
-        # Attempt restore from backup if it exists
-        if ($backupZip -and (Test-Path $backupZip)) {
-            Write-DATLogEntry -Value "[Update] Restoring Modules and UI from backup ZIP..." -Severity 2
-            try {
-                Expand-Archive -Path $backupZip -DestinationPath $InstallDirectory -Force
-                Write-DATLogEntry -Value "[Update] Backup restored successfully" -Severity 1
-            } catch {
-                Write-DATLogEntry -Value "[Update] Backup restore also failed: $($_.Exception.Message)" -Severity 3
-            }
-        }
-        # Clean up temp
-        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-
-        return @{
-            Success   = $false
-            BackupDir = $backupZip
-            Error     = $_.Exception.Message
-        }
+    $message = 'Automatic updates are disabled because no independently verifiable signed release is available. Review and download updates manually from https://www.driverautomationtool.com or https://github.com/maurice-daly/DriverAutomationTool.'
+    Write-DATLogEntry -Value "[Update] $message" -Severity 2
+    return @{
+        Success   = $false
+        BackupDir = $null
+        Error     = $message
+        ManualUrl = 'https://github.com/maurice-daly/DriverAutomationTool'
     }
 }
-
 function Test-DATHPCMSLReady {
     <#
     .SYNOPSIS
@@ -6391,29 +6397,27 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
             $downloadedSizeMB = [math]::Round($downloadedSize / 1MB, 2)
             Write-DATLogEntry -Value "[$OEM] Download complete: $downloadedFile ($downloadedSizeMB MB)" -Severity 1
 
-            # Hash verification (if catalog provides a hash)
-            if (-not [string]::IsNullOrEmpty($catalogFileHash)) {
-                $algo = if ($catalogHashMethod -match '^(SHA256|SHA1|MD5|SHA384|SHA512)$') { $catalogHashMethod } else { 'SHA256' }
-                Write-DATLogEntry -Value "[$OEM] Verifying file hash ($algo)..." -Severity 1
-                $computedHash = (Get-FileHash -Path $downloadedFile -Algorithm $algo -ErrorAction SilentlyContinue).Hash
-                if ($computedHash -eq $catalogFileHash) {
-                    Write-DATLogEntry -Value "[$OEM] Hash verified ($algo): $computedHash" -Severity 1
+            if (-not [string]::IsNullOrEmpty($catalogFileHash) -and $catalogHashMethod -ieq 'SHA256') {
+                Write-DATLogEntry -Value "[$OEM] Verifying published SHA-256..." -Severity 1
+                $computedHash = $null
+                try { $computedHash = (Get-FileHash -Path $downloadedFile -Algorithm SHA256 -ErrorAction Stop).Hash } catch { }
+                if ($null -ne $computedHash -and $computedHash -ieq $catalogFileHash) {
+                    Write-DATLogEntry -Value "[$OEM] SHA-256 verified: $computedHash" -Severity 1
                     $downloadVerified = $true
                     break
                 } else {
-                    Write-DATLogEntry -Value "[Warning] - Hash mismatch (attempt $dlAttempt/$maxDownloadAttempts). Expected: $catalogFileHash, Got: $computedHash" -Severity 2
+                    Write-DATLogEntry -Value "[Warning] - SHA-256 verification failed (attempt $dlAttempt/$maxDownloadAttempts). Expected: $catalogFileHash, Got: $computedHash" -Severity 2
                     Remove-Item $downloadedFile -Force -ErrorAction SilentlyContinue
                     if ($dlAttempt -lt $maxDownloadAttempts) { continue }
-                    # Final attempt failed -- download anyway but warn
-                    Write-DATLogEntry -Value "[Warning] - Hash verification failed after $maxDownloadAttempts attempts. Re-downloading and proceeding without hash verification." -Severity 2
-                    Invoke-DATContentDownload -DownloadURL $downloadURL -DownloadDestination $DownloadDestination
-                    $downloadVerified = $false
-                    break
+                    throw "SHA-256 verification failed for $downloadURL after $maxDownloadAttempts attempts."
                 }
             } else {
-                Write-DATLogEntry -Value "[$OEM] No catalog hash available -- skipping hash verification" -Severity 1
-                $downloadVerified = $true
-                break
+                Write-DATLogEntry -Value "[$OEM] No published SHA-256 available -- requiring complete trusted-publisher validation." -Severity 2
+                $downloadVerified = Test-DATFileSignature -FilePath $downloadedFile -Context "$OEM driver pack"
+                if ($downloadVerified) { break }
+                Remove-Item $downloadedFile -Force -ErrorAction SilentlyContinue
+                if ($dlAttempt -lt $maxDownloadAttempts) { continue }
+                throw "Integrity verification failed for ${downloadURL}: no matching published SHA-256 and complete trusted-publisher validation failed."
             }
         } catch {
             if ($dlAttempt -lt $maxDownloadAttempts) {
@@ -6438,7 +6442,12 @@ New-HPDriverPack -Platform "$PlatformID" -Os "$HPOS" -OSVer "$WindowsBuild" -For
             if ($gfxFileSize -gt 0) {
                 $gfxFileSizeMB = [math]::Round($gfxFileSize / 1MB, 2)
                 Write-DATLogEntry -Value "[$OEM] GFX download complete: $gfxDownloadedFile ($gfxFileSizeMB MB)" -Severity 1
-                $supplementalFiles += $gfxDownloadedFile
+                if (Test-DATFileSignature -FilePath $gfxDownloadedFile -Context "$OEM supplemental $gfxBrand GFX package") {
+                    $supplementalFiles += $gfxDownloadedFile
+                } else {
+                    Remove-Item $gfxDownloadedFile -Force -ErrorAction SilentlyContinue
+                    throw "Supplemental GFX package failed complete trusted-publisher validation: $gfxDownloadURL"
+                }
             } else {
                 Write-DATLogEntry -Value "[Warning] - GFX download is empty (0 bytes): $gfxDownloadedFile" -Severity 2
                 Remove-Item $gfxDownloadedFile -Force -ErrorAction SilentlyContinue
@@ -11199,7 +11208,7 @@ function Find-DATBiosPackage {
 
         # FileName must match what Invoke-DATContentDownload saves (query string stripped)
         $fileName = ($biosUrl -split '\?')[0] | Split-Path -Leaf
-        Write-DATLogEntry -Value "[BIOS] Matched Acer: $($matched.name) -- BIOS Version $biosVersion" -Severity 1
+        Write-DATLogEntry -Value "[BIOS] Matched Acer: $($matched.name) -- BIOS Version $biosVersion. The XML catalog has no trusted SHA-256; the pinned download must pass Acer Authenticode validation." -Severity 1
 
         return [PSCustomObject]@{
             DisplayName      = "Acer $($matched.name) BIOS"
@@ -11387,8 +11396,8 @@ function Start-DATBiosDownload {
     .PARAMETER DownloadDestination
         Directory to store the downloaded file.
     .PARAMETER OEM
-        The OEM manufacturer name. Used to skip Authenticode checks for vendors
-        whose downloads use inconsistent or non-standard signing (e.g. Acer).
+        The OEM manufacturer name. Acer downloads are restricted to the pinned Acer CDN and
+        require either a published SHA-256 or Authenticode signed by an established Acer publisher.
     #>
     [CmdletBinding()]
     param (
@@ -11397,6 +11406,13 @@ function Start-DATBiosDownload {
         [string]$OEM
     )
 
+    if ($OEM -eq 'Acer') {
+        if (-not (Test-DATAcerDownloadUri -Uri "$($BiosEntry.DownloadURL)")) {
+            Write-DATLogEntry -Value "[BIOS] Rejected Acer BIOS URL outside the pinned OEM host: $($BiosEntry.DownloadURL)" -Severity 3
+            return $null
+        }
+    }
+
     if (-not (Test-Path $DownloadDestination)) {
         New-Item -Path $DownloadDestination -ItemType Directory -Force | Out-Null
     }
@@ -11404,17 +11420,20 @@ function Start-DATBiosDownload {
     $destFile = Join-Path $DownloadDestination $BiosEntry.FileName
 
     $sigContext = "BIOS:$($BiosEntry.DisplayName)"
+    $hasStrongHash = $BiosEntry.HashMethod -ieq 'SHA256' -and "$($BiosEntry.FileHash)" -match '^[0-9A-Fa-f]{64}$'
+    $signatureParams = @{
+        Context = $sigContext
+    }
+    if ($OEM -eq 'Acer') {
+        $signatureParams['AllowedPublishers'] = @('Acer Incorporated', 'Acer Inc*')
+        $signatureParams['AllowedUntrustedRootThumbprints'] = $script:DATAcerUntrustedRootSignerThumbprints
+    }
 
     # Check if already downloaded -- gate the cache with the same integrity policy applied
     # to fresh downloads so a tampered cached file cannot be reused on a subsequent run.
     if (Test-Path $destFile) {
-        if (-not [string]::IsNullOrEmpty($BiosEntry.FileHash) -and -not [string]::IsNullOrEmpty($BiosEntry.HashMethod)) {
-            $algo = switch ($BiosEntry.HashMethod) {
-                'SHA256' { 'SHA256' }
-                'MD5'    { 'MD5' }
-                default  { 'SHA256' }
-            }
-            $existingHash = (Get-FileHash -Path $destFile -Algorithm $algo -ErrorAction SilentlyContinue).Hash
+        if ($hasStrongHash) {
+            $existingHash = (Get-FileHash -Path $destFile -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
             if ($existingHash -eq $BiosEntry.FileHash) {
                 Write-DATLogEntry -Value "[BIOS] File already cached with valid hash: $destFile" -Severity 1
                 return $destFile
@@ -11423,12 +11442,8 @@ function Start-DATBiosDownload {
                 Remove-Item $destFile -Force -ErrorAction SilentlyContinue
             }
         } else {
-            # No published hash -- fall back to Authenticode allow-list. Fail closed.
-            # Skip for Acer: their downloads use inconsistent signers that cannot be reliably validated.
-            if ($OEM -eq 'Acer') {
-                Write-DATLogEntry -Value "[BIOS] File already cached (Acer -- Authenticode check skipped): $destFile" -Severity 1
-                return $destFile
-            } elseif (Test-DATFileSignature -FilePath $destFile -Context $sigContext) {
+            # No published SHA-256 -- fall back to Authenticode allow-list. Fail closed.
+            if (Test-DATFileSignature -FilePath $destFile @signatureParams) {
                 Write-DATLogEntry -Value "[BIOS] File already cached and Authenticode-verified: $destFile" -Severity 1
                 return $destFile
             } else {
@@ -11444,7 +11459,12 @@ function Start-DATBiosDownload {
 
     # Use Invoke-DATContentDownload (existing Curl/HttpClient download with progress tracking)
     try {
-        Invoke-DATContentDownload -DownloadURL $BiosEntry.DownloadURL -DownloadDestination $DownloadDestination
+        if ($OEM -eq 'Acer') {
+            $proxyParams = Get-DATWebRequestProxy
+            Invoke-WebRequest -Uri $BiosEntry.DownloadURL -OutFile $destFile -UseBasicParsing -TimeoutSec 120 -MaximumRedirection 0 -ErrorAction Stop @proxyParams
+        } else {
+            Invoke-DATContentDownload -DownloadURL $BiosEntry.DownloadURL -DownloadDestination $DownloadDestination
+        }
     } catch {
         Write-DATLogEntry -Value "[BIOS] Download failed: $($_.Exception.Message)" -Severity 3
         return $null
@@ -11458,36 +11478,26 @@ function Start-DATBiosDownload {
     $fileSizeMB = [math]::Round((Get-Item $destFile).Length / 1MB, 2)
     Write-DATLogEntry -Value "[BIOS] Download complete: $destFile ($fileSizeMB MB)" -Severity 1
 
-    # Integrity verification -- prefer published hash, fall back to Authenticode allow-list.
-    # This branch ALWAYS runs and is fail-closed: if neither a hash match nor a trusted
-    # signature can be confirmed, the file is deleted and $null is returned. This closes
-    # the catalog-poisoning / TLS-MITM path for vendors that do not publish per-file hashes
-    # (e.g. Acer, where the catalog FileHash is intentionally null).
-    if (-not [string]::IsNullOrEmpty($BiosEntry.FileHash) -and -not [string]::IsNullOrEmpty($BiosEntry.HashMethod)) {
-        $algo = switch ($BiosEntry.HashMethod) {
-            'SHA256' { 'SHA256' }
-            'MD5'    { 'MD5' }
-            default  { 'SHA256' }
-        }
-        $downloadedHash = (Get-FileHash -Path $destFile -Algorithm $algo -ErrorAction SilentlyContinue).Hash
+    # Integrity verification is fail-closed: a published SHA-256 must match, or the publisher
+    # signature must be trusted. Acer signature fallback is additionally restricted to its
+    # pinned HTTPS host above and either an explicit Acer publisher identity or the exact
+    # legacy certificate pin, which is accepted only for an intact PE with an untrusted root.
+    if ($hasStrongHash) {
+        $downloadedHash = (Get-FileHash -Path $destFile -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
         if ($downloadedHash -eq $BiosEntry.FileHash) {
-            Write-DATLogEntry -Value "[BIOS] Hash verified ($algo): $downloadedHash" -Severity 1
+            Write-DATLogEntry -Value "[BIOS] Hash verified (SHA256): $downloadedHash" -Severity 1
         } else {
             Write-DATLogEntry -Value "[BIOS] Hash mismatch! Expected: $($BiosEntry.FileHash), Got: $downloadedHash" -Severity 3
             Remove-Item $destFile -Force -ErrorAction SilentlyContinue
             return $null
         }
     } else {
-        # Skip Authenticode for Acer -- their downloads use inconsistent signers
-        if ($OEM -eq 'Acer') {
-            Write-DATLogEntry -Value "[BIOS] No published hash -- Acer OEM detected, Authenticode check skipped (HTTPS transport integrity only)" -Severity 2
-        } else {
-            Write-DATLogEntry -Value "[BIOS] No published hash -- verifying Authenticode signer against trusted publisher allow-list" -Severity 1
-            if (-not (Test-DATFileSignature -FilePath $destFile -Context $sigContext)) {
-                Write-DATLogEntry -Value "[BIOS] Integrity check FAILED -- discarding downloaded file" -Severity 3
-                Remove-Item $destFile -Force -ErrorAction SilentlyContinue
-                return $null
-            }
+        Write-DATLogEntry -Value "[BIOS] No published SHA-256 -- verifying Authenticode signer against the trusted publisher allow-list" -Severity 1
+        if (-not (Test-DATFileSignature -FilePath $destFile @signatureParams)) {
+            $requiredTrust = if ($OEM -eq 'Acer') { 'the pinned Acer HTTPS host and either a trusted Acer signer or the exact legacy certificate pin with an intact Authenticode digest' } else { 'a trusted OEM Authenticode signer' }
+            Write-DATLogEntry -Value "[BIOS] Integrity check FAILED -- no trusted SHA-256 and the payload did not validate with $requiredTrust. Discarding downloaded file." -Severity 3
+            Remove-Item $destFile -Force -ErrorAction SilentlyContinue
+            return $null
         }
     }
 
@@ -11782,6 +11792,18 @@ function Invoke-DATBiosPackaging {
             Write-DATLogEntry -Value "[Warning] Flash64W.exe could not be obtained -- Dell BIOS package may not work in WinPE" -Severity 2
         }
     }
+
+    $biosIntegrityManifest = Join-Path $extractDir 'DAT-BIOS-SHA256.txt'
+    $manifestLines = @(Get-ChildItem -Path $extractDir -Recurse -File -ErrorAction Stop |
+        Where-Object { $_.FullName -ne $biosIntegrityManifest } |
+        Sort-Object FullName |
+        ForEach-Object {
+            $relativePath = $_.FullName.Substring($extractDir.Length).TrimStart('\')
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
+            "$hash`t$relativePath"
+        })
+    if ($manifestLines.Count -eq 0) { throw "BIOS integrity manifest would be empty for $OEM $Model" }
+    [System.IO.File]::WriteAllLines($biosIntegrityManifest, $manifestLines, [System.Text.Encoding]::ASCII)
 
     if ($SkipWim) {
         # ConfigMgr: return the temp extraction directory so New-DATConfigMgrPkg can
