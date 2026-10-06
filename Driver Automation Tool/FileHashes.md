@@ -11,7 +11,7 @@ same bytes — and therefore the same SHA256 values — on every platform regard
 | | |
 |---|---|
 | Version | `10.3.0.0` |
-| Generated (UTC) | 2026-10-06 13:37:50 |
+| Generated (UTC) | 2026-10-06 21:58:03 |
 | Files | 16 |
 | Algorithm | SHA256 |
 
@@ -27,11 +27,11 @@ same bytes — and therefore the same SHA256 values — on every platform regard
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
 | DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.1 | `10A307FF32668FE3B027940D9F9319D6B83D640B26A05DBAADCAA81B9BD7F94C` |
-| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1400.5 | `A581CA43AD0C73DF1724AF06F8D677CC756184D3BAD043E34F6385FE9A48EFDD` |
+| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1396.2 | `5481CF8BFEB36EB2E58101AE818DD6E0F359E4D1711865131F9032530837FBB9` |
 | Deploy-BIOSPassword-Detection.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Detection.ps1` | 1.7 | `7A7DCE6AD49DE2634FB5014D2E02594E36A5A212FA0BF3C21C3E6C5ACC64B235` |
 | Deploy-BIOSPassword-Remediation.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Remediation.ps1` | 2.9 | `DA0A9097595C3D10B0E5C13CA7B1E73B8026A5F7F627E90A28844F4512F962E7` |
 | Import-CMOfflinePackages.ps1 | `Modules/DriverAutomationToolCore/Templates/Import-CMOfflinePackages.ps1` | 9.9 | `E6DB9F4D3873152AFCA5DC897541E2E5BCB58039AE0AC04B3B9BB5894A5FE15A` |
-| Install-BIOS.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-BIOS.ps1` | 86.4 | `6389A5725068F02C4CF9AE1EB1CE9625AD54F28054381B342B82EAAA356AF0B3` |
+| Install-BIOS.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-BIOS.ps1` | 88.6 | `1255E304AAA94A6C0E97DEF0967E445B60393CED7974C6BEBB5B6FCA17D0088A` |
 | Install-Drivers.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-Drivers.ps1` | 67.5 | `109F75DA03B2E74CAD82411C17CED5ED32BCE1A418E29F2EA096753279AA69C3` |
 | Invoke-DATToastTest.ps1 | `Modules/DriverAutomationToolCore/Templates/Invoke-DATToastTest.ps1` | 29.5 | `83B9BE4AC6001CD16B3C8E01910372D981E259D7499FE37038A176F9C5406DF5` |
 | Test-DATMaintenanceWindow.ps1 | `Modules/DriverAutomationToolCore/Templates/Test-DATMaintenanceWindow.ps1` | 6.9 | `1E45CC1E002C8399C95C1E6244D6610094156F35BC200CB187401B1F2CDE00E0` |
@@ -40,7 +40,7 @@ same bytes — and therefore the same SHA256 values — on every platform regard
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| MainApplication.ps1 | `UI/MainApplication.ps1` | 1636.9 | `DEA7AD5E854896806DB9F1E03D39B6837FC929DCA4ECDBA8215546716511E519` |
+| MainApplication.ps1 | `UI/MainApplication.ps1` | 1622.9 | `FB1D85DDCFCFA560CF8E266F65D4CAA2F97294238EB9F28E4603F00D6774E207` |
 | ThemeDefinitions.ps1 | `UI/Themes/ThemeDefinitions.ps1` | 8.4 | `E88673F82B2D8209E0C2744BC0FF044AEE4D4EDD44ADDFD7406E0F0358E4DCC6` |
 
 ## Deployment Scripts

@@ -429,6 +429,34 @@ try {
     $extractedFiles = (Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction SilentlyContinue).Count
     Write-CMTraceLog "WIM extraction complete. Files extracted: $extractedFiles"
 
+    $integrityManifest = Join-Path $ExtractPath 'DAT-BIOS-SHA256.txt'
+    if (-not (Test-Path -LiteralPath $integrityManifest -PathType Leaf)) {
+        throw "BIOS payload integrity manifest is missing"
+    }
+    $verifiedPayloadPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in Get-Content -LiteralPath $integrityManifest -ErrorAction Stop) {
+        if ($line -notmatch '^([0-9A-Fa-f]{64})\t(.+)$') { throw "BIOS payload integrity manifest contains an invalid entry" }
+        $expectedHash = $Matches[1]
+        $relativePath = $Matches[2]
+        if ([System.IO.Path]::IsPathRooted($relativePath) -or $relativePath -match '(^|[\\/])\.\.([\\/]|$)') {
+            throw "BIOS payload integrity manifest contains an unsafe path: $relativePath"
+        }
+        $payloadPath = [System.IO.Path]::GetFullPath((Join-Path $ExtractPath $relativePath))
+        $extractRoot = [System.IO.Path]::GetFullPath($ExtractPath).TrimEnd('\') + '\'
+        if (-not $payloadPath.StartsWith($extractRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "BIOS payload integrity manifest path escapes the extraction root: $relativePath"
+        }
+        if (-not (Test-Path -LiteralPath $payloadPath -PathType Leaf)) { throw "BIOS payload member is missing: $relativePath" }
+        $actualHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256 -ErrorAction Stop).Hash
+        if ($actualHash -ine $expectedHash) { throw "BIOS payload hash mismatch: $relativePath" }
+        [void]$verifiedPayloadPaths.Add($payloadPath)
+    }
+    $unexpectedPayload = @(Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction Stop |
+        Where-Object { $_.FullName -ne $integrityManifest -and -not $verifiedPayloadPaths.Contains($_.FullName) })
+    if ($unexpectedPayload.Count -gt 0) { throw "BIOS payload contains unverified files: $($unexpectedPayload.Name -join ', ')" }
+    if ($verifiedPayloadPaths.Count -eq 0) { throw "BIOS payload integrity manifest contains no files" }
+    Write-CMTraceLog "BIOS payload integrity verified: $($verifiedPayloadPaths.Count) file(s)"
+
     # -- Suspend BitLocker -------------------------------------------------------
     $script:BitLockerSuspended = $false
     $script:FlashSucceeded = $false
