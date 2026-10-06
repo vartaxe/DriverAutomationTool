@@ -4,6 +4,12 @@
 
 <h1 align="center">Driver Automation Tool</h1>
 
+> **Fork notice:** This repository is a maintained fork of
+> [Maurice Daly's Driver Automation Tool](https://github.com/maurice-daly/DriverAutomationTool).
+> The original project, authorship, license, website, and product identity remain attributed to
+> the upstream project. Fork-specific maintenance changes are recorded in this repository's pull
+> request history.
+
 <p align="center">
   Enterprise-grade automation for downloading, extracting, and packaging OEM driver and BIOS update packages for ConfigMgr and Intune.
   <br /><br />
@@ -15,7 +21,7 @@
 ---
 
 ## Important
-**August 17th 2026** - Due to a number of functional changes, it is recommened that anyone running DAT builds 10.1.9.0 and lower, upgrade immediately. The API will no longer serve requests for older verisons.
+**August 17th 2026** - Due to a number of functional changes, it is recommended that anyone running DAT builds 10.1.9.0 and lower upgrade immediately. The API will no longer serve requests for older versions.
 
 ## Overview
 
@@ -57,7 +63,11 @@ The Driver Automation Tool is a PowerShell WPF desktop application that automate
 
 ### 1. Download
 
-Download the latest release from this repository. The tool is a portable PowerShell application with no installer required.
+Download the latest source from the
+[official upstream repository](https://github.com/maurice-daly/DriverAutomationTool/archive/refs/heads/master.zip)
+or follow the [official project website](https://www.driverautomationtool.com). The tool is a
+portable PowerShell application with no installer required. This maintenance fork does not publish
+independent GitHub Releases.
 
 <p align="center">
   <img src="Content/Screenshots/GitHubDownload.png" alt="GitHub Download" width="700" />
@@ -312,4 +322,3 @@ If you find this tool useful and would like to support its continued development
 ## Virus Warning
 
 Due to the nature of how the PowerShell script downloads EXEs and extracts / interacts with them, the code can be picked up as a false positive on some AV solutions. The code is all available for clear text review with your security team in this instance. 
-
