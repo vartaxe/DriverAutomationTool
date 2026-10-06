@@ -1,0 +1,99 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-and-integrity:
+    name: PowerShell and integrity validation
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        # actions/checkout v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 2
+
+      - name: Check whitespace errors
+        shell: powershell
+        run: git diff --check HEAD^ HEAD
+
+      - name: Parse PowerShell and XAML
+        shell: powershell
+        run: |
+          $parseFailures = [System.Collections.Generic.List[string]]::new()
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -File -Include '*.ps1', '*.psm1', '*.psd1' |
+            ForEach-Object {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                $_.FullName,
+                [ref]$tokens,
+                [ref]$errors
+              ) | Out-Null
+              if ($errors.Count -gt 0) {
+                $parseFailures.Add("$($_.FullName): $($errors[0].Message)")
+              }
+            }
+
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -File -Filter '*.xaml' |
+            ForEach-Object {
+              try {
+                [xml](Get-Content -LiteralPath $_.FullName -Raw -ErrorAction Stop) | Out-Null
+              }
+              catch {
+                $parseFailures.Add("$($_.FullName): $($_.Exception.Message)")
+              }
+            }
+
+          if ($parseFailures.Count -gt 0) {
+            $parseFailures | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
+      - name: Verify file hash manifest
+        shell: powershell
+        run: |
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE 'Driver Automation Tool\FileHashes.md'
+          $entries = foreach ($line in Get-Content -LiteralPath $manifestPath) {
+            if ($line -match '^\|\s+[^|]+\s+\|\s+`(?<path>[^`]+)`\s+\|\s+(?<size>[0-9.]+)\s+\|\s+`(?<hash>[0-9A-Fa-f]{64})`\s+\|$') {
+              [pscustomobject]@{
+                Path = $Matches.path
+                Size = [double]$Matches.size
+                Hash = $Matches.hash
+              }
+            }
+          }
+
+          if ($entries.Count -ne 16) {
+            throw "Expected 16 manifest entries, found $($entries.Count)."
+          }
+
+          $failures = [System.Collections.Generic.List[string]]::new()
+          foreach ($entry in $entries) {
+            $path = Join-Path $env:GITHUB_WORKSPACE ('Driver Automation Tool\' + $entry.Path.Replace('/', '\'))
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              $failures.Add("$($entry.Path): file not found")
+              continue
+            }
+
+            $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            $actualSize = [math]::Round((Get-Item -LiteralPath $path).Length / 1KB, 1)
+            if ($actualHash -cne $entry.Hash -or $actualSize -ne $entry.Size) {
+              $failures.Add("$($entry.Path): expected $($entry.Hash), $($entry.Size) KB; found $actualHash, $actualSize KB")
+            }
+          }
+
+          if ($failures.Count -gt 0) {
+            $failures | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
