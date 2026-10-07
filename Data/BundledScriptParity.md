@@ -18,5 +18,8 @@ cleanup, CIM, TLS, and BitLocker changes.
 Until each upstream change has a reviewed DAT integration, parity is defined by
 the structural regression test in `Tests/Test-BundledScriptParity.ps1`, not by
 line count or an exact hash. That test protects the shared XML/AdminService
-surface and the DAT certificate-pinning boundary. Any future port must update
-this contract and preserve those DAT-specific controls.
+surface, the DAT certificate-pinning boundary, and Getac manufacturer
+normalization for administrator-created or imported matching driver packages.
+Getac recognition does not represent automated catalog acquisition or BIOS
+firmware support. Any future port must update this contract and preserve those
+DAT-specific controls.
