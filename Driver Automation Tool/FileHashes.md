@@ -11,7 +11,7 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 | | |
 |---|---|
 | Version | `10.3.0.0` |
-| Generated (UTC) | 2026-10-06 21:58:03 |
+| Generated (UTC) | 2026-10-07 15:47:13 |
 | Files | 16 |
 | Algorithm | SHA256 |
 
@@ -47,8 +47,8 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| Invoke-CMApplyDriverPackage.ps1 | `Scripts/Invoke-CMApplyDriverPackage.ps1` | 160.1 | `BC3782FA1C3F35B3CABD626B47AFEB570E070CA9CD8B22C4CD26450CC8A569DC` |
-| Invoke-CMDownloadBIOSPackage.ps1 | `Scripts/Invoke-CMDownloadBIOSPackage.ps1` | 101.3 | `91F63D156110266BED3F3A7BF521D6CB5BC4B2856EA9128C31B79A00E2165FB2` |
+| Invoke-CMApplyDriverPackage.ps1 | `Scripts/Invoke-CMApplyDriverPackage.ps1` | 160.9 | `1F744838C2DF31320091CADC6FFB9A98457113E8476E155384C6AA840A08588E` |
+| Invoke-CMDownloadBIOSPackage.ps1 | `Scripts/Invoke-CMDownloadBIOSPackage.ps1` | 102.1 | `2722A6830DBF397B1E90D010368264B88F1E2CF93A54727E1B208D299D916FA0` |
 | Remove-DATStaleBIOSMarkers.ps1 | `Scripts/Remove-DATStaleBIOSMarkers.ps1` | 5.2 | `0D2CD832AE710A421E3790D5366D5F6C630418E9E96ED0E35FBA227F59AF0F60` |
 
 ---

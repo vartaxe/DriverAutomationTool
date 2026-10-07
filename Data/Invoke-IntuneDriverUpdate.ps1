@@ -1125,6 +1125,34 @@ function InitiateDownloads {
 	}
 }
 
+function Invoke-DATPnPUtil {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$InfPath,
+		[Parameter(Mandatory = $true)]
+		[string]$LogPath,
+		[scriptblock]$ProcessInvoker
+	)
+
+	if ($null -eq $ProcessInvoker) {
+		$ProcessInvoker = {
+			param($Executable, $Arguments)
+			$Output = @(& $Executable @Arguments 2>&1)
+			[pscustomobject]@{
+				ExitCode = $LASTEXITCODE
+				Output = $Output
+			}
+		}
+	}
+
+	$PnPUtilPath = Join-Path $env:SystemRoot "System32\pnputil.exe"
+	$Result = & $ProcessInvoker $PnPUtilPath @("/add-driver", $InfPath, "/install")
+	@($Result.Output) | Out-File -FilePath $LogPath -Append
+	if ($Result.ExitCode -ne 0) {
+		throw "PnPUtil failed for '$InfPath' with exit code $($Result.ExitCode)."
+	}
+}
+
 function Update-Drivers {
 	$DriverPackagePath = Join-Path $TempDirectory "\Driver Files" 
 	Write-CMLogEntry -Value "Starting driver installation process" -Severity 1
@@ -1132,9 +1160,11 @@ function Update-Drivers {
 	# Apply driver maintenance package
 	try {
 		if ((Get-ChildItem -Path $DriverPackagePath -Filter *.inf -Recurse).count -gt 0) {
+			$PnPUtilLogPath = Join-Path -Path $LogDirectory -ChildPath Run-IntuneDriverUpdate.log
+			Set-Content -LiteralPath $PnPUtilLogPath -Value $null
 			Get-ChildItem -Path $DriverPackagePath -Filter *.inf -Recurse | ForEach-Object {
-				pnputil /add-driver $_.FullName /install
-			} | Out-File -FilePath (Join-Path -Path $LogDirectory -ChildPath Run-IntuneDriverUpdate.log) -Force
+				Invoke-DATPnPUtil -InfPath $_.FullName -LogPath $PnPUtilLogPath
+			}
 			Write-CMLogEntry -Value "Driver installation complete. Restart required" -Severity 1; exit 0
 		}
 		else {

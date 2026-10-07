@@ -30,6 +30,8 @@ foreach ($script in @(@($driver, 'driver'), @($bios, 'BIOS'))) {
     Assert-Parity ($script[0] -match 'XMLPackage') "$($script[1]) script retains XMLPackage deployment support"
     Assert-Parity ($script[0] -match 'AdminService') "$($script[1]) script retains AdminService deployment support"
     Assert-Parity ($script[0] -match 'DATPinnedCertificateValidation') "$($script[1]) script retains DAT certificate pinning"
+    Assert-Parity ($script[0] -match 'errors != SslPolicyErrors\.RemoteCertificateChainErrors') "$($script[1]) pinning never overrides host-name or missing-certificate errors"
+    Assert-Parity ($script[0] -match 'Reset-PinnedCertificateValidationCallback') "$($script[1]) script restores the process-wide certificate callback"
 }
 
 Assert-Parity ($contract -match '87c57414428856159cbc599b4f2e9d1d1b62ede7') 'driver baseline is pinned'

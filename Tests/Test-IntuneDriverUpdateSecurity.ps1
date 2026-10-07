@@ -74,7 +74,8 @@ foreach ($functionName in @(
     'Test-DATFileIntegrity',
     'Assert-DATVendorPayload',
     'Get-DATCatalogSha256',
-    'Stop-DATMicrosoftLegacyCatalog'
+    'Stop-DATMicrosoftLegacyCatalog',
+    'Invoke-DATPnPUtil'
 )) {
     Invoke-Expression (Get-FunctionDefinition -Path $scriptPath -Name $functionName)
 }
@@ -232,6 +233,28 @@ Assert-True -Condition (-not ($scriptContent -match '\b(Start-BitsTransfer|Start
     -Description 'BITS and background-job download paths are absent'
 Assert-True -Condition ($scriptContent.Contains('Revalidating cached')) `
     -Description 'the cached payload path explicitly revalidates before use'
+
+$pnpRoot = Join-Path ([System.IO.Path]::GetTempPath()) "DATPnPUtil_$([guid]::NewGuid().ToString('N'))"
+New-Item -Path $pnpRoot -ItemType Directory -Force | Out-Null
+try {
+    $pnpLog = Join-Path $pnpRoot 'pnputil.log'
+    Invoke-DATPnPUtil -InfPath 'C:\Drivers\good.inf' -LogPath $pnpLog `
+        -ProcessInvoker {
+            [pscustomobject]@{ ExitCode = 0; Output = @('Driver package added successfully.') }
+        }
+    Assert-True -Condition ((Get-Content -LiteralPath $pnpLog -Raw) -match 'added successfully') `
+        -Description 'PnPUtil success output is retained'
+    Assert-Throws -Action {
+        Invoke-DATPnPUtil -InfPath 'C:\Drivers\bad.inf' -LogPath $pnpLog `
+            -ProcessInvoker {
+                [pscustomobject]@{ ExitCode = 5; Output = @('Access is denied.') }
+            }
+    } -Description 'PnPUtil nonzero exit codes fail driver installation' `
+        -MessagePattern 'exit code 5'
+}
+finally {
+    Remove-Item -LiteralPath $pnpRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 $tokens = $null
 $parseErrors = $null
