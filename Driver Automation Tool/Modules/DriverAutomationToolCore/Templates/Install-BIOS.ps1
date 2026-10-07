@@ -570,33 +570,41 @@ function Get-LenovoSystemFirmwareVersion {
         DWORD under HKLM:\SYSTEM\CurrentControlSet\Control\FirmwareResources\{GUID}\Version.
 
         The high-word/low-word split is Lenovo's convention (other OEMs pack the same DWORD
-        differently), so this is only ever called from the Lenovo comparison. Returns an empty
-        string when the system firmware resource cannot be identified -- a device with no ESRT, or
-        several firmware resources with nothing to distinguish them -- leaving the caller to fall
-        back rather than compare against another component's firmware.
+        differently), so this is only ever called from the Lenovo comparison. The system-firmware
+        compatible ID is locale-independent; friendly names such as "System Firmware" are localized,
+        and a lone ESRT resource can instead represent device firmware such as TrackPoint firmware.
+        Returns an empty string unless exactly one system-firmware device and a valid Lenovo version
+        can be identified, leaving the caller to fall back rather than compare another component.
     #>
 
     try {
-        $resourceRoot = 'HKLM:\SYSTEM\CurrentControlSet\Control\FirmwareResources'
-        if (-not (Test-Path $resourceRoot)) { return '' }
-        $resources = @(Get-ChildItem -Path $resourceRoot -ErrorAction Stop)
-        if ($resources.Count -eq 0) { return '' }
+        $systemFirmwareDevices = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPClass='Firmware'" -ErrorAction Stop |
+            Where-Object {
+                @($_.CompatibleID) | Where-Object { $_ -ieq 'UEFI\CC_00010001' }
+            })
+        if ($systemFirmwareDevices.Count -ne 1) { return '' }
 
-        if ($resources.Count -gt 1) {
-            # Device firmware, retimers and NVMe firmware all appear alongside the system
-            # firmware, so identify the right GUID from its PnP entity before reading a version.
-            $systemFirmwareGuids = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPClass='Firmware'" -ErrorAction Stop |
-                Where-Object { $_.Name -like 'System Firmware*' } |
-                ForEach-Object { if ($_.DeviceID -match '(\{[0-9A-Fa-f\-]{36}\})') { $Matches[1] } })
-            if ($systemFirmwareGuids.Count -eq 0) { return '' }
-            $resources = @($resources | Where-Object { $systemFirmwareGuids -contains $_.PSChildName })
-            if ($resources.Count -ne 1) { return '' }
+        $systemFirmwareDevice = $systemFirmwareDevices[0]
+        [Nullable[uint32]]$rawVersion = $null
+        foreach ($hardwareId in @($systemFirmwareDevice.HardwareID)) {
+            if ([string]$hardwareId -match '(?i)&REV_([0-9A-F]{1,8})$') {
+                $rawVersion = [Convert]::ToUInt32($Matches[1], 16)
+                break
+            }
         }
 
-        $raw = (Get-ItemProperty -Path $resources[0].PSPath -Name 'Version' -ErrorAction SilentlyContinue).Version
-        if ($null -eq $raw) { return '' }
-        $value = [uint32]$raw
-        return "$([int]($value -shr 16)).$([int]($value -band 0xFFFF))"
+        if ($null -eq $rawVersion -and [string]$systemFirmwareDevice.DeviceID -match '(?i)^UEFI\\RES_(\{[0-9A-F-]{36}\})\\') {
+            $resourcePath = Join-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FirmwareResources' $Matches[1]
+            if (Test-Path $resourcePath) {
+                $rawVersion = [uint32](Get-ItemProperty -Path $resourcePath -Name 'Version' -ErrorAction Stop).Version
+            }
+        }
+
+        if ($null -eq $rawVersion) { return '' }
+        $major = [int]([uint32]$rawVersion -shr 16)
+        $minor = [int]([uint32]$rawVersion -band 0xFFFF)
+        if ($major -lt 1 -or $minor -gt 0xFF) { return '' }
+        return "$major.$minor"
     } catch {
         return ''
     }

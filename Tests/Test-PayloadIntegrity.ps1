@@ -268,4 +268,87 @@ Assert-Contains -Content $currentBiosTemplate `
 Assert-NotContains -Content $hotFixBiosTemplate -Unexpected '$looseContent' `
     -Description 'HotFix BIOS template has no loose-payload path requiring the exclusion'
 
+$currentBiosTemplatePath = Join-Path $repoRoot 'Driver Automation Tool\Modules\DriverAutomationToolCore\Templates\Install-BIOS.ps1'
+$currentBiosTemplateAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $currentBiosTemplatePath,
+    [ref]$null,
+    [ref]$null
+)
+$lenovoFirmwareFunction = $currentBiosTemplateAst.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-LenovoSystemFirmwareVersion'
+    },
+    $true
+)
+Assert-True -Condition ($null -ne $lenovoFirmwareFunction) `
+    -Description 'current BIOS template exposes Lenovo ESRT version detection'
+
+Invoke-Expression $lenovoFirmwareFunction.Extent.Text
+$script:MockFirmwareDevices = @()
+$script:MockRegistryVersion = $null
+
+function Get-CimInstance {
+    @($script:MockFirmwareDevices)
+}
+
+function Test-Path {
+    param([string]$Path)
+    return $null -ne $script:MockRegistryVersion
+}
+
+function Get-ItemProperty {
+    param([string]$Path, [string]$Name)
+    [pscustomobject]@{ Version = $script:MockRegistryVersion }
+}
+
+try {
+    $script:MockFirmwareDevices = @(
+        [pscustomobject]@{
+            Name = 'Lenovo TrackPoint Firmware'
+            CompatibleID = @('UEFI\CC_00010002')
+            HardwareID = @('UEFI\RES_{11111111-1111-1111-1111-111111111111}&REV_43D518')
+            DeviceID = 'UEFI\RES_{11111111-1111-1111-1111-111111111111}\0'
+        },
+        [pscustomobject]@{
+            Name = 'Systemfirmware'
+            CompatibleID = @('UEFI\CC_00010001')
+            HardwareID = @('UEFI\RES_{22222222-2222-2222-2222-222222222222}&REV_10012')
+            DeviceID = 'UEFI\RES_{22222222-2222-2222-2222-222222222222}\0'
+        }
+    )
+    Assert-Equal -Actual (Get-LenovoSystemFirmwareVersion) -Expected '1.18' `
+        -Description 'Lenovo ESRT detection selects system firmware independently of locale and device order'
+
+    $script:MockFirmwareDevices = @($script:MockFirmwareDevices[0])
+    Assert-Equal -Actual (Get-LenovoSystemFirmwareVersion) -Expected '' `
+        -Description 'Lenovo ESRT detection rejects a lone TrackPoint firmware resource'
+
+    $script:MockFirmwareDevices = @(
+        [pscustomobject]@{
+            Name = 'System Firmware'
+            CompatibleID = @('UEFI\CC_00010001')
+            HardwareID = @('UEFI\RES_{33333333-3333-3333-3333-333333333333}')
+            DeviceID = 'UEFI\RES_{33333333-3333-3333-3333-333333333333}\0'
+        }
+    )
+    $script:MockRegistryVersion = [uint32]0x00010013
+    Assert-Equal -Actual (Get-LenovoSystemFirmwareVersion) -Expected '1.19' `
+        -Description 'Lenovo ESRT detection falls back to the matching registry resource'
+
+    $script:MockRegistryVersion = $null
+    $script:MockFirmwareDevices[0].HardwareID = @('UEFI\RES_{33333333-3333-3333-3333-333333333333}&REV_43D518')
+    Assert-Equal -Actual (Get-LenovoSystemFirmwareVersion) -Expected '' `
+        -Description 'Lenovo ESRT detection rejects values outside Lenovo version bounds'
+
+    $script:MockFirmwareDevices = @($script:MockFirmwareDevices[0], $script:MockFirmwareDevices[0])
+    Assert-Equal -Actual (Get-LenovoSystemFirmwareVersion) -Expected '' `
+        -Description 'Lenovo ESRT detection rejects ambiguous system-firmware resources'
+} finally {
+    Remove-Item Function:\Get-CimInstance -ErrorAction SilentlyContinue
+    Remove-Item Function:\Test-Path -ErrorAction SilentlyContinue
+    Remove-Item Function:\Get-ItemProperty -ErrorAction SilentlyContinue
+}
+
 Write-Host 'Payload integrity harness completed successfully.'
