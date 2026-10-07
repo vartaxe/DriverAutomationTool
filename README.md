@@ -49,6 +49,13 @@ package creation and installation is currently validated only for Dell, HP, and 
 Microsoft Surface firmware is delivered through driver packages; BIOS packages for Acer,
 Panasonic, Fujitsu, and ASUS are not generated.
 
+Getac is not an automated catalog provider in this project. The bundled apply script
+recognizes Getac hardware, so administrators can use the **Custom Driver Pack** workflow
+or import a package manually after sourcing and validating the applicable drivers through
+Getac's published support channels. Package metadata must match the device manufacturer,
+model/SystemSKU, operating system, and architecture. This recognition does not add
+automated Getac catalog discovery, BIOS download, or firmware flashing.
+
 ## Core Features
 
 - **Automated Driver Downloads** — Accelerated downloads via `curl.exe` with HTTP resume support, configurable retry logic (10 retries, 60s delay), and automatic hash verification

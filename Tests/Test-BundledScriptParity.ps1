@@ -36,5 +36,8 @@ Assert-Parity ($contract -match '87c57414428856159cbc599b4f2e9d1d1b62ede7') 'dri
 Assert-Parity ($contract -match '4c8629dadfa94729f3269b8db7f8293db7da4f2a') 'BIOS baseline is pinned'
 Assert-Parity ($contract -match 'not as byte-for-byte copies') 'intentional divergence is documented'
 Assert-Parity ($contract -match 'Blind replacement is unsafe') 'unsafe blind replacement is explicitly prohibited'
+Assert-Parity ($driver -match '"\*Getac\*"\s*\{\s*\$ComputerDetails\.Manufacturer = "Getac"') 'Getac manufacturer normalization is retained'
+Assert-Parity ($contract -match 'Getac manufacturer\s+normalization') 'Getac manual-package parity boundary is documented'
+Assert-Parity ($contract -match 'does not represent automated catalog acquisition or BIOS\s+firmware support') 'Getac automation and firmware exclusions are documented'
 
 Write-Host 'Bundled script parity contract completed successfully.'
