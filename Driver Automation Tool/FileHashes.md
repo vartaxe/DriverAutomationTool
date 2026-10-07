@@ -40,7 +40,7 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| MainApplication.ps1 | `UI/MainApplication.ps1` | 1637.7 | `956DC71FDC48218EB27598B031320961BEF782904223C61E4190C1B1FEAAAB29` |
+| MainApplication.ps1 | `UI/MainApplication.ps1` | 1668.3 | `1C9A7A9B269BD491522797DA7E151104E286EE02433F778CA28D39634507CA7D` |
 | ThemeDefinitions.ps1 | `UI/Themes/ThemeDefinitions.ps1` | 8.9 | `B7C6D8D529D3581C7EDCD79092F24F2550BE2B3DD7CB647DF690CC161520933A` |
 
 ## Deployment Scripts
