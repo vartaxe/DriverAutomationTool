@@ -60,6 +60,19 @@ jobs:
             exit 1
           }
 
+      - name: Run PowerShell regression harnesses
+        shell: powershell
+        run: |
+          Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE 'Tests') -Filter 'Test-*.ps1' |
+            Sort-Object Name |
+            ForEach-Object {
+              Write-Host "Running $($_.Name)..."
+              & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $_.FullName
+              if ($LASTEXITCODE -ne 0) {
+                throw "$($_.Name) failed with exit code $LASTEXITCODE"
+              }
+            }
+
       - name: Verify file hash manifest
         shell: powershell
         run: |
