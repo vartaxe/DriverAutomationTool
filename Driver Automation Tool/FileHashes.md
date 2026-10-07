@@ -10,8 +10,8 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 
 | | |
 |---|---|
-| Version | `10.3.0.0` |
-| Generated (UTC) | 2026-10-07 16:56:14 |
+| Version | `10.3.1.0` |
+| Generated (UTC) | 2026-10-07 20:25:52 |
 | Files | 16 |
 | Algorithm | SHA256 |
 
@@ -26,28 +26,28 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.1 | `10A307FF32668FE3B027940D9F9319D6B83D640B26A05DBAADCAA81B9BD7F94C` |
-| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1396.2 | `1C8BC7317F6A9F16465EE9AD7FC75217054030FE1EEB70523709E5F24E9EE8BF` |
+| DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.2 | `0950E27BA4282648F00F250DE4DBC98A482F141FF06A3C7459716CB50DCCDFEC` |
+| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1413.2 | `A1D5123228687E4A905CE32697479C54512988780E00CC124E0B734ACFBF0B68` |
 | Deploy-BIOSPassword-Detection.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Detection.ps1` | 1.7 | `7A7DCE6AD49DE2634FB5014D2E02594E36A5A212FA0BF3C21C3E6C5ACC64B235` |
 | Deploy-BIOSPassword-Remediation.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Remediation.ps1` | 2.9 | `DA0A9097595C3D10B0E5C13CA7B1E73B8026A5F7F627E90A28844F4512F962E7` |
 | Import-CMOfflinePackages.ps1 | `Modules/DriverAutomationToolCore/Templates/Import-CMOfflinePackages.ps1` | 9.9 | `E6DB9F4D3873152AFCA5DC897541E2E5BCB58039AE0AC04B3B9BB5894A5FE15A` |
-| Install-BIOS.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-BIOS.ps1` | 88.1 | `8E2D3C08C5C185E7E8C15B4B85C01BB18A5AD037ED40987C7A62CF87353DFF0C` |
+| Install-BIOS.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-BIOS.ps1` | 102.5 | `75416497921B7779404549E42142BB0AE87041FCE59F6842578BB5019A847A43` |
 | Install-Drivers.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-Drivers.ps1` | 67.5 | `109F75DA03B2E74CAD82411C17CED5ED32BCE1A418E29F2EA096753279AA69C3` |
-| Invoke-DATToastTest.ps1 | `Modules/DriverAutomationToolCore/Templates/Invoke-DATToastTest.ps1` | 29.5 | `83B9BE4AC6001CD16B3C8E01910372D981E259D7499FE37038A176F9C5406DF5` |
+| Invoke-DATToastTest.ps1 | `Modules/DriverAutomationToolCore/Templates/Invoke-DATToastTest.ps1` | 29.7 | `B57BEF1E6128B9CE9CC65E36428EBB7F82268C311F84B0D9D8FEE0CDCBFC4B96` |
 | Test-DATMaintenanceWindow.ps1 | `Modules/DriverAutomationToolCore/Templates/Test-DATMaintenanceWindow.ps1` | 6.9 | `1E45CC1E002C8399C95C1E6244D6610094156F35BC200CB187401B1F2CDE00E0` |
 
 ## UI Layer
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| MainApplication.ps1 | `UI/MainApplication.ps1` | 1622.9 | `FB1D85DDCFCFA560CF8E266F65D4CAA2F97294238EB9F28E4603F00D6774E207` |
-| ThemeDefinitions.ps1 | `UI/Themes/ThemeDefinitions.ps1` | 8.4 | `E88673F82B2D8209E0C2744BC0FF044AEE4D4EDD44ADDFD7406E0F0358E4DCC6` |
+| MainApplication.ps1 | `UI/MainApplication.ps1` | 1668.3 | `1C9A7A9B269BD491522797DA7E151104E286EE02433F778CA28D39634507CA7D` |
+| ThemeDefinitions.ps1 | `UI/Themes/ThemeDefinitions.ps1` | 8.9 | `B7C6D8D529D3581C7EDCD79092F24F2550BE2B3DD7CB647DF690CC161520933A` |
 
 ## Deployment Scripts
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| Invoke-CMApplyDriverPackage.ps1 | `Scripts/Invoke-CMApplyDriverPackage.ps1` | 160.9 | `1F744838C2DF31320091CADC6FFB9A98457113E8476E155384C6AA840A08588E` |
+| Invoke-CMApplyDriverPackage.ps1 | `Scripts/Invoke-CMApplyDriverPackage.ps1` | 174.2 | `8D93A649C7E5A3BD2142A2B520B6F479881C9A61EAF4CD14C8E25110FA20B0CC` |
 | Invoke-CMDownloadBIOSPackage.ps1 | `Scripts/Invoke-CMDownloadBIOSPackage.ps1` | 102.1 | `2722A6830DBF397B1E90D010368264B88F1E2CF93A54727E1B208D299D916FA0` |
 | Remove-DATStaleBIOSMarkers.ps1 | `Scripts/Remove-DATStaleBIOSMarkers.ps1` | 5.2 | `0D2CD832AE710A421E3790D5366D5F6C630418E9E96ED0E35FBA227F59AF0F60` |
 
