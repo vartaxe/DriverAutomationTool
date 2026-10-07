@@ -20,7 +20,10 @@ param (
     [switch]$WhatIf,
     # Run as the Intune / ConfigMgr uninstall command. A flashed BIOS cannot be rolled back by
     # this script, so this logs and exits 0 without changing anything.
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    # Safe preflight used by packaging validation and regression tests. It exercises the generated
+    # installer's manufacturer gate without extracting content or touching firmware.
+    [switch]$ValidateManufacturerOnly
 )
 
 # --- 64-bit Relaunch Guard ---
@@ -53,6 +56,7 @@ if (-not [Environment]::Is64BitProcess -and [Environment]::Is64BitOperatingSyste
     $relaunchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$scriptPath`"")
     if ($WhatIf) { $relaunchArgs += '-WhatIf' }
     if ($Uninstall) { $relaunchArgs += '-Uninstall' }
+    if ($ValidateManufacturerOnly) { $relaunchArgs += '-ValidateManufacturerOnly' }
     Write-Host "INFO: Launching 64-bit process: $relaunchPath $($relaunchArgs -join ' ')" -ForegroundColor Cyan
     try {
         $proc = Start-Process -FilePath $relaunchPath -ArgumentList $relaunchArgs -Wait -PassThru -NoNewWindow -ErrorAction Stop
@@ -600,6 +604,21 @@ function Get-LenovoSystemFirmwareVersion {
 {{TOAST_FUNCTIONS}}
 {{PROGRESS_FUNCTIONS}}
 {{PROVISIONING_FUNCTIONS}}
+
+# Fail before payload discovery or extraction if no validated flash implementation exists.
+# The build pipeline enforces the same boundary, but the generated installer must remain safe if
+# it is copied, retained, or invoked independently of that pipeline.
+$DATSupportedBIOSManufacturers = @('Dell', 'HP', 'Lenovo')
+$DATTemplateManufacturer = '{{OEM}}'
+if ($DATTemplateManufacturer -notin $DATSupportedBIOSManufacturers) {
+    Write-Error "Standalone BIOS installation is not supported for '$DATTemplateManufacturer'. Validated flash installers are available only for Dell, HP, and Lenovo."
+    exit 1
+}
+if ($ValidateManufacturerOnly) {
+    Write-Host "Validated standalone BIOS installer path for $DATTemplateManufacturer."
+    exit 0
+}
+
 # Uninstall command. Older builds pointed the Intune uninstall command at this script without a
 # switch, so an uninstall assignment re-ran the flash. A BIOS cannot be rolled back from here
 # (most OEMs block downgrades), so record the request and leave the firmware alone.
@@ -1157,41 +1176,6 @@ try {
             } else {
                 Write-CMTraceLog "ERROR: Lenovo BIOS flash failed with exit code: $flashExitCode" -Severity 3
                 throw "Lenovo BIOS flash failed with exit code: $flashExitCode"
-            }
-        }
-
-        # -- Microsoft (Surface) ------------------------------------------------
-        '*Microsoft*' {
-            Write-CMTraceLog "Microsoft Surface firmware update detected -- searching for MSI package"
-
-            # Surface firmware is delivered as an MSI
-            $msiFile = Get-ChildItem -Path $ExtractPath -Recurse -Filter "*.msi" -File -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-
-            if (-not $msiFile) {
-                Write-CMTraceLog "ERROR: No MSI firmware package found in extracted content" -Severity 3
-                throw "No MSI firmware package found in extracted content"
-            }
-
-            Write-CMTraceLog "Surface firmware MSI found: $($msiFile.FullName)"
-
-            $msiLog = Join-Path $env:ProgramData "Microsoft\IntuneManagementExtension\Logs\DAT_SurfaceFirmware.log"
-            $flashArgs = "/i `"$($msiFile.FullName)`" /quiet /norestart /l*v `"$msiLog`""
-
-            if ($WhatIf) {
-                Write-CMTraceLog "WHATIF: Would execute Surface firmware install: msiexec.exe $flashArgs" -Severity 2
-                $flashExitCode = 0
-            } else {
-                $flashExitCode = Invoke-BIOSFlashUtility -FilePath "msiexec.exe" -Arguments $flashArgs
-            }
-
-            # MSI exit codes: 0 = success, 3010 = success (reboot required)
-            if ($flashExitCode -in @(0, 3010)) {
-                Write-CMTraceLog "Surface firmware install completed successfully (exit code: $flashExitCode)"
-            } else {
-                Write-CMTraceLog "ERROR: Surface firmware install failed with exit code: $flashExitCode" -Severity 3
-                Write-CMTraceLog "MSI log available at: $msiLog" -Severity 2
-                throw "Surface firmware install failed with exit code: $flashExitCode"
             }
         }
 
