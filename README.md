@@ -39,12 +39,20 @@ The Driver Automation Tool is a PowerShell WPF desktop application that automate
 | Dell | ✅ | ✅ |
 | Lenovo | ✅ | ✅ |
 | Microsoft Surface | ✅ | — |
-| Acer | ✅ | ✅ |
+| Acer | ✅ | — |
+| Panasonic | ✅ | — |
+| Fujitsu | ✅ | — |
+| ASUS | ✅ | — |
+
+Driver catalog discovery and packaging covers all eight OEMs listed above. Standalone BIOS
+package creation and installation is currently validated only for Dell, HP, and Lenovo.
+Microsoft Surface firmware is delivered through driver packages; BIOS packages for Acer,
+Panasonic, Fujitsu, and ASUS are not generated.
 
 ## Core Features
 
 - **Automated Driver Downloads** — Accelerated downloads via `curl.exe` with HTTP resume support, configurable retry logic (10 retries, 60s delay), and automatic hash verification
-- **Multi-OEM Support** — Full support for HP, Dell, Lenovo, Microsoft Surface, and Acer with automatic catalog discovery
+- **Multi-OEM Support** — Driver catalog discovery and packaging for HP, Dell, Lenovo, Microsoft Surface, Acer, Panasonic, Fujitsu, and ASUS
 - **BIOS Update Management** — Version comparison, release classification (Recommended/Critical), minimum version validation, and hash verification
 - **WIM Packaging** — Create WIM packages using DISM (built-in), wimlib (multi-threaded), or 7-Zip (recommended) with configurable compression
 - **ConfigMgr Integration** — Automatic package creation, content distribution to DPs, WinRM/WMI connectivity, and deployment state tracking
