@@ -7052,6 +7052,9 @@ function Start-DATModelProcessing {
                 if ($oem -eq 'Microsoft') {
                     Write-DATLogEntry -Value "[$currentIndex/$totalModels] SKIPPED -- Microsoft Surface BIOS updates are handled via driver injection, no separate BIOS package required" -Severity 1
                 }
+                elseif (-not (Test-DATBIOSInstallerSupport -OEM $oem)) {
+                    throw "Standalone BIOS packages are not supported for $oem. Validated flash installers are available only for Dell, HP, and Lenovo."
+                }
                 # Skip BIOS if this OEM+Model was already processed in this session (BIOS is OS-independent)
                 elseif ($processedBiosModels.ContainsKey("$oem|$modelName")) {
                     Write-DATLogEntry -Value "[$currentIndex/$totalModels] SKIPPED -- BIOS already processed for $oem $modelName in this build session (BIOS is OS-independent)" -Severity 1
@@ -22029,6 +22032,14 @@ function Get-DATFlash64W {
     return $false
 }
 
+function Test-DATBIOSInstallerSupport {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param ([Parameter(Mandatory)][string]$OEM)
+
+    return $OEM -in @('Dell', 'HP', 'Lenovo')
+}
+
 function Invoke-DATBiosPackaging {
     <#
     .SYNOPSIS
@@ -22062,6 +22073,10 @@ function Invoke-DATBiosPackaging {
         [switch]$IncludeFlash64W
     )
 
+    if (-not (Test-DATBIOSInstallerSupport -OEM $OEM)) {
+        throw "Standalone BIOS packaging is not supported for $OEM. Validated flash installers are available only for Dell, HP, and Lenovo."
+    }
+
     # BIOS packages are OS-agnostic -- use "BIOS" as the subfolder instead of OS name.
     # Build the WIM in the Temporary Storage Path, then copy to the Package Store --
     # same pattern as Invoke-DATDriverFilePackaging (avoids writing temp data into the
@@ -22085,15 +22100,6 @@ function Invoke-DATBiosPackaging {
     Set-DATRegistryValue -Name "RunningMessage" -Value "Packaging BIOS update for $OEM $Model..." -Type String
 
     switch ($OEM) {
-        'Acer' {
-            # Acer BIOS packages are ZIP archives -- extract to expose BIOS files
-            Write-DATLogEntry -Value "[BIOS] Acer: Extracting BIOS ZIP archive" -Severity 1
-            try {
-                Expand-DATArchiveSafely -Path $BiosFilePath -DestinationPath $extractDir
-            } catch {
-                throw "Acer BIOS extraction failed: $($_.Exception.Message)"
-            }
-        }
         'Dell' {
             # Dell BIOS exe is self-contained -- copy directly for all deployment modes.
             # The exe handles its own flash process; no extraction is needed.
@@ -22276,9 +22282,7 @@ function Invoke-DATBiosPackaging {
             }
         }
         default {
-            # Unknown OEM -- place exe directly
-            Write-DATLogEntry -Value "[BIOS] $OEM : Staging BIOS file directly (unknown extraction method)" -Severity 2
-            Copy-Item -Path $BiosFilePath -Destination $extractDir -Force
+            throw "Standalone BIOS packaging is not supported for $OEM."
         }
     }
 

@@ -1,11 +1,11 @@
-# File Hashes
+﻿# File Hashes
 
 SHA256 manifest of the core PowerShell files that make up the Driver Automation Tool.
 Regenerate with the **update-file-hashes** skill whenever a core `.ps1`, `.psm1` or `.psd1` file changes.
 
 Hashes are taken from the checked-out working copy. The repository `.gitattributes` pins
 `.ps1`, `.psm1`, `.psd1` and `.xaml` files to CRLF line endings, so a `git clone` produces the
-same bytes — and therefore the same SHA256 values — on every platform regardless of the local
+same bytes â€” and therefore the same SHA256 values â€” on every platform regardless of the local
 `core.autocrlf` setting.
 
 | | |
@@ -27,7 +27,7 @@ same bytes — and therefore the same SHA256 values — on every platform regard
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
 | DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.1 | `10A307FF32668FE3B027940D9F9319D6B83D640B26A05DBAADCAA81B9BD7F94C` |
-| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1396.2 | `5481CF8BFEB36EB2E58101AE818DD6E0F359E4D1711865131F9032530837FBB9` |
+| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1396.2 | `1C8BC7317F6A9F16465EE9AD7FC75217054030FE1EEB70523709E5F24E9EE8BF` |
 | Deploy-BIOSPassword-Detection.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Detection.ps1` | 1.7 | `7A7DCE6AD49DE2634FB5014D2E02594E36A5A212FA0BF3C21C3E6C5ACC64B235` |
 | Deploy-BIOSPassword-Remediation.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Remediation.ps1` | 2.9 | `DA0A9097595C3D10B0E5C13CA7B1E73B8026A5F7F627E90A28844F4512F962E7` |
 | Import-CMOfflinePackages.ps1 | `Modules/DriverAutomationToolCore/Templates/Import-CMOfflinePackages.ps1` | 9.9 | `E6DB9F4D3873152AFCA5DC897541E2E5BCB58039AE0AC04B3B9BB5894A5FE15A` |

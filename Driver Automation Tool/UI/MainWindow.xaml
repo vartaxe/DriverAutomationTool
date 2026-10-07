@@ -7859,7 +7859,7 @@
                                         <TextBlock TextWrapping="Wrap" FontSize="13"
                                                    Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,16">
                                             Automate the downloading, extraction, and packaging of driver and BIOS
-                                            updates for Dell, HP, Lenovo, Microsoft, and Acer devices. Supports
+                                            updates for Dell, HP, Lenovo, Microsoft, Acer, Panasonic, Fujitsu, and ASUS devices. Supports
                                             Configuration Manager, Intune, and standalone deployments.
                                         </TextBlock>
 
