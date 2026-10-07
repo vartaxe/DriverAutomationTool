@@ -74,6 +74,23 @@ automated Getac catalog discovery, BIOS download, or firmware flashing.
 | **WIM Package Only** | Download → Extract → Create WIM file only (no deployment) |
 | **Download Only** | Download and extract packages without any WIM packaging or deployment |
 
+### Windows deployment compatibility
+
+Catalog recognition in DAT does not certify the Configuration Manager, Windows ADK,
+WinPE, operating-system image, or OEM firmware combination used for deployment.
+Windows 11 26H1 is a specialized new-hardware release rather than a general upgrade
+target. Configuration Manager 2509 does not support Windows 11 26H2 clients; use
+Configuration Manager 2603 or later for 26H2 task sequences. Current Windows 11 ADKs
+do not include x86 WinPE.
+
+Confirm the current
+[Windows 11 support matrix](https://learn.microsoft.com/intune/configmgr/core/plan-design/configs/support-for-windows-11)
+and
+[Windows ADK support matrix](https://learn.microsoft.com/intune/configmgr/core/plan-design/configs/support-for-windows-adk)
+before generating or deploying packages. MDT integration is retired and unsupported
+with Configuration Manager 2509 and later; DAT's ConfigMgr workflows do not make
+legacy MDT task-sequence steps supported.
+
 ## Getting Started
 
 ### 1. Download
