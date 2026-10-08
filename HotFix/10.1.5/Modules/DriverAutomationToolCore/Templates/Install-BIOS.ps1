@@ -17,7 +17,10 @@
       Flash64W.exe is NOT used (it is a WinPE-only wrapper).
 #>
 param (
-    [switch]$WhatIf
+    [switch]$WhatIf,
+    # Safe preflight used by packaging validation and regression tests. It exercises the generated
+    # installer's manufacturer gate without extracting content or touching firmware.
+    [switch]$ValidateManufacturerOnly
 )
 
 # --- 64-bit Relaunch Guard ---
@@ -49,6 +52,7 @@ if (-not [Environment]::Is64BitProcess -and [Environment]::Is64BitOperatingSyste
 
     $relaunchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$scriptPath`"")
     if ($WhatIf) { $relaunchArgs += '-WhatIf' }
+    if ($ValidateManufacturerOnly) { $relaunchArgs += '-ValidateManufacturerOnly' }
     Write-Host "INFO: Launching 64-bit process: $relaunchPath $($relaunchArgs -join ' ')" -ForegroundColor Cyan
     try {
         $proc = Start-Process -FilePath $relaunchPath -ArgumentList $relaunchArgs -Wait -PassThru -NoNewWindow -ErrorAction Stop
@@ -348,6 +352,21 @@ function Compare-BIOSVersion {
     return $false
 }
 {{TOAST_FUNCTIONS}}
+
+# Fail before payload discovery or extraction if no validated flash implementation exists.
+# The build pipeline enforces the same boundary, but the generated installer must remain safe if
+# it is copied, retained, or invoked independently of that pipeline.
+$DATSupportedBIOSManufacturers = @('Dell', 'HP', 'Lenovo')
+$DATTemplateManufacturer = '{{OEM}}'
+if ($DATTemplateManufacturer -notin $DATSupportedBIOSManufacturers) {
+    Write-Error "Standalone BIOS installation is not supported for '$DATTemplateManufacturer'. Validated flash installers are available only for Dell, HP, and Lenovo."
+    exit 1
+}
+if ($ValidateManufacturerOnly) {
+    Write-Host "Validated standalone BIOS installer path for $DATTemplateManufacturer."
+    exit 0
+}
+
 try {
     Write-CMTraceLog "=========================================="
     if ($WhatIf) { Write-CMTraceLog "*** WHATIF MODE -- no BIOS changes will be applied ***" -Severity 2 }
@@ -428,6 +447,34 @@ try {
 
     $extractedFiles = (Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction SilentlyContinue).Count
     Write-CMTraceLog "WIM extraction complete. Files extracted: $extractedFiles"
+
+    $integrityManifest = Join-Path $ExtractPath 'DAT-BIOS-SHA256.txt'
+    if (-not (Test-Path -LiteralPath $integrityManifest -PathType Leaf)) {
+        throw "BIOS payload integrity manifest is missing"
+    }
+    $verifiedPayloadPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in Get-Content -LiteralPath $integrityManifest -ErrorAction Stop) {
+        if ($line -notmatch '^([0-9A-Fa-f]{64})\t(.+)$') { throw "BIOS payload integrity manifest contains an invalid entry" }
+        $expectedHash = $Matches[1]
+        $relativePath = $Matches[2]
+        if ([System.IO.Path]::IsPathRooted($relativePath) -or $relativePath -match '(^|[\\/])\.\.([\\/]|$)') {
+            throw "BIOS payload integrity manifest contains an unsafe path: $relativePath"
+        }
+        $payloadPath = [System.IO.Path]::GetFullPath((Join-Path $ExtractPath $relativePath))
+        $extractRoot = [System.IO.Path]::GetFullPath($ExtractPath).TrimEnd('\') + '\'
+        if (-not $payloadPath.StartsWith($extractRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "BIOS payload integrity manifest path escapes the extraction root: $relativePath"
+        }
+        if (-not (Test-Path -LiteralPath $payloadPath -PathType Leaf)) { throw "BIOS payload member is missing: $relativePath" }
+        $actualHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256 -ErrorAction Stop).Hash
+        if ($actualHash -ine $expectedHash) { throw "BIOS payload hash mismatch: $relativePath" }
+        [void]$verifiedPayloadPaths.Add($payloadPath)
+    }
+    $unexpectedPayload = @(Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction Stop |
+        Where-Object { $_.FullName -ne $integrityManifest -and -not $verifiedPayloadPaths.Contains($_.FullName) })
+    if ($unexpectedPayload.Count -gt 0) { throw "BIOS payload contains unverified files: $($unexpectedPayload.Name -join ', ')" }
+    if ($verifiedPayloadPaths.Count -eq 0) { throw "BIOS payload integrity manifest contains no files" }
+    Write-CMTraceLog "BIOS payload integrity verified: $($verifiedPayloadPaths.Count) file(s)"
 
     # -- Suspend BitLocker -------------------------------------------------------
     $script:BitLockerSuspended = $false
@@ -743,41 +790,6 @@ try {
             } else {
                 Write-CMTraceLog "ERROR: Lenovo BIOS flash failed with exit code: $flashExitCode" -Severity 3
                 throw "Lenovo BIOS flash failed with exit code: $flashExitCode"
-            }
-        }
-
-        # -- Microsoft (Surface) ------------------------------------------------
-        '*Microsoft*' {
-            Write-CMTraceLog "Microsoft Surface firmware update detected -- searching for MSI package"
-
-            # Surface firmware is delivered as an MSI
-            $msiFile = Get-ChildItem -Path $ExtractPath -Recurse -Filter "*.msi" -File -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-
-            if (-not $msiFile) {
-                Write-CMTraceLog "ERROR: No MSI firmware package found in extracted content" -Severity 3
-                throw "No MSI firmware package found in extracted content"
-            }
-
-            Write-CMTraceLog "Surface firmware MSI found: $($msiFile.FullName)"
-
-            $msiLog = Join-Path $env:ProgramData "Microsoft\IntuneManagementExtension\Logs\DAT_SurfaceFirmware.log"
-            $flashArgs = "/i `"$($msiFile.FullName)`" /quiet /norestart /l*v `"$msiLog`""
-
-            if ($WhatIf) {
-                Write-CMTraceLog "WHATIF: Would execute Surface firmware install: msiexec.exe $flashArgs" -Severity 2
-                $flashExitCode = 0
-            } else {
-                $flashExitCode = Invoke-BIOSFlashUtility -FilePath "msiexec.exe" -Arguments $flashArgs
-            }
-
-            # MSI exit codes: 0 = success, 3010 = success (reboot required)
-            if ($flashExitCode -in @(0, 3010)) {
-                Write-CMTraceLog "Surface firmware install completed successfully (exit code: $flashExitCode)"
-            } else {
-                Write-CMTraceLog "ERROR: Surface firmware install failed with exit code: $flashExitCode" -Severity 3
-                Write-CMTraceLog "MSI log available at: $msiLog" -Severity 2
-                throw "Surface firmware install failed with exit code: $flashExitCode"
             }
         }
 

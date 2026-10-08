@@ -66,11 +66,348 @@ function global:Write-CMLogEntry {
 	}
 }
 
+function Test-DATSecureDownloadUri {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string]$Uri,
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string[]]$AllowedHosts
+	)
+
+	try {
+		[uri]$resolvedUri = $Uri
+	}
+	catch {
+		throw "Refusing to download from an invalid URL: $Uri"
+	}
+
+	if (-not $resolvedUri.IsAbsoluteUri -or $resolvedUri.Scheme -ne "https") {
+		throw "Refusing to download from non-HTTPS vendor URL: $Uri. HTTPS-only downloads are required and plaintext redirects are rejected."
+	}
+	if (-not [string]::IsNullOrWhiteSpace($resolvedUri.UserInfo)) {
+		throw "Refusing a vendor URL containing embedded credentials: $Uri"
+	}
+	if ($AllowedHosts -notcontains $resolvedUri.DnsSafeHost) {
+		throw "Refusing vendor URL host '$($resolvedUri.DnsSafeHost)'. Allowed host(s): $($AllowedHosts -join ', ')."
+	}
+
+	return $resolvedUri.AbsoluteUri
+}
+
+function Set-DATRequestProxy {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory = $true)]
+		[System.Net.HttpWebRequest]$Request
+	)
+
+	if ($null -eq $global:InvokeProxyOptions) {
+		return
+	}
+
+	$proxyValue = $global:InvokeProxyOptions['Proxy']
+	if ($null -ne $proxyValue) {
+		if ($proxyValue -is [System.Net.IWebProxy]) {
+			$Request.Proxy = $proxyValue
+		}
+		else {
+			$Request.Proxy = New-Object System.Net.WebProxy([string]$proxyValue)
+		}
+	}
+
+	$proxyCredential = $global:InvokeProxyOptions['ProxyCredential']
+	if ($null -ne $proxyCredential -and $null -ne $Request.Proxy) {
+		$Request.Proxy.Credentials = $proxyCredential
+	}
+	elseif ($global:InvokeProxyOptions['ProxyUseDefaultCredentials'] -eq $true -and $null -ne $Request.Proxy) {
+		$Request.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
+	}
+}
+
+function Get-DATRedirectedUrl {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string]$URL,
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string[]]$AllowedHosts,
+		[ValidateRange(0, 10)]
+		[int]$MaximumRedirects = 5,
+		[scriptblock]$ResponseProvider
+	)
+
+	$currentUrl = Test-DATSecureDownloadUri -Uri $URL -AllowedHosts $AllowedHosts
+	for ($redirectCount = 0; $redirectCount -le $MaximumRedirects; $redirectCount++) {
+		$response = $null
+		try {
+			if ($null -ne $ResponseProvider) {
+				$response = & $ResponseProvider $currentUrl
+			}
+			else {
+				$request = [System.Net.HttpWebRequest]::Create($currentUrl)
+				$request.AllowAutoRedirect = $false
+				$request.Method = 'GET'
+				$request.Timeout = 30000
+				$request.ReadWriteTimeout = 30000
+				Set-DATRequestProxy -Request $request
+				$response = $request.GetResponse()
+			}
+
+			$statusCode = [int]$response.StatusCode
+			if ($statusCode -ge 300 -and $statusCode -lt 400) {
+				$location = $null
+				if ($null -ne $response.Headers) {
+					$location = $response.Headers['Location']
+				}
+				if ([string]::IsNullOrWhiteSpace($location) -and $response.PSObject.Properties['Location']) {
+					$location = [string]$response.Location
+				}
+				if ([string]::IsNullOrWhiteSpace($location)) {
+					throw "Redirect response from $currentUrl did not include a Location header."
+				}
+				if ($redirectCount -eq $MaximumRedirects) {
+					throw "Refusing to follow more than $MaximumRedirects redirects from $URL."
+				}
+				try {
+					$redirectUri = New-Object System.Uri((New-Object System.Uri($currentUrl)), $location)
+				}
+				catch {
+					throw "Redirect response from $currentUrl contained an invalid Location value: $location"
+				}
+				$currentUrl = Test-DATSecureDownloadUri -Uri $redirectUri.AbsoluteUri -AllowedHosts $AllowedHosts
+				continue
+			}
+			if ($statusCode -lt 200 -or $statusCode -ge 300) {
+				throw "Vendor request to $currentUrl failed with HTTP status $statusCode."
+			}
+			return $currentUrl
+		}
+		finally {
+			if ($null -ne $response -and $response -is [System.IDisposable]) {
+				$response.Dispose()
+			}
+			elseif ($null -ne $response -and $response.PSObject.Methods['Close']) {
+				$response.Close()
+			}
+		}
+	}
+}
+
+function Invoke-DATSecureDownload {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string]$Uri,
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string[]]$AllowedHosts,
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string]$Destination
+	)
+
+	$finalUrl = Get-DATRedirectedUrl -URL $Uri -AllowedHosts $AllowedHosts
+	$finalUrl = Test-DATSecureDownloadUri -Uri $finalUrl -AllowedHosts $AllowedHosts
+	$destinationDirectory = Split-Path -Parent $Destination
+	if (-not (Test-Path -LiteralPath $destinationDirectory -PathType Container)) {
+		New-Item -Path $destinationDirectory -ItemType Directory -Force | Out-Null
+	}
+	$temporaryFile = Join-Path $destinationDirectory ([System.IO.Path]::GetRandomFileName())
+
+	try {
+		$request = [System.Net.HttpWebRequest]::Create($finalUrl)
+		$request.AllowAutoRedirect = $false
+		$request.Method = 'GET'
+		$request.Timeout = 30000
+		$request.ReadWriteTimeout = 30000
+		Set-DATRequestProxy -Request $request
+		$response = $request.GetResponse()
+		try {
+			$statusCode = [int]$response.StatusCode
+			if ($statusCode -ge 300 -and $statusCode -lt 400) {
+				throw "Vendor URL changed redirects while downloading $finalUrl. The download was rejected so every redirect can be inspected."
+			}
+			if ($statusCode -lt 200 -or $statusCode -ge 300) {
+				throw "Vendor download from $finalUrl failed with HTTP status $statusCode."
+			}
+			$responseStream = $response.GetResponseStream()
+			$fileStream = [System.IO.File]::Create($temporaryFile)
+			try {
+				$responseStream.CopyTo($fileStream)
+			}
+			finally {
+				$fileStream.Dispose()
+				$responseStream.Dispose()
+			}
+		}
+		finally {
+			$response.Dispose()
+		}
+		Move-Item -LiteralPath $temporaryFile -Destination $Destination -Force
+	}
+	catch {
+		Remove-Item -LiteralPath $temporaryFile -Force -ErrorAction SilentlyContinue
+		throw
+	}
+
+	return $finalUrl
+}
+
+function Get-DATSecureText {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$Uri,
+		[Parameter(Mandatory = $true)]
+		[string[]]$AllowedHosts
+	)
+
+	$temporaryFile = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
+	try {
+		Invoke-DATSecureDownload -Uri $Uri -AllowedHosts $AllowedHosts -Destination $temporaryFile | Out-Null
+		return [System.IO.File]::ReadAllText($temporaryFile)
+	}
+	finally {
+		Remove-Item -LiteralPath $temporaryFile -Force -ErrorAction SilentlyContinue
+	}
+}
+
+function Test-DATFileIntegrity {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$FilePath,
+		[string]$ExpectedSha256,
+		[switch]$RequireHash,
+		[string]$PublisherPattern,
+		[scriptblock]$SignatureProvider
+	)
+
+	if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
+		throw "Cannot validate missing vendor file: $FilePath"
+	}
+
+	try {
+		if (-not [string]::IsNullOrWhiteSpace($ExpectedSha256)) {
+			if ($ExpectedSha256 -notmatch '^[A-Fa-f0-9]{64}$') {
+				throw "The vendor catalog supplied an invalid SHA256 value for $FilePath."
+			}
+			$actualHash = (Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash
+			if ($actualHash -ine $ExpectedSha256) {
+				throw "SHA256 mismatch for $FilePath. Expected $ExpectedSha256 but received $actualHash."
+			}
+			return $true
+		}
+
+		if ($RequireHash) {
+			throw "The vendor catalog did not publish the required SHA256 for $FilePath."
+		}
+		if ([string]::IsNullOrWhiteSpace($PublisherPattern)) {
+			throw "No authoritative hash or trusted publisher requirement was supplied for $FilePath."
+		}
+
+		if ($null -ne $SignatureProvider) {
+			$signature = & $SignatureProvider $FilePath
+		}
+		else {
+			$signature = Get-AuthenticodeSignature -LiteralPath $FilePath
+		}
+		if ($null -eq $signature -or [string]$signature.Status -ne 'Valid') {
+			throw "Authenticode validation failed for $FilePath. Status: $($signature.Status)."
+		}
+		$subject = [string]$signature.SignerCertificate.Subject
+		if ([string]::IsNullOrWhiteSpace($subject) -or $subject -notmatch $PublisherPattern) {
+			throw "Authenticode signer '$subject' is not an approved vendor publisher for $FilePath."
+		}
+		return $true
+	}
+	catch {
+		Remove-Item -LiteralPath $FilePath -Force -ErrorAction SilentlyContinue
+		throw
+	}
+}
+
+function Assert-DATVendorPayload {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$Vendor,
+		[Parameter(Mandatory = $true)]
+		[string]$FilePath,
+		[string]$ExpectedSha256
+	)
+
+	switch -Wildcard ($Vendor) {
+		'Dell' {
+			return Test-DATFileIntegrity -FilePath $FilePath -ExpectedSha256 $ExpectedSha256 -RequireHash
+		}
+		'HP' {
+			return Test-DATFileIntegrity -FilePath $FilePath -ExpectedSha256 $ExpectedSha256 -RequireHash
+		}
+		'Hewlett-Packard' {
+			return Test-DATFileIntegrity -FilePath $FilePath -ExpectedSha256 $ExpectedSha256 -RequireHash
+		}
+		'Lenovo' {
+			return Test-DATFileIntegrity -FilePath $FilePath -PublisherPattern '(?i)(?:^|,\s*)CN\s*=\s*Lenovo(?:\s[^,]*)?(?:,|$)'
+		}
+		'Microsoft' {
+			return Test-DATFileIntegrity -FilePath $FilePath -PublisherPattern '(?i)(?:^|,\s*)CN\s*=\s*Microsoft Corporation(?:,|$)'
+		}
+		default {
+			throw "No payload integrity policy is defined for vendor '$Vendor'."
+		}
+	}
+}
+
+function Get-DATCatalogSha256 {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory = $true)]
+		$CatalogNode
+	)
+
+	foreach ($propertyName in @('SHA256', 'SHA256Hash')) {
+		$value = [string]$CatalogNode.$propertyName
+		if ($value -match '^[A-Fa-f0-9]{64}$') {
+			return $value
+		}
+	}
+
+	foreach ($hashNode in @($CatalogNode.Cryptography.Hash)) {
+		if ($null -eq $hashNode) {
+			continue
+		}
+		$algorithm = [string]$hashNode.algorithm
+		if ([string]::IsNullOrWhiteSpace($algorithm)) {
+			$algorithm = [string]$hashNode.Algorithm
+		}
+		$value = [string]$hashNode.'#text'
+		if ([string]::IsNullOrWhiteSpace($value)) {
+			$value = [string]$hashNode
+		}
+		if ($algorithm -ieq 'SHA256' -and $value -match '^[A-Fa-f0-9]{64}$') {
+			return $value
+		}
+	}
+
+	return $null
+}
+
+function Stop-DATMicrosoftLegacyCatalog {
+	throw "Surface automatic driver updates are disabled: the legacy unsigned third-party Microsoft catalog now returns HTML and is unavailable/untrusted. Configure an official Microsoft catalog source with authoritative integrity metadata before automatic Surface updates can resume."
+}
+
 # Script Build Numbers
 $ScriptRelease = "1.0.0"
 $ScriptBuildDate = "2017-12-01"
-$NewRelease = (Invoke-WebRequest -Uri "http://www.scconfigmgr.com/wp-content/uploads/tools/DriverAutomationToolRev.txt" -UseBasicParsing).Content
-$ReleaseNotesURL = "http://www.scconfigmgr.com/wp-content/uploads/tools/DriverAutomationToolNotes.txt"
+$NewRelease = Get-DATSecureText -Uri "https://www.scconfigmgr.com/wp-content/uploads/tools/DriverAutomationToolRev.txt" -AllowedHosts @('www.scconfigmgr.com', 'msendpointmgr.com', 'www.msendpointmgr.com')
+$ReleaseNotesURL = "https://www.scconfigmgr.com/wp-content/uploads/tools/DriverAutomationToolNotes.txt"
 
 # Windows Version Hash Table
 $WindowsBuildHashTable = @{`
@@ -83,14 +420,14 @@ $WindowsBuildHashTable = @{`
 # // =================== DELL VARIABLES ================ //
 
 # Define Dell Download Sources
-$DellDownloadList = "http://downloads.dell.com/published/Pages/index.html"
-$DellDownloadBase = "http://downloads.dell.com"
-$DellDriverListURL = "http://en.community.dell.com/techcenter/enterprise-client/w/wiki/2065.dell-command-deploy-driver-packs-for-enterprise-client-os-deployment"
-$DellBaseURL = "http://en.community.dell.com"
+$DellDownloadList = "https://downloads.dell.com/published/Pages/index.html"
+$DellDownloadBase = "https://downloads.dell.com"
+$DellDriverListURL = "https://www.dell.com/support/kbdoc/en-us/0001234"
+$DellBaseURL = "https://www.dell.com"
 
 # Define Dell Download Sources
-$DellXMLCabinetSource = "http://downloads.dell.com/catalog/DriverPackCatalog.cab"
-$DellCatalogSource = "http://downloads.dell.com/catalog/CatalogPC.cab"
+$DellXMLCabinetSource = "https://downloads.dell.com/catalog/DriverPackCatalog.cab"
+$DellCatalogSource = "https://downloads.dell.com/catalog/CatalogPC.cab"
 
 # Define Dell Cabinet/XL Names and Paths
 $DellCabFile = [string]($DellXMLCabinetSource | Split-Path -Leaf)
@@ -107,9 +444,9 @@ $DellModelCabFiles = $null
 # // =================== HP VARIABLES ================ //
 
 # Define HP Download Sources
-$HPXMLCabinetSource = "http://ftp.hp.com/pub/caps-softpaq/cmit/HPClientDriverPackCatalog.cab"
-$HPSoftPaqSource = "http://ftp.hp.com/pub/softpaq/"
-$HPPlatFormList = "http://ftp.hp.com/pub/caps-softpaq/cmit/imagepal/ref/platformList.cab"
+$HPXMLCabinetSource = "https://ftp.hp.com/pub/caps-softpaq/cmit/HPClientDriverPackCatalog.cab"
+$HPSoftPaqSource = "https://ftp.hp.com/pub/softpaq/"
+$HPPlatFormList = "https://ftp.hp.com/pub/caps-softpaq/cmit/imagepal/ref/platformList.cab"
 
 # Define HP Cabinet/XL Names and Paths
 $HPCabFile = [string]($HPXMLCabinetSource | Split-Path -Leaf)
@@ -137,11 +474,6 @@ $global:LenovoModelDrivers = $null
 $global:LenovoModelXML = $null
 $global:LenovoModelType = $null
 $global:LenovoSystemSKU = $null
-
-# // =================== MICROSOFT VARIABLES ================ //
-
-# Define Microsoft Download Sources
-$MicrosoftXMLSource = "http://www.scconfigmgr.com/wp-content/uploads/xml/downloadlinks.xml"
 
 # // =================== COMMON VARIABLES ================ //
 
@@ -213,20 +545,21 @@ $WindowsVersion = ($OSName).Split(" ")[1]
 function DownloadDriverList {
 	global:Write-CMLogEntry -Value "======== Download Model Link Information ========" -Severity 1
 	if ($ComputerManufacturer -eq "Hewlett-Packard") {
-		if ((Test-Path -Path $TempDirectory\$HPCabFile) -eq $false) {
+		$hpCatalogPath = Join-Path $TempDirectory $HPCabFile
+		if ((Test-Path -LiteralPath $hpCatalogPath) -eq $false) {
 			global:Write-CMLogEntry -Value "======== Downloading HP Product List ========" -Severity 1
-			# Download HP Model Cabinet File
 			global:Write-CMLogEntry -Value "Info: Downloading HP driver pack cabinet file from $HPXMLCabinetSource" -Severity 1
 			try {
-				Start-BitsTransfer -Source $HPXMLCabinetSource -Destination $TempDirectory
-								# Expand Cabinet File
-				global:Write-CMLogEntry -Value "Info: Expanding HP driver pack cabinet file: $HPXMLFile" -Severity 1
-				Expand "$TempDirectory\$HPCabFile" -F:* "$TempDirectory\$HPXMLFile"
+				Invoke-DATSecureDownload -Uri $HPXMLCabinetSource -AllowedHosts @('ftp.hp.com') -Destination $hpCatalogPath | Out-Null
 			}
 			catch {
 				global:Write-CMLogEntry -Value "Error: $($_.Exception.Message)" -Severity 3
+				throw
 			}
 		}
+		Test-DATFileIntegrity -FilePath $hpCatalogPath -PublisherPattern '(?i)(?:^|,\s*)CN\s*=\s*(?:HP Inc\.|Hewlett-Packard[^,]*)(?:,|$)' | Out-Null
+		global:Write-CMLogEntry -Value "Info: Expanding validated HP driver pack cabinet file: $HPXMLFile" -Severity 1
+		Expand $hpCatalogPath -F:* "$TempDirectory\$HPXMLFile"
 		# Read XML File
 		if ($global:HPModelSoftPaqs -eq $null) {
 			global:Write-CMLogEntry -Value "Info: Reading driver pack XML file - $TempDirectory\$HPXMLFile" -Severity 1
@@ -259,20 +592,21 @@ function DownloadDriverList {
 		}
 	}
 	if ($ComputerManufacturer -eq "Dell") {
-		if ((Test-Path -Path $TempDirectory\$DellCabFile) -eq $false) {
+		$dellCatalogPath = Join-Path $TempDirectory $DellCabFile
+		if ((Test-Path -LiteralPath $dellCatalogPath) -eq $false) {
 			global:Write-CMLogEntry -Value "Info: Downloading Dell product list" -Severity 1
 			global:Write-CMLogEntry -Value "Info: Downloading Dell driver pack cabinet file from $DellXMLCabinetSource" -Severity 1
-			# Download Dell Model Cabinet File
 			try {
-				Start-BitsTransfer -Source $DellXMLCabinetSource -Destination $TempDirectory				
-				# Expand Cabinet File
-				global:Write-CMLogEntry -Value "Info: Expanding Dell driver pack cabinet file: $DellXMLFile" -Severity 1
-				Expand "$TempDirectory\$DellCabFile" -F:* "$TempDirectory\$DellXMLFile"
+				Invoke-DATSecureDownload -Uri $DellXMLCabinetSource -AllowedHosts @('downloads.dell.com') -Destination $dellCatalogPath | Out-Null
 			}
 			catch {
 				global:Write-CMLogEntry -Value "Error: $($_.Exception.Message)" -Severity 3
+				throw
 			}
-		}		
+		}
+		Test-DATFileIntegrity -FilePath $dellCatalogPath -PublisherPattern '(?i)(?:^|,\s*)CN\s*=\s*(?:Dell Technologies Inc\.|Dell Inc\.)(?:,|$)' | Out-Null
+		global:Write-CMLogEntry -Value "Info: Expanding validated Dell driver pack cabinet file: $DellXMLFile" -Severity 1
+		Expand $dellCatalogPath -F:* "$TempDirectory\$DellXMLFile"
 		if ($DellModelXML -eq $null) {
 			# Read XML File
 			global:Write-CMLogEntry -Value "Info: Reading driver pack XML file - $TempDirectory\$DellXMLFile" -Severity 1
@@ -299,15 +633,11 @@ function DownloadDriverList {
 		$LenovoProducts.Clear()
 		if ($global:LenovoModelDrivers -eq $null) {
 			try {
-				if ($global:ProxySettingsSet -eq $true) {
-					[xml]$global:LenovoModelXML = Invoke-WebRequest -Uri $LenovoXMLSource @global:InvokeProxyOptions
-				}
-				else {
-					[xml]$global:LenovoModelXML = Invoke-WebRequest -Uri $LenovoXMLSource
-				}
+				[xml]$global:LenovoModelXML = Get-DATSecureText -Uri $LenovoXMLSource -AllowedHosts @('download.lenovo.com')
 			}
 			catch {
 				global:Write-CMLogEntry -Value "Error: $($_.Exception.Message)" -Severity 3
+				throw
 			}
 			
 			# Read Web Site
@@ -338,42 +668,7 @@ function DownloadDriverList {
 	}
 	if ($ComputerManufacturer -eq "Microsoft") {
 		$MicrosoftProducts.Clear()
-		try {
-			if ($global:ProxySettingsSet -eq $true) {
-				
-				[xml]$global:LenovoModelXML = Invoke-WebRequest -Uri $LenovoXMLSource @global:InvokeProxyOptions
-				[xml]$MicrosoftModelList = Invoke-WebRequest -Uri $MicrosoftXMLSource @global:InvokeProxyOptions
-			}
-			else {
-				[xml]$MicrosoftModelList = Invoke-WebRequest -Uri $MicrosoftXMLSource
-			}
-		}
-		catch {
-			global:Write-CMLogEntry -Value "Error: $($_.Exception.Message)" -Severity 3
-		}
-		
-		# Read Web Site
-		global:Write-CMLogEntry -Value "Info: Reading Driver Pack URL - $MicrosoftXMLSource" -Severity 1
-		
-		# Find Models Contained Within Downloaded XML
-		if ($OSComboBox.SelectedItem -eq "Windows 10") {
-			$OSSelected = "Win10"
-			$MicrosoftModels = ($MicrosoftModelList).Drivers.Model | Where-Object {
-				($_.OSSupport.Name -like "*$OSSelected*")
-			}
-		}
-		if ($OSComboBox.SelectedItem -eq "Windows 8.1") {
-			$OSSelected = "Win81"
-			$MicrosoftModels = ($MicrosoftModelList).Drivers.Model | Where-Object {
-				($_.OSSupport.Name -like "*$OSSelected*")
-			}
-		}
-		if ($OSComboBox.SelectedItem -eq "Windows 7") {
-			$OSSelected = "Win7"
-			$MicrosoftModels = ($MicrosoftModelList).Drivers.Model | Where-Object {
-				($_.OSSupport.Name -like "*$OSSelected*")
-			}
-		}
+		Stop-DATMicrosoftLegacyCatalog
 	}
 }
 
@@ -399,43 +694,16 @@ function FindLenovoDriver {
 		$Architecture
 	)
 	
-	#Case for direct link to a zip file
-	if ($URI.EndsWith(".zip")) {
-		return $URI
-	}
-	
-	$err = @()
-	
-	#Get the content of the website
-	try {
-		if ($global:ProxySettingsSet -eq $true) {
-			$html = Invoke-WebRequest –Uri $URI @global:InvokeProxyOptions
-			# Fall back to using specified credentials
-			if ($html -eq $null) {
-				$html = Invoke-WebRequest –Uri $URI @global:InvokeProxyOptions
-			}
-		}
-		else {
-			$html = Invoke-WebRequest –Uri $URI
-		}
-	}
-	catch {
-		global:Write-CMLogEntry -Value "Error: $($_.Exception.Message)" -Severity 3
-	}
+	$pageUrl = Test-DATSecureDownloadUri -Uri $URI -AllowedHosts @('support.lenovo.com')
+	$html = Get-DATSecureText -Uri $pageUrl -AllowedHosts @('support.lenovo.com')
 	
 	#Create an array to hold all the links to exe files
 	$Links = @()
 	$Links.Clear()
-	
-	#determine if the URL resolves to the old download location
-	if ($URI -like "*olddownloads*") {
-		#Quickly grab the links that end with exe
-		$Links = (($html.Links | Where-Object {
-					$_.href -like "*exe"
-				}) | Where class -eq "downloadBtn").href
+	$discoveredLinks = (Select-String 'https:\/\/[^\s"''<>]+\.exe(?:\?[^\s"''<>]*)?' -InputObject $html -AllMatches).Matches.Value
+	foreach ($link in $discoveredLinks) {
+		$Links += Test-DATSecureDownloadUri -Uri $link -AllowedHosts @('download.lenovo.com')
 	}
-	
-	$Links = ((Select-string '(http[s]?)(:\/\/)([^\s,]+.exe)(?=")' -InputObject ($html).Rawcontent -AllMatches).Matches.Value)
 	
 	if ($Links.Count -eq 0) {
 		return $null
@@ -464,29 +732,11 @@ function FindLenovoDriver {
 	}
 	
 	if ($MatchingLink -ne $null) {
-		return $MatchingLink
+		return $MatchingLink | Select-Object -First 1
 	}
 	else {
 		return "badLink"
 	}
-}
-
-function Get-RedirectedUrl {
-	Param (
-		[Parameter(Mandatory = $true)]
-		[String]
-		$URL
-	)
-	
-	$Request = [System.Net.WebRequest]::Create($URL)
-	$Request.AllowAutoRedirect = $false
-	$Request.Timeout = 3000
-	$Response = $Request.GetResponse()
-	
-	if ($Response.ResponseUri) {
-		$Response.GetResponseHeader("Location")
-	}
-	$Response.Close()
 }
 
 function LenovoModelTypeFinder {
@@ -503,12 +753,7 @@ function LenovoModelTypeFinder {
 	)
 	try {
 		if ($global:LenovoModelDrivers -eq $null) {
-			if ($global:ProxySettingsSet -eq $true) {
-				[xml]$global:LenovoModelXML = Invoke-WebRequest -Uri $LenovoXMLSource @global:InvokeProxyOptions
-			}
-			else {
-				[xml]$global:LenovoModelXML = Invoke-WebRequest -Uri $LenovoXMLSource
-			}
+			[xml]$global:LenovoModelXML = Get-DATSecureText -Uri $LenovoXMLSource -AllowedHosts @('download.lenovo.com')
 			
 			# Read Web Site
 			global:Write-CMLogEntry -Value "Info: Reading driver pack URL - $LenovoXMLSource" -Severity 1
@@ -520,6 +765,7 @@ function LenovoModelTypeFinder {
 	}
 	catch {
 		global:Write-CMLogEntry -Value "Error: $($_.Exception.Message)" -Severity 3
+		throw
 	}
 	
 	if ($ComputerModel.Length -gt 0) {
@@ -543,27 +789,6 @@ function LenovoModelTypeFinder {
 function InitiateDownloads {
 	
 	$Product = "Intune"
-	
-	# Driver Download ScriptBlock
-	$DriverDownloadJob = {
-		Param ([string]
-			$TempDirectory,
-			[string]
-			$ComputerModel,
-			[string]
-			$DriverCab,
-			[string]
-			$DriverDownloadURL
-		)
-		
-		try {
-			# Start Driver Download	
-			Start-BitsTransfer -DisplayName "$ComputerModel-DriverDownload" -Source $DriverDownloadURL -Destination "$($TempDirectory + '\Driver Cab\' + $DriverCab)"
-		}
-		catch [System.Exception] {
-			global:Write-CMLogEntry -Value "Error: $($_.Exception.Message)" -Severity 3
-		}
-	}
 	
 	global:Write-CMLogEntry -Value "======== Starting Download Processes ========" -Severity 1
 	global:Write-CMLogEntry -Value "Info: Operating System specified: Windows $($WindowsVersion)" -Severity 1
@@ -605,16 +830,21 @@ function InitiateDownloads {
 			$DellModelXML.GetType().FullName
 			$DellModelCabFiles = $DellModelXML.driverpackmanifest.driverpackage
 		}
-		$ComputerModelURL = $DellDownloadBase + "/" + ($DellModelCabFiles | Where-Object {
+		$selectedDellPackage = $DellModelCabFiles | Where-Object {
 				((($_.SupportedOperatingSystems).OperatingSystem).osCode -like "*$WindowsVersion*") -and ($_.SupportedSystems.Brand.Model.Name -like "*$ComputerModel*")
-			}).delta
+			} | Select-Object -First 1
+		if ($null -eq $selectedDellPackage) {
+			throw "No Dell driver package was found for $ComputerModel running Windows $WindowsVersion."
+		}
+		$ComputerModelURL = $DellDownloadBase + "/" + $selectedDellPackage.delta
 		$ComputerModelURL = $ComputerModelURL.Replace("\", "/")
-		$DriverDownload = $DellDownloadBase + "/" + ($DellModelCabFiles | Where-Object {
-				((($_.SupportedOperatingSystems).OperatingSystem).osCode -like "*$WindowsVersion*") -and ($_.SupportedSystems.Brand.Model.Name -like "*$ComputerModel")
-			}).path
-		$DriverCab = (($DellModelCabFiles | Where-Object {
-					((($_.SupportedOperatingSystems).OperatingSystem).osCode -like "*$WindowsVersion*") -and ($_.SupportedSystems.Brand.Model.Name -like "*$ComputerModel")
-				}).path).Split("/") | select -Last 1
+		$DriverDownload = $DellDownloadBase + "/" + $selectedDellPackage.path
+		$DriverDownload = Test-DATSecureDownloadUri -Uri ($DriverDownload.Replace('\', '/')) -AllowedHosts @('downloads.dell.com')
+		$DriverCab = $selectedDellPackage.path.Split("/") | Select-Object -Last 1
+		$DriverExpectedSha256 = Get-DATCatalogSha256 -CatalogNode $selectedDellPackage
+		if ([string]::IsNullOrWhiteSpace($DriverExpectedSha256)) {
+			throw "The Dell catalog did not publish the required SHA256 for $DriverCab."
+		}
 		$DriverRevision = (($DriverCab).Split("-")[2]).Trim(".cab")
 		$DellSystemSKU = ($DellModelCabFiles.supportedsystems.brand.model | Where-Object {
 				$_.Name -eq $ComputerModel
@@ -624,7 +854,7 @@ function InitiateDownloads {
 		}
 		global:Write-CMLogEntry -Value "Info: Dell System Model ID is : $DellSystemSKU" -Severity 1
 	}
-	if ($ComputerManufacturer -eq "HP") {
+	if ($ComputerManufacturer -in @("HP", "Hewlett-Packard")) {
 		global:Write-CMLogEntry -Value "Info: Setting HP variables" -Severity 1
 		if ($global:HPModelSoftPaqs -eq $null) {
 			[xml]$global:HPModelXML = Get-Content -Path $TempDirectory\$HPXMLFile
@@ -645,12 +875,28 @@ function InitiateDownloads {
 		$HPSoftPaq = $HPSoftPaqSummary.SoftPaqID
 		$HPSoftPaqDetails = $global:HPModelXML.newdataset.hpclientdriverpackcatalog.softpaqlist.softpaq | Where-Object {
 			$_.ID -eq "$HPSoftPaq"
+		} | Select-Object -First 1
+		if ($null -eq $HPSoftPaqDetails) {
+			throw "No HP SoftPaq details were found for catalog entry $HPSoftPaq."
 		}
 		$ComputerModelURL = $HPSoftPaqDetails.URL
-		# Replace FTP for HTTP for Bits Transfer Job
-		$DriverDownload = ($HPSoftPaqDetails.URL).TrimStart("ftp:")
+		try {
+			[uri]$hpCatalogUri = [string]$HPSoftPaqDetails.URL
+		}
+		catch {
+			throw "The HP catalog supplied an invalid payload URL: $($HPSoftPaqDetails.URL)"
+		}
+		if ($hpCatalogUri.DnsSafeHost -ne 'ftp.hp.com') {
+			throw "The HP catalog supplied an unapproved payload host: $($hpCatalogUri.DnsSafeHost)"
+		}
+		$DriverDownload = "https://ftp.hp.com$($hpCatalogUri.PathAndQuery)"
+		$DriverDownload = Test-DATSecureDownloadUri -Uri $DriverDownload -AllowedHosts @('ftp.hp.com')
 		$DriverCab = $ComputerModelURL | Split-Path -Leaf
 		$DriverRevision = "$($HPSoftPaqDetails.Version)"
+		$DriverExpectedSha256 = Get-DATCatalogSha256 -CatalogNode $HPSoftPaqDetails
+		if ([string]::IsNullOrWhiteSpace($DriverExpectedSha256)) {
+			throw "The HP catalog did not publish the required SHA256 for $DriverCab."
+		}
 		$HPSystemSKU = ($global:HPModelSoftPaqs | Where-Object {
 				$_.SystemName -match $ComputerModel
 			} | select -first 1).SystemID
@@ -658,11 +904,11 @@ function InitiateDownloads {
 	}
 	if ($ComputerManufacturer -eq "Lenovo") {
 		global:Write-CMLogEntry -Value "Info: Setting Lenovo variables" -Severity 1
-		LenovoModelTypeFinder -Model $ComputerModel -OS $OS
+		LenovoModelTypeFinder -ComputerModel $ComputerModel -OS $OS
 		global:Write-CMLogEntry -Value "Info: $ComputerManufacturer $ComputerModel matching model type: $global:LenovoModelType" -Severity 1 -SkipGuiLog $false
 		
 		if ($global:LenovoModelDrivers -ne $null) {
-			[xml]$global:LenovoModelXML = (New-Object System.Net.WebClient).DownloadString("$LenovoXMLSource")
+			[xml]$global:LenovoModelXML = Get-DATSecureText -Uri $LenovoXMLSource -AllowedHosts @('download.lenovo.com')
 			# Set XML Object
 			$global:LenovoModelXML.GetType().FullName
 			$global:LenovoModelDrivers = $global:LenovoModelXML.Products
@@ -702,6 +948,7 @@ function InitiateDownloads {
 			}
 			
 			If ($DriverDownload -ne $null) {
+				$DriverDownload = Test-DATSecureDownloadUri -Uri $DriverDownload -AllowedHosts @('download.lenovo.com')
 				$DriverCab = $DriverDownload | Split-Path -Leaf
 				$DriverRevision = ($DriverCab.Split("_") | Select -Last 1).Trim(".exe")
 			}
@@ -711,27 +958,7 @@ function InitiateDownloads {
 		}
 	}
 	if ($ComputerManufacturer -eq "Microsoft") {
-		global:Write-CMLogEntry -Value "Info: Setting Microsoft variables" -Severity 1
-		[xml]$MicrosoftModelXML = (New-Object System.Net.WebClient).DownloadString("$MicrosoftXMLSource")
-		# Set XML Object
-		$MicrosoftModelXML.GetType().FullName
-		$MicrosoftModelDrivers = $MicrosoftModelXML.Drivers
-		$ComputerModelURL = ((($MicrosoftModelDrivers.Model | Where-Object {
-						($_.name -eq "$ComputerModel")
-					}).OSSupport) | Where-Object {
-				$_.Name -eq "win$(($WindowsVersion).Trim("."))"
-			}).DownloadURL
-		$MSSystemSKU = (($MicrosoftModelDrivers.model | Where-Object {
-					$_.name -eq "$ComputerModel"
-				}).wmi).name
-		if ($ComputerModelURL -notmatch ".msi") {
-			$DriverDownload = Get-RedirectedUrl -URL "$ComputerModelURL" -ErrorAction Continue -WarningAction Continue
-		}
-		else {
-			$DriverDownload = $ComputerModelURL
-		}
-		$DriverCab = $DriverDownload | Split-Path -Leaf
-		$DriverRevision = ($DriverCab.Split("_") | Select -Last 2).Trim(".msi")[0]
+		Stop-DATMicrosoftLegacyCatalog
 	}
 	
 	# Driver variables & switches
@@ -778,42 +1005,42 @@ function InitiateDownloads {
 		$ComputerModel = $ComputerModel -replace '/', '-'
 		$ComputerModel = $ComputerModel.Trim()
 		Set-Location -Path $TempDirectory
-		# Check for destination directory, create if required and download the driver cab
-		if ((Test-Path -Path $($TempDirectory + "\Driver Cab\" + $DriverCab)) -eq $false) {
-			New-Item -ItemType Directory -Path $($TempDirectory + "\Driver Cab")
+		$driverCabDirectory = Join-Path $TempDirectory 'Driver Cab'
+		$driverPayloadPath = Join-Path $driverCabDirectory $DriverCab
+		if ((Test-Path -LiteralPath $driverPayloadPath) -eq $false) {
+			New-Item -ItemType Directory -Path $driverCabDirectory -Force | Out-Null
 			global:Write-CMLogEntry -Value "$($Product): Downloading $DriverCab driver cab file" -Severity 1
 			global:Write-CMLogEntry -Value "$($Product): Downloading from URL: $DriverDownload" -Severity 1
-			
-			Start-Job -Name "$ComputerModel-DriverDownload" -ScriptBlock $DriverDownloadJob -ArgumentList ($TempDirectory, $ComputerModel, $DriverCab, $DriverDownload)
-			sleep -Seconds 5
-			$BitsJob = Get-BitsTransfer | Where-Object {
-				$_.DisplayName -match "$ComputerModel-DriverDownload"
-			}
-			while (($BitsJob).JobState -eq "Connecting") {
-				global:Write-CMLogEntry -Value "$($Product): Establishing connection to $DriverDownload" -Severity 1
-				sleep -seconds 30
-			}
-			while (($BitsJob).JobState -eq "Transferring") {
-				if ($BitsJob.BytesTotal -ne $null) {
-					$PercentComplete = [int](($BitsJob.BytesTransferred * 100)/$BitsJob.BytesTotal);
-					global:Write-CMLogEntry -Value "$($Product): Downloaded $([int]((($BitsJob).BytesTransferred)/ 1MB)) MB of $([int]((($BitsJob).BytesTotal)/ 1MB)) MB ($PercentComplete%). Next update in 30 seconds." -Severity 1
-					sleep -seconds 30
+			try {
+				switch -Wildcard ($ComputerManufacturer) {
+					'Dell' {
+						$payloadHosts = @('downloads.dell.com')
+					}
+					'HP' {
+						$payloadHosts = @('ftp.hp.com')
+					}
+					'Hewlett-Packard' {
+						$payloadHosts = @('ftp.hp.com')
+					}
+					'Lenovo' {
+						$payloadHosts = @('download.lenovo.com')
+					}
+					default {
+						throw "No secure download host policy is defined for vendor '$ComputerManufacturer'."
+					}
 				}
-				else {
-					global:Write-CMLogEntry -Value "$($Product): Download issues detected. Cancelling download process" -Severity 2
-					Get-BitsTransfer | Where-Object {
-						$_.DisplayName -eq "$ComputerModel-DriverDownload"
-					} | Remove-BitsTransfer
-				}
+				Invoke-DATSecureDownload -Uri $DriverDownload -AllowedHosts $payloadHosts -Destination $driverPayloadPath | Out-Null
 			}
-			Get-BitsTransfer | Where-Object {
-				$_.DisplayName -eq "$ComputerModel-DriverDownload"
-			} | Complete-BitsTransfer
+			catch {
+				global:Write-CMLogEntry -Value "Error: Driver payload download failed: $($_.Exception.Message)" -Severity 3
+				throw
+			}
 			global:Write-CMLogEntry -Value "$($Product): Driver revision: $DriverRevision" -Severity 1
 		}
 		else {
-			global:Write-CMLogEntry -Value "$($Product): Skipping $DriverCab. Driver pack already downloaded." -Severity 1
+			global:Write-CMLogEntry -Value "$($Product): Revalidating cached $DriverCab before use." -Severity 1
 		}
+		Assert-DATVendorPayload -Vendor $ComputerManufacturer -FilePath $driverPayloadPath -ExpectedSha256 $DriverExpectedSha256 | Out-Null
 		
 		# Cater for HP / Model Issue
 		$ComputerModel = $ComputerModel -replace '/', '-'
@@ -826,6 +1053,7 @@ function InitiateDownloads {
 				New-Item -ItemType Directory -Path "$($DriverExtractDest)"
 			}
 			if ((Get-ChildItem -Path "$DriverExtractDest" -Recurse -Filter *.inf -File).Count -eq 0) {
+				Assert-DATVendorPayload -Vendor $ComputerManufacturer -FilePath $driverPayloadPath -ExpectedSha256 $DriverExpectedSha256 | Out-Null
 				global:Write-CMLogEntry -Value "==================== $PRODUCT DRIVER EXTRACT ====================" -Severity 1
 				global:Write-CMLogEntry -Value "$($Product): Expanding driver CAB source file: $DriverCab" -Severity 1
 				global:Write-CMLogEntry -Value "$($Product): Driver CAB destination directory: $DriverExtractDest" -Severity 1
@@ -833,7 +1061,7 @@ function InitiateDownloads {
 					global:Write-CMLogEntry -Value "$($Product): Extracting $ComputerManufacturer drivers to $DriverExtractDest" -Severity 1
 					Expand "$DriverSourceCab" -F:* "$DriverExtractDest"
 				}				
-				if ($ComputerManufacturer -eq "HP") {
+				if ($ComputerManufacturer -in @("HP", "Hewlett-Packard")) {
 					# Driver Silent Extract Switches
 					$HPTemp = $TempDirectory + "\" + $ComputerModel + "\Win" + $WindowsVersion + $Architecture
 					$HPTemp = $HPTemp -replace '/', '-'
@@ -870,22 +1098,6 @@ function InitiateDownloads {
 						sleep -seconds 30
 					}
 				}				
-				if ($ComputerManufacturer -eq "Microsoft") {
-					# Driver Silent Extract Switches
-					$MicrosoftTemp = Join-Path -Path $TempDirectory -ChildPath "\$ComputerModel\Win$WindowsVersion$Architecture"
-					$MicrosoftTemp = $MicrosoftTemp -replace '/', '-'
-					
-					# Driver Silent Extract Switches
-					$MicrosoftSilentSwitches = "/a" + '"' + $($TempDirectory + "\Driver Cab\" + $DriverCab) + '"' + '/QN TARGETDIR="' + $MicrosoftTemp + '"'
-					global:Write-CMLogEntry -Value "$($Product): Extracting $ComputerManufacturer drivers to $MicrosoftTemp" -Severity 1
-					$DriverProcess = Start-Process msiexec.exe -ArgumentList $MicrosoftSilentSwitches -PassThru
-					
-					# Wait for Microsoft Driver Process To Finish
-					While ((Get-Process).ID -eq $DriverProcess.ID) {
-						global:Write-CMLogEntry -Value "$($Product): Waiting for extract process (Process ID: $($DriverProcess.ID)) to complete..  Next check in 30 seconds" -Severity 1
-						sleep -seconds 30
-					}
-				}
 			}
 			else {
 				global:Write-CMLogEntry -Value "Skipping. Drivers already extracted." -Severity 1
@@ -913,6 +1125,34 @@ function InitiateDownloads {
 	}
 }
 
+function Invoke-DATPnPUtil {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$InfPath,
+		[Parameter(Mandatory = $true)]
+		[string]$LogPath,
+		[scriptblock]$ProcessInvoker
+	)
+
+	if ($null -eq $ProcessInvoker) {
+		$ProcessInvoker = {
+			param($Executable, $Arguments)
+			$Output = @(& $Executable @Arguments 2>&1)
+			[pscustomobject]@{
+				ExitCode = $LASTEXITCODE
+				Output = $Output
+			}
+		}
+	}
+
+	$PnPUtilPath = Join-Path $env:SystemRoot "System32\pnputil.exe"
+	$Result = & $ProcessInvoker $PnPUtilPath @("/add-driver", $InfPath, "/install")
+	@($Result.Output) | Out-File -FilePath $LogPath -Append
+	if ($Result.ExitCode -ne 0) {
+		throw "PnPUtil failed for '$InfPath' with exit code $($Result.ExitCode)."
+	}
+}
+
 function Update-Drivers {
 	$DriverPackagePath = Join-Path $TempDirectory "\Driver Files" 
 	Write-CMLogEntry -Value "Starting driver installation process" -Severity 1
@@ -920,9 +1160,11 @@ function Update-Drivers {
 	# Apply driver maintenance package
 	try {
 		if ((Get-ChildItem -Path $DriverPackagePath -Filter *.inf -Recurse).count -gt 0) {
+			$PnPUtilLogPath = Join-Path -Path $LogDirectory -ChildPath Run-IntuneDriverUpdate.log
+			Set-Content -LiteralPath $PnPUtilLogPath -Value $null
 			Get-ChildItem -Path $DriverPackagePath -Filter *.inf -Recurse | ForEach-Object {
-				pnputil /add-driver $_.FullName /install
-			} | Out-File -FilePath (Join-Path -Path $LogDirectory -ChildPath Run-IntuneDriverUpdate.log) -Force
+				Invoke-DATPnPUtil -InfPath $_.FullName -LogPath $PnPUtilLogPath
+			}
 			Write-CMLogEntry -Value "Driver installation complete. Restart required" -Severity 1; exit 0
 		}
 		else {

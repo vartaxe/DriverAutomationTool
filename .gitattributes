@@ -1,0 +1,18 @@
+# Line-ending policy
+#
+# The Driver Automation Tool is a Windows-only product and the SHA256 values in
+# "Driver Automation Tool/FileHashes.md" are generated from the checked-out
+# working copy. Without an explicit policy the checked-out bytes depend on each
+# user's core.autocrlf setting, so the published hashes could not be verified
+# reliably. Pinning the source files to CRLF makes every clone byte-identical.
+
+*.ps1    text eol=crlf
+*.psm1   text eol=crlf
+*.psd1   text eol=crlf
+*.xaml   text eol=crlf
+*.config text eol=crlf
+
+# Catalog payloads are generated/downloaded data that is already stored with
+# CRLF. Opt them out of normalisation so they are never silently rewritten.
+Data/*.json -text
+Data/*.xml  -text

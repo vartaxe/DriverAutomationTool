@@ -4,6 +4,12 @@
 
 <h1 align="center">Driver Automation Tool</h1>
 
+> **Fork notice:** This repository is a maintained fork of
+> [Maurice Daly's Driver Automation Tool](https://github.com/maurice-daly/DriverAutomationTool).
+> The original project, authorship, license, website, and product identity remain attributed to
+> the upstream project. Fork-specific maintenance changes are recorded in this repository's pull
+> request history.
+
 <p align="center">
   Enterprise-grade automation for downloading, extracting, and packaging OEM driver and BIOS update packages for ConfigMgr and Intune.
   <br /><br />
@@ -15,7 +21,7 @@
 ---
 
 ## Important
-**August 17th 2026** - Due to a number of functional changes, it is recommened that anyone running DAT builds 10.1.9.0 and lower, upgrade immediately. The API will no longer serve requests for older verisons.
+**August 17th 2026** - Due to a number of functional changes, it is recommended that anyone running DAT builds 10.1.9.0 and lower upgrade immediately. The API will no longer serve requests for older versions.
 
 ## Overview
 
@@ -33,12 +39,27 @@ The Driver Automation Tool is a PowerShell WPF desktop application that automate
 | Dell | ✅ | ✅ |
 | Lenovo | ✅ | ✅ |
 | Microsoft Surface | ✅ | — |
-| Acer | ✅ | ✅ |
+| Acer | ✅ | — |
+| Panasonic | ✅ | — |
+| Fujitsu | ✅ | — |
+| ASUS | ✅ | — |
+
+Driver catalog discovery and packaging covers all eight OEMs listed above. Standalone BIOS
+package creation and installation is currently validated only for Dell, HP, and Lenovo.
+Microsoft Surface firmware is delivered through driver packages; BIOS packages for Acer,
+Panasonic, Fujitsu, and ASUS are not generated.
+
+Getac is not an automated catalog provider in this project. The bundled apply script
+recognizes Getac hardware, so administrators can use the **Custom Driver Pack** workflow
+or import a package manually after sourcing and validating the applicable drivers through
+Getac's published support channels. Package metadata must match the device manufacturer,
+model/SystemSKU, operating system, and architecture. This recognition does not add
+automated Getac catalog discovery, BIOS download, or firmware flashing.
 
 ## Core Features
 
 - **Automated Driver Downloads** — Accelerated downloads via `curl.exe` with HTTP resume support, configurable retry logic (10 retries, 60s delay), and automatic hash verification
-- **Multi-OEM Support** — Full support for HP, Dell, Lenovo, Microsoft Surface, and Acer with automatic catalog discovery
+- **Multi-OEM Support** — Driver catalog discovery and packaging for HP, Dell, Lenovo, Microsoft Surface, Acer, Panasonic, Fujitsu, and ASUS
 - **BIOS Update Management** — Version comparison, release classification (Recommended/Critical), minimum version validation, and hash verification
 - **WIM Packaging** — Create WIM packages using DISM (built-in), wimlib (multi-threaded), or 7-Zip (recommended) with configurable compression
 - **ConfigMgr Integration** — Automatic package creation, content distribution to DPs, WinRM/WMI connectivity, and deployment state tracking
@@ -53,11 +74,32 @@ The Driver Automation Tool is a PowerShell WPF desktop application that automate
 | **WIM Package Only** | Download → Extract → Create WIM file only (no deployment) |
 | **Download Only** | Download and extract packages without any WIM packaging or deployment |
 
+### Windows deployment compatibility
+
+Catalog recognition in DAT does not certify the Configuration Manager, Windows ADK,
+WinPE, operating-system image, or OEM firmware combination used for deployment.
+Windows 11 26H1 is a specialized new-hardware release rather than a general upgrade
+target. Configuration Manager 2509 does not support Windows 11 26H2 clients; use
+Configuration Manager 2603 or later for 26H2 task sequences. Current Windows 11 ADKs
+do not include x86 WinPE.
+
+Confirm the current
+[Windows 11 support matrix](https://learn.microsoft.com/intune/configmgr/core/plan-design/configs/support-for-windows-11)
+and
+[Windows ADK support matrix](https://learn.microsoft.com/intune/configmgr/core/plan-design/configs/support-for-windows-adk)
+before generating or deploying packages. MDT integration is retired and unsupported
+with Configuration Manager 2509 and later; DAT's ConfigMgr workflows do not make
+legacy MDT task-sequence steps supported.
+
 ## Getting Started
 
 ### 1. Download
 
-Download the latest release from this repository. The tool is a portable PowerShell application with no installer required.
+Download the latest source from the
+[official upstream repository](https://github.com/maurice-daly/DriverAutomationTool/archive/refs/heads/master.zip)
+or follow the [official project website](https://www.driverautomationtool.com). The tool is a
+portable PowerShell application with no installer required. This maintenance fork does not publish
+independent GitHub Releases.
 
 <p align="center">
   <img src="Content/Screenshots/GitHubDownload.png" alt="GitHub Download" width="700" />
@@ -312,4 +354,3 @@ If you find this tool useful and would like to support its continued development
 ## Virus Warning
 
 Due to the nature of how the PowerShell script downloads EXEs and extracts / interacts with them, the code can be picked up as a false positive on some AV solutions. The code is all available for clear text review with your security team in this instance. 
-

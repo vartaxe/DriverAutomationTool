@@ -982,17 +982,26 @@ using System.Security.Cryptography.X509Certificates;
 public class DATPinnedCertificateValidation
 {
     public static string ExpectedThumbprint = String.Empty;
+    public static RemoteCertificateValidationCallback PreviousCallback = null;
     public static void Enable(string thumbprint)
     {
         ExpectedThumbprint = thumbprint;
+        PreviousCallback = ServicePointManager.ServerCertificateValidationCallback;
         ServicePointManager.ServerCertificateValidationCallback =
             delegate(Object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
             {
                 if (errors == SslPolicyErrors.None) { return true; }
+                if (errors != SslPolicyErrors.RemoteCertificateChainErrors) { return false; }
                 if (certificate == null) { return false; }
                 if (String.IsNullOrEmpty(ExpectedThumbprint)) { return false; }
                 return String.Equals(certificate.GetCertHashString(), ExpectedThumbprint, StringComparison.OrdinalIgnoreCase);
             };
+    }
+    public static void Restore()
+    {
+        ServicePointManager.ServerCertificateValidationCallback = PreviousCallback;
+        PreviousCallback = null;
+        ExpectedThumbprint = String.Empty;
     }
 }
 '@
@@ -1006,6 +1015,14 @@ public class DATPinnedCertificateValidation
 
 		# Handle return value
 		return $true
+	}
+
+	function Reset-PinnedCertificateValidationCallback {
+		if ($Script:CertificateValidationCallbackEnabled -eq $true -and
+			("DATPinnedCertificateValidation" -as [type])) {
+			[DATPinnedCertificateValidation]::Restore()
+			$Script:CertificateValidationCallbackEnabled = $false
+		}
 	}
 
 	function Test-AuthenticationFailure {
@@ -1127,6 +1144,9 @@ public class DATPinnedCertificateValidation
 							}
 							catch [System.Exception] {
 								$LastErrorRecord = $PSItem
+							}
+							finally {
+								Reset-PinnedCertificateValidationCallback
 							}
 						}
 						else {

@@ -2030,7 +2030,11 @@ if ($TestAdminService) {
         if (($null -ne $EndpointCert) -and ($null -ne $EndpointCert.Certificate)) { $ProbeThumbprint = ConvertTo-Thumbprint $EndpointCert.Certificate.Thumbprint }
         $null = Set-ProbeCertificateValidation -Thumbprint $ProbeThumbprint
         $ProbeUri = "https://{0}/AdminService/wmi/SMS_Package?`$top=1" -f $Endpoint
-        $ProbeSecurePassword = ConvertTo-SecureString -String $Password -AsPlainText -Force
+        $ProbeSecurePassword = New-Object System.Security.SecureString
+        foreach ($Character in $Password.ToCharArray()) {
+            $ProbeSecurePassword.AppendChar($Character)
+        }
+        $ProbeSecurePassword.MakeReadOnly()
 
         # Try the user name formats in the order the scripts do: the configured value, then the
         # alternatives they fall back to after a 401 (ConfigMgr 2603+ rejects bare user names)

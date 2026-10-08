@@ -20,7 +20,10 @@ param (
     [switch]$WhatIf,
     # Run as the Intune / ConfigMgr uninstall command. A flashed BIOS cannot be rolled back by
     # this script, so this logs and exits 0 without changing anything.
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    # Safe preflight used by packaging validation and regression tests. It exercises the generated
+    # installer's manufacturer gate without extracting content or touching firmware.
+    [switch]$ValidateManufacturerOnly
 )
 
 # --- 64-bit Relaunch Guard ---
@@ -53,6 +56,7 @@ if (-not [Environment]::Is64BitProcess -and [Environment]::Is64BitOperatingSyste
     $relaunchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$scriptPath`"")
     if ($WhatIf) { $relaunchArgs += '-WhatIf' }
     if ($Uninstall) { $relaunchArgs += '-Uninstall' }
+    if ($ValidateManufacturerOnly) { $relaunchArgs += '-ValidateManufacturerOnly' }
     Write-Host "INFO: Launching 64-bit process: $relaunchPath $($relaunchArgs -join ' ')" -ForegroundColor Cyan
     try {
         $proc = Start-Process -FilePath $relaunchPath -ArgumentList $relaunchArgs -Wait -PassThru -NoNewWindow -ErrorAction Stop
@@ -716,44 +720,39 @@ function Get-LenovoSystemFirmwareVersion {
         DWORD under HKLM:\SYSTEM\CurrentControlSet\Control\FirmwareResources\{GUID}\Version.
 
         The high-word/low-word split is Lenovo's convention (other OEMs pack the same DWORD
-        differently), so this is only ever called from the Lenovo comparison. Returns an empty
-        string when the system firmware resource cannot be identified, leaving the caller to fall
-        back rather than compare against another component's firmware.
-
-        The resource is identified by its PnP compatible ID, never by position or display name
-        (#966). ESRT firmware type 1 (system firmware) surfaces as UEFI\CC_00010001; device
-        firmware -- TrackPoint, docks, retimers, NVMe -- as UEFI\CC_00010002. FirmwareResources
-        lists only the resources Windows has installed an update for, so a lone key there can be a
-        TrackPoint (a ThinkPad X1 2-in-1 Gen 10 read 0x0043D518 as "System Firmware 67.54552"), and
-        the display name is localised ("Systemfirmware" on German Windows).
-
-        The version comes from the device's hardware ID, UEFI\RES_{GUID}&REV_<hex>, which carries
-        the ESRT version even when FirmwareResources has no key for the system firmware at all.
+        differently), so this is only ever called from the Lenovo comparison. The system-firmware
+        compatible ID is locale-independent; friendly names such as "System Firmware" are localized,
+        and a lone ESRT resource can instead represent device firmware such as TrackPoint firmware.
+        Returns an empty string unless exactly one system-firmware device and a valid Lenovo version
+        can be identified, leaving the caller to fall back rather than compare another component.
     #>
 
     try {
-        $systemFirmware = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPClass='Firmware'" -ErrorAction Stop |
-            Where-Object { @($_.CompatibleID) -contains 'UEFI\CC_00010001' })
-        if ($systemFirmware.Count -ne 1) { return '' }
+        $systemFirmwareDevices = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPClass='Firmware'" -ErrorAction Stop |
+            Where-Object {
+                @($_.CompatibleID) | Where-Object { $_ -ieq 'UEFI\CC_00010001' }
+            })
+        if ($systemFirmwareDevices.Count -ne 1) { return '' }
 
-        $raw = $null
-        foreach ($hardwareId in @($systemFirmware[0].HardwareID)) {
-            if ($hardwareId -match '&REV_([0-9A-Fa-f]{1,8})$') {
-                $raw = [Convert]::ToUInt32($Matches[1], 16)
+        $systemFirmwareDevice = $systemFirmwareDevices[0]
+        [Nullable[uint32]]$rawVersion = $null
+        foreach ($hardwareId in @($systemFirmwareDevice.HardwareID)) {
+            if ([string]$hardwareId -match '(?i)&REV_([0-9A-F]{1,8})$') {
+                $rawVersion = [Convert]::ToUInt32($Matches[1], 16)
                 break
             }
         }
-        if ($null -eq $raw -and $systemFirmware[0].DeviceID -match '(\{[0-9A-Fa-f\-]{36}\})') {
-            $resourceKey = Join-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FirmwareResources' $Matches[1]
-            $raw = (Get-ItemProperty -Path $resourceKey -Name 'Version' -ErrorAction SilentlyContinue).Version
-        }
-        if ($null -eq $raw) { return '' }
 
-        $value = [uint32]$raw
-        $major = [int]($value -shr 16)
-        $minor = [int]($value -band 0xFFFF)
-        # Lenovo encodes System Firmware 1.18 as 0x00010012. A minor above 0xFF is not a Lenovo
-        # system firmware version, so refuse it rather than compare against it.
+        if ($null -eq $rawVersion -and [string]$systemFirmwareDevice.DeviceID -match '(?i)^UEFI\\RES_(\{[0-9A-F-]{36}\})\\') {
+            $resourcePath = Join-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FirmwareResources' $Matches[1]
+            if (Test-Path $resourcePath) {
+                $rawVersion = [uint32](Get-ItemProperty -Path $resourcePath -Name 'Version' -ErrorAction Stop).Version
+            }
+        }
+
+        if ($null -eq $rawVersion) { return '' }
+        $major = [int]([uint32]$rawVersion -shr 16)
+        $minor = [int]([uint32]$rawVersion -band 0xFFFF)
         if ($major -lt 1 -or $minor -gt 0xFF) { return '' }
         return "$major.$minor"
     } catch {
@@ -796,6 +795,21 @@ function Test-DATBiosConfirmedCurrent {
 {{TOAST_FUNCTIONS}}
 {{PROGRESS_FUNCTIONS}}
 {{PROVISIONING_FUNCTIONS}}
+
+# Fail before payload discovery or extraction if no validated flash implementation exists.
+# The build pipeline enforces the same boundary, but the generated installer must remain safe if
+# it is copied, retained, or invoked independently of that pipeline.
+$DATSupportedBIOSManufacturers = @('Dell', 'HP', 'Lenovo')
+$DATTemplateManufacturer = '{{OEM}}'
+if ($DATTemplateManufacturer -notin $DATSupportedBIOSManufacturers) {
+    Write-Error "Standalone BIOS installation is not supported for '$DATTemplateManufacturer'. Validated flash installers are available only for Dell, HP, and Lenovo."
+    exit 1
+}
+if ($ValidateManufacturerOnly) {
+    Write-Host "Validated standalone BIOS installer path for $DATTemplateManufacturer."
+    exit 0
+}
+
 # Uninstall command. Older builds pointed the Intune uninstall command at this script without a
 # switch, so an uninstall assignment re-ran the flash. A BIOS cannot be rolled back from here
 # (most OEMs block downgrades), so record the request and leave the firmware alone.
@@ -855,7 +869,7 @@ try {
     # its source folder with the legacy BIOS package, which holds the payload as loose files
     # because the task sequence BIOS script reads them directly -- so loose files are accepted
     # when there is no WIM. The DAT scripts and the HP password file are never payload.
-    $datContentFiles = @('Install-BIOS.ps1', 'Show-ToastNotification.ps1', 'HPPasswordFile.bin')
+    $datContentFiles = @('Install-BIOS.ps1', 'Show-ToastNotification.ps1', 'Show-ProgressToast.ps1', 'HPPasswordFile.bin')
     $looseContent = @()
     if (Test-Path $WimFile) {
         $wimSize = [math]::Round((Get-Item $WimFile).Length / 1MB, 2)
@@ -998,12 +1012,45 @@ try {
     $extractedFiles = (Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction SilentlyContinue).Count
     Write-CMTraceLog "WIM extraction complete. Files extracted: $extractedFiles"
 
-    # -- BitLocker ---------------------------------------------------------------
-    # Protection is confirmed off immediately before the flash tool starts (in
-    # Invoke-BIOSFlashUtility) and again immediately before the restart, rather than here: the
-    # AC power, password and HPCMSL steps in between can take minutes or exit early, and
-    # suspending here only to resume on those exits could turn protection back on while firmware
-    # from an earlier run is still waiting for a restart.
+    $integrityManifest = Join-Path $ExtractPath 'DAT-BIOS-SHA256.txt'
+    if (-not (Test-Path -LiteralPath $integrityManifest -PathType Leaf)) {
+        throw "BIOS payload integrity manifest is missing"
+    }
+    $verifiedPayloadPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in Get-Content -LiteralPath $integrityManifest -ErrorAction Stop) {
+        if ($line -notmatch '^([0-9A-Fa-f]{64})\t(.+)$') {
+            throw "BIOS payload integrity manifest contains an invalid entry"
+        }
+        $expectedHash = $Matches[1]
+        $relativePath = $Matches[2]
+        if ([System.IO.Path]::IsPathRooted($relativePath) -or $relativePath -match '(^|[\\/])\.\.([\\/]|$)') {
+            throw "BIOS payload integrity manifest contains an unsafe path: $relativePath"
+        }
+        $payloadPath = [System.IO.Path]::GetFullPath((Join-Path $ExtractPath $relativePath))
+        $extractRoot = [System.IO.Path]::GetFullPath($ExtractPath).TrimEnd('\') + '\'
+        if (-not $payloadPath.StartsWith($extractRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "BIOS payload integrity manifest path escapes the extraction root: $relativePath"
+        }
+        if (-not (Test-Path -LiteralPath $payloadPath -PathType Leaf)) {
+            throw "BIOS payload member is missing: $relativePath"
+        }
+        $actualHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256 -ErrorAction Stop).Hash
+        if ($actualHash -ine $expectedHash) {
+            throw "BIOS payload hash mismatch: $relativePath"
+        }
+        [void]$verifiedPayloadPaths.Add($payloadPath)
+    }
+    $unexpectedPayload = @(Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction Stop |
+        Where-Object { $_.FullName -ne $integrityManifest -and -not $verifiedPayloadPaths.Contains($_.FullName) })
+    if ($unexpectedPayload.Count -gt 0) {
+        throw "BIOS payload contains unverified files: $($unexpectedPayload.Name -join ', ')"
+    }
+    if ($verifiedPayloadPaths.Count -eq 0) {
+        throw "BIOS payload integrity manifest contains no files"
+    }
+    Write-CMTraceLog "BIOS payload integrity verified: $($verifiedPayloadPaths.Count) file(s)"
+
+    # BitLocker is checked immediately before flashing and again before restart.
     Set-DATInstallProgress -Step 2
     $script:BitLockerSuspended = $false
     $script:FlashSucceeded = $false
@@ -1351,41 +1398,6 @@ try {
                 }
                 Write-CMTraceLog "ERROR: Lenovo BIOS flash failed with exit code: $flashExitCode" -Severity 3
                 throw "Lenovo BIOS flash failed with exit code: $flashExitCode"
-            }
-        }
-
-        # -- Microsoft (Surface) ------------------------------------------------
-        '*Microsoft*' {
-            Write-CMTraceLog "Microsoft Surface firmware update detected -- searching for MSI package"
-
-            # Surface firmware is delivered as an MSI
-            $msiFile = Get-ChildItem -Path $ExtractPath -Recurse -Filter "*.msi" -File -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-
-            if (-not $msiFile) {
-                Write-CMTraceLog "ERROR: No MSI firmware package found in extracted content" -Severity 3
-                throw "No MSI firmware package found in extracted content"
-            }
-
-            Write-CMTraceLog "Surface firmware MSI found: $($msiFile.FullName)"
-
-            $msiLog = Join-Path $env:ProgramData "Microsoft\IntuneManagementExtension\Logs\DAT_SurfaceFirmware.log"
-            $flashArgs = "/i `"$($msiFile.FullName)`" /quiet /norestart /l*v `"$msiLog`""
-
-            if ($WhatIf) {
-                Write-CMTraceLog "WHATIF: Would execute Surface firmware install: msiexec.exe $flashArgs" -Severity 2
-                $flashExitCode = 0
-            } else {
-                $flashExitCode = Invoke-BIOSFlashUtility -FilePath "msiexec.exe" -Arguments $flashArgs
-            }
-
-            # MSI exit codes: 0 = success, 3010 = success (reboot required)
-            if ($flashExitCode -in @(0, 3010)) {
-                Write-CMTraceLog "Surface firmware install completed successfully (exit code: $flashExitCode)"
-            } else {
-                Write-CMTraceLog "ERROR: Surface firmware install failed with exit code: $flashExitCode" -Severity 3
-                Write-CMTraceLog "MSI log available at: $msiLog" -Severity 2
-                throw "Surface firmware install failed with exit code: $flashExitCode"
             }
         }
 
