@@ -56,6 +56,36 @@ Getac's published support channels. Package metadata must match the device manuf
 model/SystemSKU, operating system, and architecture. This recognition does not add
 automated Getac catalog discovery, BIOS download, or firmware flashing.
 
+## Consolidated ConfigMgr deployment scripts
+
+The maintained Modern Driver Management and Modern BIOS Management deployment
+scripts now live together under `Driver Automation Tool/Scripts`:
+
+- `Invoke-CMApplyDriverPackage.ps1`
+- `Invoke-CMDownloadBIOSPackage.ps1`
+- `Invoke-DellBIOSUpdate.ps1`
+- `Invoke-HPBIOSUpdate.ps1`
+- `Invoke-LenovoBIOSUpdate.ps1`
+- `Invoke-MicrosoftBIOSUpdate.ps1`
+
+The two package selectors retain AdminService and XML package modes, virtual
+platform safeguards, certificate validation controls, and the maintained
+matching fixes. In ConfigMgr hierarchies, pass `-SiteCode ABC` or set the
+`MDMSiteCode` task-sequence variable to restrict package selection to objects
+whose `SMS_Package.SourceSite` is `ABC`. If neither is set, package selection
+continues to consider every site as before.
+
+The Microsoft apply script is retained for existing administrator-created
+ConfigMgr BIOS package workflows; it does not imply automated Microsoft Surface
+BIOS catalog support in DAT. Surface firmware delivered through driver packages
+continues to use the driver workflow.
+
+These imported MSEndpointMgr scripts remain MIT-licensed. Their required
+copyright and license notice is preserved in
+`LICENSES/MSEndpointMgr-MIT.txt`; DAT's existing license continues to govern
+the rest of this repository. Reviewed source baselines and maintenance
+boundaries are recorded in `Data/BundledScriptParity.md`.
+
 ## Core Features
 
 - **Automated Driver Downloads** — Accelerated downloads via `curl.exe` with HTTP resume support, configurable retry logic (10 retries, 60s delay), and automatic hash verification

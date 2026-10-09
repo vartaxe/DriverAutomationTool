@@ -97,8 +97,8 @@ jobs:
             }
           }
 
-          if ($entries.Count -ne 16) {
-            throw "Expected 16 manifest entries, found $($entries.Count)."
+          if ($entries.Count -ne 20) {
+            throw "Expected 20 manifest entries, found $($entries.Count)."
           }
 
           $failures = [System.Collections.Generic.List[string]]::new()
