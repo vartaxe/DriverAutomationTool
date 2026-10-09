@@ -1,25 +1,28 @@
-# Bundled ConfigMgr script parity
+# Consolidated ConfigMgr deployment scripts
 
-The ConfigMgr scripts shipped in this repository are maintained as DAT-integrated
-artifacts, not as byte-for-byte copies of the standalone projects:
+This repository is now the canonical maintained home for the ConfigMgr driver and
+BIOS package selectors and the four vendor BIOS apply scripts. The consolidation
+preserves the maintained standalone forks at these reviewed heads:
 
-| Bundled artifact | Comparison baseline | Pinned baseline |
+| DAT artifact set | Source project | Pinned maintenance baseline |
 |---|---|---|
-| `Driver Automation Tool/Scripts/Invoke-CMApplyDriverPackage.ps1` | Modern Driver Management | `87c57414428856159cbc599b4f2e9d1d1b62ede7` |
-| `Driver Automation Tool/Scripts/Invoke-CMDownloadBIOSPackage.ps1` | Modern BIOS Management | `4c8629dadfa94729f3269b8db7f8293db7da4f2a` |
+| `Invoke-CMApplyDriverPackage.ps1` | `vartaxe/ModernDriverManagement` | `ffd45de80ae58ece1dd83e9c10fa2406fa320e70` |
+| `Invoke-CMDownloadBIOSPackage.ps1` and four vendor apply scripts | `vartaxe/ModernBIOSManagement` | `3859244657c7a05b62203cb174576f2c3720d060` |
 
-The pinned versions were reviewed during the 2026 parity audit. The bundled
-files are materially divergent (2967 vs. 2954 lines for the driver script and
-1897 vs. 1894 lines for the BIOS script). Blind replacement is unsafe: the
-bundled files contain DAT-specific certificate pinning and authentication
-behavior, while the standalone files contain later VM/platform/XML/AdminService,
-cleanup, CIM, TLS, and BitLocker changes.
+The package selectors include the standalone maintenance fixes plus DAT's
+certificate-pinning compatibility and ConfigMgr hierarchy scoping. `-SiteCode`
+or the `MDMSiteCode` task-sequence variable limits AdminService results using
+the ConfigMgr `SMS_Package.SourceSite` property. Omitting it preserves the
+previous all-sites behavior.
 
-Until each upstream change has a reviewed DAT integration, parity is defined by
-the structural regression test in `Tests/Test-BundledScriptParity.ps1`, not by
-line count or an exact hash. That test protects the shared XML/AdminService
-surface, the DAT certificate-pinning boundary, and Getac manufacturer
-normalization for administrator-created or imported matching driver packages.
+`Tests/Test-BundledScriptParity.ps1` protects the shared XML/AdminService
+surface, scoped certificate-pinning boundary, hierarchy filter, vendor-script
+presence, and Getac manufacturer normalization for administrator-created or
+imported matching driver packages.
 Getac recognition does not represent automated catalog acquisition or BIOS
 firmware support. Any future port must update this contract and preserve those
 DAT-specific controls.
+
+The imported MSEndpointMgr scripts remain under the MIT license recorded in
+`LICENSES/MSEndpointMgr-MIT.txt`; the rest of DAT remains under its existing
+license.

@@ -1,10 +1,10 @@
-<#
+﻿<#
 .SYNOPSIS
 	Download driver package (regular package) matching computer model, manufacturer and operating system.
-	
+
 .DESCRIPTION
-    This script will determine the model of the computer, manufacturer and operating system being deployed and then query 
-    the specified AdminService endpoint for a list of Packages. It then sets the OSDDownloadDownloadPackages variable 
+    This script will determine the model of the computer, manufacturer and operating system being deployed and then query
+    the specified AdminService endpoint for a list of Packages. It then sets the OSDDownloadDownloadPackages variable
     to include the PackageID property of a package matching the computer model. If multiple packages are detect, it will select
 	most current one by the creation date of the packages.
 
@@ -16,10 +16,10 @@
 
 .PARAMETER OSUpgrade
 	Set the script to operate in 'OSUpgrade' deployment type mode.
-	
+
 .PARAMETER PreCache
 	Set the script to operate in 'PreCache' deployment type mode.
-	
+
 .PARAMETER XMLPackage
 	Set the script to operate in 'XMLPackage' deployment type mode.
 
@@ -30,14 +30,18 @@
 	Specify the internal fully qualified domain name of the server hosting the AdminService, e.g. CM01.domain.local.
 
 .PARAMETER XMLDeploymentType
-	Specify the deployment type mode for XML based driver package deployments, e.g. 'BareMetal', 'OSUpdate', 'DriverUpdate', 'PreCache'.
+	Specify the deployment type mode for XML based driver package deployments: 'BareMetal', 'OSUpgrade', 'DriverUpdate', or 'PreCache'. 'OSUpdate' is retained as an alias for 'OSUpgrade'.
 
 .PARAMETER UserName
 	Specify the service account user name used for authenticating against the AdminService endpoint.
 
 .PARAMETER Password
 	Specify the service account password used for authenticating against the AdminService endpoint.
-	
+
+.PARAMETER SiteCode
+	Limit AdminService package results to packages created at this ConfigMgr site.
+	When omitted, the MDMSiteCode task sequence variable is used if present.
+
 .PARAMETER Filter
 	Define a filter used when calling ConfigMgr WebService to only return objects matching the filter.
 
@@ -74,14 +78,6 @@
 .PARAMETER OSVersionFallback
 	Use this switch to check for drivers packages that matches earlier versions of Windows than what's specified as input for TargetOSVersion.
 
-.PARAMETER AllowVirtualMachine
-	Allow the script to run its normal matching, download and install process on a virtual machine. Without this switch virtual machines are handled exactly as before.
-	When the switch is passed and a virtual machine is detected, the hypervisor (Hyper-V, VMware, VirtualBox, Parallels, KVM, Xen or Nutanix) is identified and only virtual machine driver packages are considered, never a physical OEM package:
-	 - A hypervisor specific package: Manufacturer set to the hypervisor name, e.g. 'VMware', named like 'Drivers - VMware Virtual Machine - Windows 11 x64'
-	 - A generic package for any hypervisor: Manufacturer set to 'Generic', named like 'Drivers - Generic Virtual Machine - Windows 11 x64'
-	A hypervisor specific package is preferred over a generic one. Both need a non-empty description, as every driver package does. QEMU and Proxmox virtual machines are identified as 'KVM'.
-	Driver fallback packages are not used for virtual machines; the generic virtual machine package takes that role. On a physical device the switch has no effect.
-
 .EXAMPLE
 	# Detect, download and apply drivers during OS deployment with ConfigMgr:
 	.\Invoke-CMApplyDriverPackage.ps1 -BareMetal -Endpoint 'CM01.domain.com' -TargetOSName 'Windows 10' -TargetOSVersion '1909'
@@ -94,7 +90,7 @@
 
 	# Detect and download drivers during OS upgrade with ConfigMgr:
 	.\Invoke-CMApplyDriverPackage.ps1 -OSUpgrade -Endpoint 'CM01.domain.com' -TargetOSName 'Windows 10' -TargetOSVersion '1909'
-    
+
 	# Detect, download and update a device with latest drivers for an running operating system using ConfigMgr:
 	.\Invoke-CMApplyDriverPackage.ps1 -DriverUpdate -Endpoint 'CM01.domain.com'
 
@@ -107,11 +103,11 @@
 	# Run in a debug mode for testing purposes (to be used locally on the computer model):
 	.\Invoke-CMApplyDriverPackage.ps1 -DebugMode -Endpoint 'CM01.domain.com' -UserName 'svc@domain.com' -Password 'svc-password' -TargetOSName 'Windows 10' -TargetOSVersion '1909'
 
+	# Detect, download and apply an explicitly virtual-machine driver package:
+	.\Invoke-CMApplyDriverPackage.ps1 -BareMetal -AllowVirtualMachine -Endpoint 'CM01.domain.com' -TargetOSName 'Windows 10' -TargetOSVersion '1909'
+
 	# Run in a debug mode for testing purposes and overriding the automatically detected computer details (could be executed basically anywhere):
 	.\Invoke-CMApplyDriverPackage.ps1 -DebugMode -Endpoint 'CM01.domain.com' -UserName 'svc@domain.com' -Password 'svc-password' -TargetOSName 'Windows 10' -TargetOSVersion '1909' -Manufacturer 'Dell' -ComputerModel 'Precision 5520' -SystemSKU '07BF'
-
-	# Detect, download and apply drivers during OS deployment on a virtual machine, using a package for its hypervisor or a generic virtual machine package:
-	.\Invoke-CMApplyDriverPackage.ps1 -BareMetal -Endpoint 'CM01.domain.com' -TargetOSName 'Windows 11' -TargetOSVersion '25H2' -AllowVirtualMachine
 
 	# Detect, download and apply drivers during OS deployment with ConfigMgr and use an XML package as the source of driver package details instead of the AdminService:
 	.\Invoke-CMApplyDriverPackage.ps1 -XMLPackage -XMLDeploymentType BareMetal -TargetOSName 'Windows 10' -TargetOSVersion '1909' -TargetOSArchitecture 'x64'
@@ -121,14 +117,14 @@
 	Author:      Nickolaj Andersen / Maurice Daly
     Contact:     @NickolajA / @MoDaly_IT
     Created:     2017-03-27
-    Updated:     2026-09-03
-	
+    Updated:     2026-10-05
+
 	Contributors: @CodyMathis123, @JamesMcwatty @EdenNelson
-    
+
     Version history:
     1.0.0 - (2017-03-27) - Script created
     1.0.1 - (2017-04-18) - Updated script with better support for multiple vendor entries
-    1.0.2 - (2017-04-22) - Updated script with support for multiple operating systems driver packages, e.g. Windows 8.1 and Windows 10	
+    1.0.2 - (2017-04-22) - Updated script with support for multiple operating systems driver packages, e.g. Windows 8.1 and Windows 10
     1.0.3 - (2017-05-03) - Updated script with support for manufacturer specific Windows 10 versions for HP and Microsoft
     1.0.4 - (2017-05-04) - Updated script to trim any white spaces trailing the computer model detection from WMI
     1.0.5 - (2017-05-05) - Updated script to pull the model for Lenovo systems from the correct WMI class
@@ -159,9 +155,9 @@
 	2.0.7 - (2018-02-25) - Added support for a DebugMode switch for running script outside of a task sequence for driver package detection
 	2.0.8 - (2018-02-25) - Added a check to bail out the script if computer model and SystemSKU are null or an empty string
 	2.0.9 - (2018-05-07) - Removed exit code 34 event. DISM will now continue to process drivers if a single or multiple failures occur in order to proceed with the task sequence
-	2.1.0 - (2018-06-01) - IMPORTANT: From this version, ConfigMgr WebService 1.6 is required. Added a new parameter named OSImageTSVariableName that accepts input of a task sequence variable. This task sequence variable should contain the OS Image package ID of 
+	2.1.0 - (2018-06-01) - IMPORTANT: From this version, ConfigMgr WebService 1.6 is required. Added a new parameter named OSImageTSVariableName that accepts input of a task sequence variable. This task sequence variable should contain the OS Image package ID of
 						   the desired Operating System Image selected in an Apply Operating System step. This new functionality allows for using multiple Apply Operating System steps in a single task sequence. Added Panasonic for manufacturer detection.
-						   Improved logic with fallback from SystemSKU to computer model. Script will now fall back to computer model if there was no match to the SystemSKU. This still requires that the SystemSKU contains a value and is not null or empty, otherwise 
+						   Improved logic with fallback from SystemSKU to computer model. Script will now fall back to computer model if there was no match to the SystemSKU. This still requires that the SystemSKU contains a value and is not null or empty, otherwise
 						   the logic will directly fall back to computer model. A new parameter named DriverInstallMode has been added to control how drivers are installed for BareMetal deployment. Valid inputs are Single or Recurse.
 	2.1.1 - (2018-08-28) - Code tweaks and changes for Windows build to version switch in the Driver Automation Tool. Improvements to the SystemSKU reverse section for HP models and multiple SystemSKU values from WMI
 	2.1.2 - (2018-08-29) - Added code to handle Windows 10 version specific matching and also support matching for the name only
@@ -181,12 +177,12 @@
 	2.2.5 - (2019-12-02) - Added support for Windows 10 1903, 1909 and additional matching for Microsoft Surface devices (DAT 6.4.0 or neweer)
 	2.2.6 - (2020-02-06) - Fixed an issue where the single driver injection mode for BareMetal deployments would fail if there was a space in the driver inf name
 	2.2.7 - (2020-02-10) - Added a new parameter named TargetOSVersion. Use this parameter when DeploymentType is OSUpgrade and you don't want to rely on the OS version detected from the imported Operating System Upgrade Package or Operating System Image objects.
-						   This parameter should mainly be used as an override and was implemented due to drivers for Windows 10 1903 were incorrectly detected when deploying or upgrading to Windows 10 1909 using imported source files, not for a 
+						   This parameter should mainly be used as an override and was implemented due to drivers for Windows 10 1903 were incorrectly detected when deploying or upgrading to Windows 10 1909 using imported source files, not for a
                            reference image for Windows 10 1909 as the Enablement Package would have flipped the build change to 18363 in such an image.
 	3.0.0 - (2020-03-14) - A complete re-written version of the script. Includes a much improved logging functionality. Script is now divided into phases, which are represented in the ApplyDriverPackage.log that will provide a better troubleshooting experience.
 						   Added support for AZW and Fujitsu computer manufacturer by request from the community. Extended DebugMode to allow for overriding computer details, which allows the script to be tested against any model and it doesn't require to be tested
 						   directly on the model itself.
-	3.0.1 - (2020-03-25) - Added TargetOSVersion parameter to be allowed to used in DebugMode. 
+	3.0.1 - (2020-03-25) - Added TargetOSVersion parameter to be allowed to used in DebugMode.
 						 - Fixed an issue where DebugMode would not be allowed to run on virtual machines. Fixed an issue where ComputerDetectionMethod script variable would be set to ComputerModel from
 						   SystemSKU in case it couldn't match on the first driver package, leading to HP driver packages would always fail since they barely never match on the ComputerModel (they include 'Base Model', 'Notebook PC' etc.)
 	3.0.2 - (2020-03-29) - Fixed a spelling mistake in the Manufacturer parameter.
@@ -194,7 +190,7 @@
 	3.0.4 - (2020-04-09) - Changed the translation function for the OS architecture of the current running task sequence into using wildcard support instead of adding language specified values
 	3.0.5 - (2020-04-30) - Added 7-Zip self extracting exe support for compressed driver packages
 	4.0.0 - (2020-06-29) - IMPORTANT: From this version and onwards, usage of the ConfigMgr WebService has been deprecated. This version will only work with the built-in AdminService in ConfigMgr.
-						   Removed the DeploymentType parameter and replaced each deployment type with it's own switch parameter, e.g. -BareMetal, -DriverUpdate etc. Additional new parameters have been added, including the requirements of pre-defined Task Sequence variables 
+						   Removed the DeploymentType parameter and replaced each deployment type with it's own switch parameter, e.g. -BareMetal, -DriverUpdate etc. Additional new parameters have been added, including the requirements of pre-defined Task Sequence variables
 						   that the script requires. For more information, please refer to the embedded examples of how to use this script or refer to the official documentation at https://www.msendpointmgr.com/modern-driver-management.
 	4.0.1 - (2020-07-24) - Fixed an issue where an improper variable name was used instead of $DriverPackageCompressedFile
 	4.0.2 - (2020-08-07) - Fixed an issue where the Confirm-SystemSKU function would cause the script to crash if the SystemSKU data was improperly conformed, e.g. with spaces as a delimiter or with duplicate entries
@@ -236,57 +232,75 @@
 	4.3.0 - (2026-09-03) - Added support for Windows 11 26H1 (Arm64 devices):
 						 - TargetOSVersion now accepts '26H1', so BareMetal/OSUpgrade/PreCache/XMLPackage runs can target driver packages built for the release.
 						 - Get-OSBuild translates OS build 28000 to '26H1' (per the Microsoft Windows 11 release information page; 26H1 reached general availability on 2026-02-10 and ships on new devices only -- it is not offered as an in-place update from 24H2 or 25H2).
-						 - Get-OSBuild also no longer fails outright on a Windows 11 build number it has no entry for. It now falls back to the DisplayVersion value under HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion, which is the authoritative feature update token on every build from 20H2 onwards, so DriverUpdate mode keeps resolving future releases without waiting for a script update per build number. An unreadable or non-conforming DisplayVersion still raises the original unsupported-OS terminating error.
+						 - Get-OSBuild also no longer fails outright on a Windows 11 build number it has no entry for. It now attempts to use the DisplayVersion value under HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion, after validating the expected NNHN format, so DriverUpdate mode can resolve a future release without waiting for a script update per build number. An unreadable or non-conforming DisplayVersion still raises the original unsupported-OS terminating error.
 						 - No change was needed for package matching: the OSVersion parser already recognises the NNHN token, the Arm64 architecture token was added in 4.2.7, and the OSVersionFallback comparison already orders 26H1 (2605) above 25H2 (2510).
-	4.3.1 - (2026-09-03) - Added AdminService authentication resiliency for the ConfigMgr 2603 security changes:
-						 - ConfigMgr 2603 rejects AdminService authentication that uses a bare service account user name (e.g. 'svc-osd'), a configuration that worked on earlier builds, so existing task sequences began failing with 401 Unauthorized. Get-AuthCredential now warns when the configured user name is not in UPN format and recommends updating it, naming the alternative formats that will be attempted.
+	4.3.1 - (2026-09-03) - Added AdminService authentication resiliency for environments that reject a bare service account user name:
+						 - Some environments return 401 Unauthorized when AdminService authentication uses a bare account name (e.g. 'svc-osd'). Microsoft does not document this as a ConfigMgr 2603 UPN-only requirement. Get-AuthCredential now identifies a non-UPN value and names the domain-qualified alternatives that will be attempted.
 						 - Get-AuthDomainName resolves the Active Directory DNS domain from, in order: the OSDDOMAINNAME / OSDJoinDomainName task sequence variables, the domain membership of the running device (full OS only), and the DNS suffix of the AdminService endpoint or management point host name (the only sources available in WinPE).
 						 - Get-AdminServiceItem now retries the request with the UPN form (user@domain.com) and then the down-level form (DOMAIN\user) when, and only when, the AdminService responds with 401 Unauthorized. The configured value is always attempted first so a working environment is unchanged, the working credential is reused for the remainder of the run, and a run where every format is rejected logs explicit guidance to move the account to UPN format.
 						 - The self-signed certificate callback was moved into Set-CertificateValidationCallback and is now only registered once per run. Previously Add-Type ran on every certificate failure, so a second AdminService call hitting the same condition failed with a duplicate type error.
-	4.3.2 - (2026-09-21) - Security: removed the blanket TLS certificate validation bypass from the AdminService connection path:
-						 - Set-CertificateValidationCallback installed a callback that returned true for every certificate presented by any host, for the remainder of the process, and the service account credential was then sent over that connection. Any machine able to answer for the endpoint address (DNS, DHCP or ARP spoofing on the deployment network) could therefore collect the AdminService service account password. That callback and its base64 encoded type definition have been removed.
-						 - Set-PinnedCertificateValidationCallback replaces it. A certificate that does not chain to a trusted root is now accepted only when its SHA1 thumbprint matches the value supplied through the 'MDMCertificateThumbprint' task sequence variable or the new CertificateThumbprint parameter. Every other validation failure remains a failure, and a certificate that already validates normally is unaffected.
-						 - When no thumbprint is configured the request is not retried and the credential is not sent. The log names both remedies: trust the issuing CA on the machine (import the root certificate into the boot image for WinPE), or configure the expected thumbprint. BREAKING: an environment that relied on the old bypass to reach a self-signed AdminService binding must do one of those two before this version will connect.
-						 - Driver package archives are now expanded through Expand-ArchiveSafely, which rejects any entry whose path resolves outside the destination directory (Zip Slip). Windows PowerShell 5.1 Expand-Archive accepts a traversing entry, and this script expands vendor-supplied content while running as SYSTEM in WinPE and the full OS.
-	4.3.3 - (2026-09-22) - Fixed Fujitsu SystemSKU detection, contributed by 7heMas7er (issue #945, PR #946):
-						 - The Fujitsu branch of Get-ComputerData read Win32_BaseBoard.SKU and called Trim() on it without a guard. That property is empty on several models, the ESPRIMO D757 among them, so the run stopped in the prerequisite phase with "You cannot call a method on a null-valued expression".
-						 - It now reads MS_SystemInformation.BaseBoardProduct, falling back to Win32_BaseBoard.Product. That is also the value matching requires: the build writes the Fujitsu catalog's SupportedDevices -- mainboard IDs such as D3531-A1 -- into the package description and the Intune detection rule, so a SystemSKU taken from SKU would never have matched the package the tool itself created, crash or no crash. Confirmed on an ESPRIMO D757 by the contributor.
-						 - The Viglen branch had the same unguarded Trim() and is now guarded too. Its property source is left as SKU, because which value Viglen reports has not been verified on hardware and changing it blind would risk trading a crash for a silent no-match.
-						 - Where neither property returns a value, SystemSKU is left unset and matching falls back to computer model, as before.
-	4.3.4 - (2026-09-30) - Added support for Windows 11 26H2:
-						 - TargetOSVersion now accepts '26H2', so BareMetal/OSUpgrade/PreCache/XMLPackage runs can target driver packages built for the release.
-						 - Get-OSBuild translates OS build 26300 to '26H2' (per the Microsoft Windows 11 release information page; 26H2 reached general availability on 2026-09-29 and is serviced alongside 25H2).
-						 - No change was needed for package matching: the OSVersionFallback comparison already orders 26H2 (2610) above 26H1 (2605) and 25H2 (2510).
-						 - The startup banner now reports the current script version (it still said 4.3.2).
-	4.3.5 - (2026-10-06) - Added opt-in virtual machine support (ModernDriverManagement issue #334):
-						 - New -AllowVirtualMachine switch. Without it nothing changes: the same virtual machine models are refused, and DebugMode still lets them through for testing.
-						 - With it, a virtual machine runs the normal matching, download and install process. The hypervisor is identified from Win32_ComputerSystem (Hyper-V, VMware, VirtualBox, Parallels, KVM for QEMU and Proxmox, Xen, Nutanix) and logged with the raw manufacturer and model values.
-						 - A virtual machine is matched by its hypervisor, never by the hardware it imitates, so it cannot select a physical OEM package. This matters most for Hyper-V and Azure, which report Microsoft Corporation and would otherwise be matched against Surface packages.
-						 - A package whose Manufacturer is the hypervisor name is preferred, then a package whose Manufacturer is 'Generic'; the model token is 'Virtual Machine' for both. With OSVersionFallback, both are tried at the target version before either is tried at an earlier one.
-						 - Driver fallback packages are not used for virtual machines, and the selected package is checked against the virtual machine package manufacturers before download, so a run that finds no virtual machine package fails with guidance instead of installing something else.
-						 - In DebugMode, passing -Manufacturer, -ComputerModel or -SystemSKU simulates that physical device as before and virtual machine matching is not used.
-						 - Driver package WIM files are now mounted read-only (MSEndpointMgr/ModernDriverManagement PR #339, contributed by Nodiaque). A read-write mount fails on some devices with "You do not have permissions to mount and modify this image", and the content is only copied out, so nothing needs write access.
+	4.3.2 - (2026-10-05) - Added explicit Windows 11 26H2 support:
+						 - TargetOSVersion now accepts '26H2' for BareMetal, OSUpgrade, PreCache, and XMLPackage runs.
+						 - Get-OSBuild translates OS build 26300 to '26H2' for DriverUpdate runs.
+	4.3.3 - (2026-10-05) - Detect VMware model identifiers without maintaining a per-model list:
+						 - Models beginning with 'VMware' are detected using the VMware* wildcard, covering legacy and future model strings.
+						 - Virtual-machine execution still requires AllowVirtualMachine outside DebugMode, and driver package model matching remains exact.
+						 - Hyper-V detection requires both the exact 'Virtual Machine' model and a manufacturer containing 'Microsoft'.
+						 - Platform detection identifies VMware, Hyper-V, QEMU/KVM, VirtualBox, and Xen while preserving existing package matching and VM opt-in requirements.
+						 - Physical OEM classification runs only after hypervisor checks; unknown brands retain normal package validation without an automatic driver fallback.
+						 - Xen/Citrix detection checks model and manufacturer for Xen or Citrix, retains HVM domU, and recognizes XenServer/Citrix package labels.
+						 - Fixed Arm64 fallback package parsing, exact SKU token matching, XML OSUpdate/OSUpgrade staging, missing XML file termination, and DriverUpdate exit-code handling.
+	4.3.4 - (2026-10-05) - Hardened release and platform compatibility guidance after an authoritative-source audit:
+						 - Standard PC identifies QEMU/KVM only when the manufacturer also indicates QEMU or Red Hat, avoiding a model-only virtual-machine classification.
+						 - Clarified that DisplayVersion is a validated fallback rather than a guaranteed release contract.
+	4.3.5 - (2026-10-06) - Hardened AdminService authentication:
+						 - Replaced runtime PSIntuneAuth installation with direct OAuth token acquisition for external AdminService endpoints.
+						 - Replaced unconditional certificate validation bypass with explicit leaf-certificate thumbprint pinning.
+						 - Normalized Panasonic package matching to the manufacturer value emitted by Driver Automation Tool.
+						 - PreCache now leaves compressed content intact; WIM content is dismounted before recursive processing and DISM logs are retained with task-sequence logs.
+	4.3.6 - (2026-10-06) - Extended opt-in virtual-machine support:
+						 - Added Parallels and Nutanix AHV platform detection without changing the default VM execution block.
+						 - Nutanix detection falls back to MS_SystemInformation when Win32_ComputerSystem exposes a blank manufacturer.
+						 - Added Nutanix/AHV package labels to the virtual-hardware package allowlist.
+	4.3.7 - (2026-10-07) - Added conservative manual package matching for additional physical OEMs:
+						 - Normalized MSI and Micro-Star manufacturer strings to MSI, GIGABYTE manufacturer strings to GIGABYTE, and Dynabook/Toshiba strings to Dynabook.
+						 - Added informational OEM-MSI, OEM-GIGABYTE, and OEM-Dynabook platform labels.
+						 - Matching uses the exact Win32_ComputerSystem model and administrator-created package metadata only. No vendor catalog scraping, consumer update utility, undocumented command-line switch, or firmware flashing behavior was added.
+	4.4.0 - (2026-10-09) - Consolidated maintenance into Driver Automation Tool:
+						 - Added ConfigMgr hierarchy scoping through -SiteCode or the MDMSiteCode task-sequence variable.
+						 - Package queries filter SMS_Package.SourceSite only when a site code is supplied; omitting it preserves all-sites behavior.
+						 - Preserved scoped AdminService certificate pinning and Zip Slip-safe archive extraction.
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingPlainTextForPassword", "", Justification = "Configuration Manager exposes task-sequence variables as strings; the value is converted immediately for Windows authentication and cleared after external token acquisition.")]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingConvertToSecureStringWithPlainText", "", Justification = "Configuration Manager exposes task-sequence variables as strings; conversion to PSCredential is required for Invoke-RestMethod on Windows PowerShell 5.1.")]
 [CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = "BareMetal")]
 param(
 	[parameter(Mandatory = $true, ParameterSetName = "BareMetal", HelpMessage = "Set the script to operate in 'BareMetal' deployment type mode.")]
 	[switch]$BareMetal,
-	
+
 	[parameter(Mandatory = $true, ParameterSetName = "DriverUpdate", HelpMessage = "Set the script to operate in 'DriverUpdate' deployment type mode.")]
 	[switch]$DriverUpdate,
-	
+
 	[parameter(Mandatory = $true, ParameterSetName = "OSUpgrade", HelpMessage = "Set the script to operate in 'OSUpgrade' deployment type mode.")]
 	[switch]$OSUpgrade,
-	
+
 	[parameter(Mandatory = $true, ParameterSetName = "PreCache", HelpMessage = "Set the script to operate in 'PreCache' deployment type mode.")]
 	[switch]$PreCache,
-	
+
 	[parameter(Mandatory = $true, ParameterSetName = "XMLPackage", HelpMessage = "Set the script to operate in 'XMLPackage' deployment type mode.")]
 	[switch]$XMLPackage,
-	
+
 	[parameter(Mandatory = $true, ParameterSetName = "Debug", HelpMessage = "Set the script to operate in 'DebugMode' deployment type mode.")]
 	[switch]$DebugMode,
-	
+
+	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Allow execution on a detected virtual machine. Only explicitly virtual-machine driver packages are eligible.")]
+	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
+	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
+	[parameter(Mandatory = $false, ParameterSetName = "PreCache")]
+	[parameter(Mandatory = $false, ParameterSetName = "XMLPackage")]
+	[parameter(Mandatory = $false, ParameterSetName = "Debug")]
+	[switch]$AllowVirtualMachine,
+
 	[parameter(Mandatory = $true, ParameterSetName = "BareMetal", HelpMessage = "Specify the internal fully qualified domain name of the server hosting the AdminService, e.g. CM01.domain.local.")]
 	[parameter(Mandatory = $true, ParameterSetName = "DriverUpdate")]
 	[parameter(Mandatory = $true, ParameterSetName = "OSUpgrade")]
@@ -294,24 +308,36 @@ param(
 	[parameter(Mandatory = $true, ParameterSetName = "Debug")]
 	[ValidateNotNullOrEmpty()]
 	[string]$Endpoint,
-	
-	[parameter(Mandatory = $false, ParameterSetName = "XMLPackage", HelpMessage = "Specify the deployment type mode for XML based driver package deployments, e.g. 'BareMetal', 'OSUpdate', 'DriverUpdate', 'PreCache'.")]
+
+	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Pin the SHA-1 thumbprint of the internal AdminService leaf certificate when its issuing CA is not trusted by the deployment environment.")]
+	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
+	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
+	[parameter(Mandatory = $false, ParameterSetName = "PreCache")]
+	[parameter(Mandatory = $false, ParameterSetName = "Debug")]
+	[Alias("CertificateThumbprint")]
+	[string]$AdminServiceCertificateThumbprint,
+
+	[parameter(Mandatory = $false, ParameterSetName = "BareMetal")]
+	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
+	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
+	[parameter(Mandatory = $false, ParameterSetName = "PreCache")]
+	[parameter(Mandatory = $false, ParameterSetName = "Debug")]
+	[ValidatePattern("^[A-Za-z0-9]{3}$")]
+	[string]$SiteCode,
+
+	[parameter(Mandatory = $false, ParameterSetName = "XMLPackage", HelpMessage = "Specify BareMetal, OSUpgrade (OSUpdate alias), DriverUpdate, or PreCache.")]
 	[ValidateNotNullOrEmpty()]
-	[ValidateSet("BareMetal", "OSUpdate", "DriverUpdate", "PreCache")]
+	[ValidateSet("BareMetal", "OSUpgrade", "OSUpdate", "DriverUpdate", "PreCache")]
 	[string]$XMLDeploymentType = "BareMetal",
-	
+
 	[parameter(Mandatory = $true, ParameterSetName = "Debug", HelpMessage = "Specify the service account user name used for authenticating against the AdminService endpoint.")]
 	[ValidateNotNullOrEmpty()]
-	[string]$UserName = "",
-	
+	[string]$UserName,
+
 	[parameter(Mandatory = $true, ParameterSetName = "Debug", HelpMessage = "Specify the service account password used for authenticating against the AdminService endpoint.")]
 	[ValidateNotNullOrEmpty()]
-	[string]$Password = "",
-	
-	[parameter(Mandatory = $false, HelpMessage = "Specify the expected SHA1 thumbprint of the AdminService certificate. Only required when that certificate does not chain to a root this machine trusts, such as a ConfigMgr self-signed binding.")]
-	[AllowEmptyString()]
-	[string]$CertificateThumbprint = "",
-	
+	[string]$Password,
+
 	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Define a filter used when calling the AdminService to only return objects matching the filter.")]
 	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
 	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
@@ -330,7 +356,7 @@ param(
 	[ValidateNotNullOrEmpty()]
 	[ValidateSet("Windows 11", "Windows 10")]
 	[string]$TargetOSName,
-	
+
 	[parameter(Mandatory = $true, ParameterSetName = "BareMetal", HelpMessage = "Define the value that will be used as the target operating system version e.g. '2004'.")]
 	[parameter(Mandatory = $true, ParameterSetName = "OSUpgrade")]
 	[parameter(Mandatory = $true, ParameterSetName = "PreCache")]
@@ -339,7 +365,7 @@ param(
 	[ValidateNotNullOrEmpty()]
 	[ValidateSet("26H2", "26H1", "25H2", "24H2", "23H2", "22H2", "21H2", "21H1", "20H2", "2004", "1909", "1903", "1809", "1803", "1709", "1703", "1607")]
 	[string]$TargetOSVersion,
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Define the value that will be used as the target operating system architecture e.g. 'x64', 'x86' or 'Arm64'.")]
 	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
 	[parameter(Mandatory = $false, ParameterSetName = "PreCache")]
@@ -348,7 +374,7 @@ param(
 	[ValidateNotNullOrEmpty()]
 	[ValidateSet("x64", "x86", "Arm64")]
 	[string]$TargetOSArchitecture = "x64",
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Define the operational mode, either Production or Pilot, for when calling ConfigMgr WebService to only return objects matching the selected operational mode.")]
 	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
 	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
@@ -358,14 +384,14 @@ param(
 	[ValidateNotNullOrEmpty()]
 	[ValidateSet("Production", "Pilot")]
 	[string]$OperationalMode = "Production",
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Specify if the script is to be used with a driver fallback package when a driver package for SystemSKU or computer model could not be detected.")]
 	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
 	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
 	[parameter(Mandatory = $false, ParameterSetName = "PreCache")]
 	[parameter(Mandatory = $false, ParameterSetName = "Debug")]
 	[switch]$UseDriverFallback,
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Specify whether to install drivers using DISM.exe with recurse option or spawn a new process for each driver.")]
 	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
 	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
@@ -374,38 +400,30 @@ param(
 	[ValidateNotNullOrEmpty()]
 	[ValidateSet("Single", "Recurse")]
 	[string]$DriverInstallMode = "Recurse",
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "PreCache", HelpMessage = "Specify a custom path for the PreCache directory, overriding the default CCMCache directory.")]
 	[ValidateNotNullOrEmpty()]
 	[string]$PreCachePath,
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "Debug", HelpMessage = "Override the automatically detected computer manufacturer when running in debug mode.")]
 	[ValidateNotNullOrEmpty()]
-	[ValidateSet("HP", "Hewlett-Packard", "Dell", "Lenovo", "Microsoft", "Fujitsu", "Panasonic", "Viglen", "AZW", "Getac", "Intel", "ByteSpeed", "ASUS")]
+	[ValidateSet("HP", "Hewlett-Packard", "Dell", "Lenovo", "Microsoft", "Fujitsu", "Panasonic", "Viglen", "AZW", "Getac", "Intel", "ByteSpeed", "ASUS", "MSI", "GIGABYTE", "Dynabook", "Toshiba", "Parallels", "Nutanix")]
 	[string]$Manufacturer,
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "Debug", HelpMessage = "Override the automatically detected computer model when running in debug mode.")]
 	[ValidateNotNullOrEmpty()]
 	[string]$ComputerModel,
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "Debug", HelpMessage = "Override the automatically detected SystemSKU when running in debug mode.")]
 	[ValidateNotNullOrEmpty()]
 	[string]$SystemSKU,
-	
+
 	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Use this switch to check for drivers packages that matches earlier versions of Windows than what's specified as input for TargetOSVersion.")]
 	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
 	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
 	[parameter(Mandatory = $false, ParameterSetName = "PreCache")]
 	[parameter(Mandatory = $false, ParameterSetName = "Debug")]
-	[switch]$OSVersionFallback,
-
-	[parameter(Mandatory = $false, ParameterSetName = "BareMetal", HelpMessage = "Allow the normal matching, download and install process on a virtual machine, using a package for its hypervisor or a generic virtual machine package.")]
-	[parameter(Mandatory = $false, ParameterSetName = "DriverUpdate")]
-	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
-	[parameter(Mandatory = $false, ParameterSetName = "PreCache")]
-	[parameter(Mandatory = $false, ParameterSetName = "Debug")]
-	[parameter(Mandatory = $false, ParameterSetName = "XMLPackage")]
-	[switch]$AllowVirtualMachine
+	[switch]$OSVersionFallback
 )
 Begin {
 	# Load Microsoft.SMS.TSEnvironment COM object
@@ -414,12 +432,15 @@ Begin {
 			$TSEnvironment = New-Object -ComObject "Microsoft.SMS.TSEnvironment" -ErrorAction Stop
 		}
 		catch [System.Exception] {
-			Write-Warning -Message "Unable to construct Microsoft.SMS.TSEnvironment object"; exit
+			throw "Unable to construct Microsoft.SMS.TSEnvironment object. $($PSItem.Exception.Message)"
 		}
 	}
-	
-	# Enable TLS 1.2 support for downloading modules from PSGallery
+
+	# Enable TLS 1.2 support for AdminService and Microsoft identity platform requests
 	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+	$Script:IsVirtualMachine = $false
+	$Script:ComputerPlatform = "Physical-Unknown"
+	$Script:VirtualMachinePackagePattern = "\b(virtual machine|vmware(?:\s*\d+,\d+)?|vmxnet|pvscsi|hyper[- ]?v|parallels|virtualbox|virtio|qemu|proxmox|kvm|nutanix|ahv|xen(?:server|enterprise)?|citrix)\b"
 }
 Process {
 	# Set Log Path
@@ -431,26 +452,26 @@ Process {
 			$LogsDirectory = $Script:TSEnvironment.Value("_SMSTSLogPath")
 		}
 	}
-	
+
 	# Functions
 	function Write-CMLogEntry {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Value added to the log file.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$Value,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Severity for the log entry. 1 for Informational, 2 for Warning and 3 for Error.")]
 			[ValidateNotNullOrEmpty()]
 			[ValidateSet("1", "2", "3")]
 			[string]$Severity,
-			
+
 			[parameter(Mandatory = $false, HelpMessage = "Name of the log file that the entry will written to.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$FileName = "ApplyDriverPackage.log"
 		)
 		# Determine log file location
 		$LogFilePath = Join-Path -Path $LogsDirectory -ChildPath $FileName
-		
+
 		# Construct time stamp for log entry
 		if (-not (Test-Path -Path 'variable:global:TimezoneBias')) {
 			[string]$global:TimezoneBias = [System.TimeZoneInfo]::Local.GetUtcOffset((Get-Date)).TotalMinutes
@@ -462,16 +483,16 @@ Process {
 			}
 		}
 		$Time = -join @((Get-Date -Format "HH:mm:ss.fff"), $TimezoneBias)
-		
+
 		# Construct date for log entry
 		$Date = (Get-Date -Format "MM-dd-yyyy")
-		
+
 		# Construct context for log entry
 		$Context = $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
-		
+
 		# Construct final log entry
 		$LogText = "<![LOG[$($Value)]LOG]!><time=""$($Time)"" date=""$($Date)"" component=""ApplyDriverPackage"" context=""$($Context)"" type=""$($Severity)"" thread=""$($PID)"" file="""">"
-		
+
 		# Add value to log file
 		try {
 			Out-File -InputObject $LogText -Append -NoClobber -Encoding Default -FilePath $LogFilePath -ErrorAction Stop
@@ -480,18 +501,18 @@ Process {
 			Write-Warning -Message "Unable to append log entry to ApplyDriverPackage.log file. Error message at line $($_.InvocationInfo.ScriptLineNumber): $($_.Exception.Message)"
 		}
 	}
-	
+
 	function Invoke-Executable {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the file name or path of the executable to be invoked, including the extension")]
 			[ValidateNotNullOrEmpty()]
 			[string]$FilePath,
-			
+
 			[parameter(Mandatory = $false, HelpMessage = "Specify arguments that will be passed to the executable")]
 			[ValidateNotNull()]
 			[string]$Arguments
 		)
-		
+
 		# Construct a hash-table for default parameter splatting
 		$SplatArgs = @{
 			FilePath = $FilePath
@@ -499,12 +520,12 @@ Process {
 			Passthru = $true
 			ErrorAction = "Stop"
 		}
-		
+
 		# Add ArgumentList param if present
 		if (-not([System.String]::IsNullOrEmpty($Arguments))) {
 			$SplatArgs.Add("ArgumentList", $Arguments)
 		}
-		
+
 		# Invoke executable and wait for process to exit
 		try {
 			$Invocation = Start-Process @SplatArgs
@@ -518,10 +539,10 @@ Process {
 			Write-CMLogEntry -Value " - Failed to invoke executable '$($FilePath)'. Error message: $($_.Exception.Message)" -Severity 3
 			return -1
 		}
-		
+
 		return $Invocation.ExitCode
 	}
-	
+
 	function Invoke-CMDownloadContent {
 		param(
 			[parameter(Mandatory = $true, ParameterSetName = "NoPath", HelpMessage = "Specify a PackageID that will be downloaded.")]
@@ -529,18 +550,18 @@ Process {
 			[ValidateNotNullOrEmpty()]
 			[ValidatePattern("^[A-Z0-9]{3}[A-F0-9]{5}$")]
 			[string]$PackageID,
-			
+
 			[parameter(Mandatory = $true, ParameterSetName = "NoPath", HelpMessage = "Specify the download location type.")]
 			[Parameter(ParameterSetName = "CustomPath")]
 			[ValidateNotNullOrEmpty()]
 			[ValidateSet("Custom", "TSCache", "CCMCache")]
 			[string]$DestinationLocationType,
-			
+
 			[parameter(Mandatory = $true, ParameterSetName = "NoPath", HelpMessage = "Save the download location to the specified variable name.")]
 			[Parameter(ParameterSetName = "CustomPath")]
 			[ValidateNotNullOrEmpty()]
 			[string]$DestinationVariableName,
-			
+
 			[parameter(Mandatory = $true, ParameterSetName = "CustomPath", HelpMessage = "When location type is specified as Custom, specify the custom path.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$CustomLocationPath
@@ -548,24 +569,24 @@ Process {
 		# Set OSDDownloadDownloadPackages
 		Write-CMLogEntry -Value " - Setting task sequence variable OSDDownloadDownloadPackages to: $($PackageID)" -Severity 1
 		$TSEnvironment.Value("OSDDownloadDownloadPackages") = "$($PackageID)"
-		
+
 		# Set OSDDownloadDestinationLocationType
 		Write-CMLogEntry -Value " - Setting task sequence variable OSDDownloadDestinationLocationType to: $($DestinationLocationType)" -Severity 1
 		$TSEnvironment.Value("OSDDownloadDestinationLocationType") = "$($DestinationLocationType)"
-		
+
 		# Set OSDDownloadDestinationVariable
 		Write-CMLogEntry -Value " - Setting task sequence variable OSDDownloadDestinationVariable to: $($DestinationVariableName)" -Severity 1
 		$TSEnvironment.Value("OSDDownloadDestinationVariable") = "$($DestinationVariableName)"
-		
+
 		# Set OSDDownloadDestinationPath
 		if ($DestinationLocationType -like "Custom") {
 			Write-CMLogEntry -Value " - Setting task sequence variable OSDDownloadDestinationPath to: $($CustomLocationPath)" -Severity 1
 			$TSEnvironment.Value("OSDDownloadDestinationPath") = "$($CustomLocationPath)"
 		}
-		
+
 		# Set SMSTSDownloadRetryCount to 1000 to overcome potential BranchCache issue that will cause 'SendWinHttpRequest failed. 80072efe'
 		$TSEnvironment.Value("SMSTSDownloadRetryCount") = 1000
-		
+
 		# Invoke download of package content
 		try {
 			if ($TSEnvironment.Value("_SMSTSInWinPE") -eq $false) {
@@ -576,63 +597,63 @@ Process {
 				Write-CMLogEntry -Value " - Starting package content download process (WinPE), this might take some time" -Severity 1
 				$ReturnCode = Invoke-Executable -FilePath "OSDDownloadContent.exe"
 			}
-			
+
 			# Reset SMSTSDownloadRetryCount to 5 after attempted download
 			$TSEnvironment.Value("SMSTSDownloadRetryCount") = 5
-			
+
 			# Match on return code
 			if ($ReturnCode -eq 0) {
 				Write-CMLogEntry -Value " - Successfully downloaded package content with PackageID: $($PackageID)" -Severity 1
 			}
 			else {
 				Write-CMLogEntry -Value " - Failed to download package content with PackageID '$($PackageID)'. Return code was: $($ReturnCode)" -Severity 3
-				
-				# Throw terminating error				
+
+				# Throw terminating error
 				$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 			}
 		}
 		catch [System.Exception] {
 			Write-CMLogEntry -Value " - An error occurred while attempting to download package content. Error message: $($_.Exception.Message)" -Severity 3
-			
-			# Throw terminating error			
+
+			# Throw terminating error
 			$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 		}
-		
+
 		return $ReturnCode
 	}
-	
+
 	function Invoke-CMResetDownloadContentVariables {
 		# Set OSDDownloadDownloadPackages
 		Write-CMLogEntry -Value " - Setting task sequence variable OSDDownloadDownloadPackages to a blank value" -Severity 1
 		$TSEnvironment.Value("OSDDownloadDownloadPackages") = [System.String]::Empty
-		
+
 		# Set OSDDownloadDestinationLocationType
 		Write-CMLogEntry -Value " - Setting task sequence variable OSDDownloadDestinationLocationType to a blank value" -Severity 1
 		$TSEnvironment.Value("OSDDownloadDestinationLocationType") = [System.String]::Empty
-		
+
 		# Set OSDDownloadDestinationVariable
 		Write-CMLogEntry -Value " - Setting task sequence variable OSDDownloadDestinationVariable to a blank value" -Severity 1
 		$TSEnvironment.Value("OSDDownloadDestinationVariable") = [System.String]::Empty
-		
+
 		# Set OSDDownloadDestinationPath
 		Write-CMLogEntry -Value " - Setting task sequence variable OSDDownloadDestinationPath to a blank value" -Severity 1
 		$TSEnvironment.Value("OSDDownloadDestinationPath") = [System.String]::Empty
 	}
-	
+
 	function New-TerminatingErrorRecord {
 		param(
 			[parameter(Mandatory = $false, HelpMessage = "Specify the exception message details.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$Message = "InnerTerminatingFailure",
-			
+
 			[parameter(Mandatory = $false, HelpMessage = "Specify the violation exception causing the error.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$Exception = "System.Management.Automation.RuntimeException",
-			
+
 			[parameter(Mandatory = $false, HelpMessage = "Specify the error category of the exception causing the error.")]
 			[ValidateNotNullOrEmpty()]
 			[System.Management.Automation.ErrorCategory]$ErrorCategory = [System.Management.Automation.ErrorCategory]::NotImplemented,
-			
+
 			[parameter(Mandatory = $false, HelpMessage = "Specify the target object causing the error.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$TargetObject = ([string]::Empty)
@@ -640,7 +661,7 @@ Process {
 		# Construct new error record to be returned from function based on parameter inputs
 		$SystemException = New-Object -TypeName $Exception -ArgumentList $Message
 		$ErrorRecord = New-Object -TypeName System.Management.Automation.ErrorRecord -ArgumentList @($SystemException, $ErrorID, $ErrorCategory, $TargetObject)
-		
+
 		# Handle return value
 		return $ErrorRecord
 	}
@@ -692,14 +713,17 @@ Process {
 			"XMLPackage" {
 				# Set required variables for XMLPackage parameter set
 				$Script:DeploymentMode = $Script:XMLDeploymentType
+				if ($Script:DeploymentMode -eq "OSUpdate") {
+					$Script:DeploymentMode = "OSUpgrade"
+				}
 				$Script:PackageSource = "XML Package Logic file"
-				
+
 				# Define the path for the pre-downloaded XML Package Logic file called DriverPackages.xml
 				$script:XMLPackageLogicFile = (Join-Path -Path $TSEnvironment.Value("MDMXMLPackage01") -ChildPath "DriverPackages.xml")
 				if (-not (Test-Path -Path $XMLPackageLogicFile)) {
 					Write-CMLogEntry -Value " - Failed to locate required 'DriverPackages.xml' logic file for XMLPackage deployment type, ensure it has been pre-downloaded in a Download Package Content step before running this script" -Severity 3
-					
-					# Throw terminating error					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
+
+					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
 			}
 			default {
@@ -708,7 +732,7 @@ Process {
 			}
 		}
 	}
-	
+
 	function ConvertTo-ObfuscatedUserName {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the user name string to be obfuscated for log output.")]
@@ -717,7 +741,7 @@ Process {
 		)
 		# Convert input object to a character array
 		$UserNameArray = $InputObject.ToCharArray()
-		
+
 		# Loop through each character obfuscate every second item, with exceptions of the @ character if present
 		for ($i = 0; $i -lt $UserNameArray.Count; $i++) {
 			if ($UserNameArray[$i] -notmatch "@") {
@@ -726,19 +750,19 @@ Process {
 				}
 			}
 		}
-		
+
 		# Join character array and return value
 		return -join @($UserNameArray)
 	}
-	
+
 	function Test-AdminServiceData {
 		# Validate correct value have been either set as a TS environment variable or passed as parameter input for service account user name used to authenticate against the AdminService
 		if ([string]::IsNullOrEmpty($Script:UserName)) {
 			switch ($PSCmdLet.ParameterSetName) {
 				"Debug" {
 					Write-CMLogEntry -Value " - Required service account user name could not be determined from parameter input" -Severity 3
-					
-					# Throw terminating error					
+
+					# Throw terminating error
 					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
 				default {
@@ -747,13 +771,13 @@ Process {
 					if (-not ([string]::IsNullOrEmpty($Script:UserName))) {
 						# Obfuscate user name
 						$ObfuscatedUserName = ConvertTo-ObfuscatedUserName -InputObject $Script:UserName
-						
+
 						Write-CMLogEntry -Value " - Successfully read service account user name from TS environment variable 'MDMUserName': $($ObfuscatedUserName)" -Severity 1
 					}
 					else {
 						Write-CMLogEntry -Value " - Required service account user name could not be determined from TS environment variable" -Severity 3
-						
-						# Throw terminating error						
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
 				}
@@ -762,10 +786,10 @@ Process {
 		else {
 			# Obfuscate user name
 			$ObfuscatedUserName = ConvertTo-ObfuscatedUserName -InputObject $Script:UserName
-			
+
 			Write-CMLogEntry -Value " - Successfully read service account user name from parameter input: $($ObfuscatedUserName)" -Severity 1
 		}
-		
+
 		# Validate correct value have been either set as a TS environment variable or passed as parameter input for service account password used to authenticate against the AdminService
 		if ([string]::IsNullOrEmpty($Script:Password)) {
 			switch ($Script:PSCmdLet.ParameterSetName) {
@@ -780,8 +804,8 @@ Process {
 					}
 					else {
 						Write-CMLogEntry -Value " - Required service account password could not be determined from TS environment variable" -Severity 3
-						
-						# Throw terminating error						
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
 				}
@@ -790,20 +814,7 @@ Process {
 		else {
 			Write-CMLogEntry -Value " - Successfully read service account password from parameter input: ********" -Severity 1
 		}
-		
-		# Resolve the optional AdminService certificate thumbprint. It is only needed when the
-		# AdminService certificate does not chain to a root this machine trusts, and it is what lets
-		# a self-signed binding be accepted without also trusting every other certificate presented.
-		if ((-not ([string]::IsNullOrWhiteSpace($CertificateThumbprint))) -or ($Script:PSCmdLet.ParameterSetName -like "Debug")) {
-			$Script:CertificateThumbprint = $CertificateThumbprint
-		}
-		else {
-			$Script:CertificateThumbprint = $TSEnvironment.Value("MDMCertificateThumbprint")
-		}
-		if (-not ([string]::IsNullOrWhiteSpace($Script:CertificateThumbprint))) {
-			Write-CMLogEntry -Value " - An AdminService certificate thumbprint is configured and will be used if the endpoint certificate does not validate normally" -Severity 1
-		}
-		
+
 		# Validate that if determined AdminService endpoint type is external, that additional required TS environment variables are available
 		if ($Script:AdminServiceEndpointType -like "External") {
 			if ($Script:PSCmdLet.ParameterSetName -notlike "Debug") {
@@ -814,11 +825,11 @@ Process {
 				}
 				else {
 					Write-CMLogEntry -Value " - Required external endpoint address for AdminService through CMG could not be determined from TS environment variable" -Severity 3
-					
-					# Throw terminating error					
+
+					# Throw terminating error
 					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
-				
+
 				# Attempt to read TSEnvironment variable MDMClientID
 				$Script:ClientID = $TSEnvironment.Value("MDMClientID")
 				if (-not([string]::IsNullOrEmpty($Script:ClientID))) {
@@ -826,11 +837,11 @@ Process {
 				}
 				else {
 					Write-CMLogEntry -Value " - Required client identification for AdminService through CMG could not be determined from TS environment variable" -Severity 3
-					
-					# Throw terminating error					
+
+					# Throw terminating error
 					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
-				
+
 				# Attempt to read TSEnvironment variable MDMTenantName
 				$Script:TenantName = $TSEnvironment.Value("MDMTenantName")
 				if (-not([string]::IsNullOrEmpty($Script:TenantName))) {
@@ -838,11 +849,11 @@ Process {
 				}
 				else {
 					Write-CMLogEntry -Value " - Required client identification for AdminService through CMG could not be determined from TS environment variable" -Severity 3
-					
-					# Throw terminating error					
+
+					# Throw terminating error
 					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
-				
+
 				# Attempt to read TSEnvironment variable MDMApplicationIDURI
 				$Script:ApplicationIDURI = $TSEnvironment.Value("MDMApplicationIDURI")
 				if (-not([string]::IsNullOrEmpty($Script:ApplicationIDURI))) {
@@ -854,8 +865,20 @@ Process {
 				}
 			}
 		}
+
+		if (($Script:AdminServiceEndpointType -like "Internal") -and [string]::IsNullOrWhiteSpace($Script:AdminServiceCertificateThumbprint) -and ($Script:PSCmdLet.ParameterSetName -notlike "Debug")) {
+			$Script:AdminServiceCertificateThumbprint = $TSEnvironment.Value("MDMAdminServiceCertificateThumbprint")
+		}
+		if (-not [string]::IsNullOrWhiteSpace($Script:AdminServiceCertificateThumbprint)) {
+			$Script:AdminServiceCertificateThumbprint = $Script:AdminServiceCertificateThumbprint -replace "\s", ""
+			if ($Script:AdminServiceCertificateThumbprint -notmatch "^[A-Fa-f0-9]{40}$") {
+				Write-CMLogEntry -Value " - AdminService certificate thumbprint must contain exactly 40 hexadecimal characters" -Severity 3
+				$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
+			}
+			Write-CMLogEntry -Value " - Internal AdminService certificate pinning is configured for thumbprint: $($Script:AdminServiceCertificateThumbprint)" -Severity 1
+		}
 	}
-	
+
 	function Get-AdminServiceEndpointType {
 		switch ($Script:DeploymentMode) {
 			"BareMetal" {
@@ -866,8 +889,8 @@ Process {
 				}
 				else {
 					Write-CMLogEntry -Value " - Detected that script was not running in WinPE of a bare metal deployment type, this is not a supported scenario" -Severity 3
-					
-					# Throw terminating error					
+
+					# Throw terminating error
 					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
 			}
@@ -876,8 +899,8 @@ Process {
 			}
 			default {
 				Write-CMLogEntry -Value " - Attempting to determine AdminService endpoint type based on current active Management Point candidates and from ClientInfo class" -Severity 1
-				
-				# Determine active MP candidates and if 
+
+				# Determine active MP candidates and if
 				$ActiveMPCandidates = Get-WmiObject -Namespace "root\ccm\LocationServices" -Class "SMS_ActiveMPCandidate"
 				$ActiveMPInternalCandidatesCount = ($ActiveMPCandidates | Where-Object {
 						$PSItem.Type -like "Assigned"
@@ -885,7 +908,7 @@ Process {
 				$ActiveMPExternalCandidatesCount = ($ActiveMPCandidates | Where-Object {
 						$PSItem.Type -like "Internet"
 					} | Measure-Object).Count
-				
+
 				# Determine if ConfigMgr client has detected if the computer is currently on internet or intranet
 				$CMClientInfo = Get-WmiObject -Namespace "root\ccm" -Class "ClientInfo"
 				switch ($CMClientInfo.InInternet) {
@@ -895,8 +918,8 @@ Process {
 						}
 						else {
 							Write-CMLogEntry -Value " - Detected as an Internet client but unable to determine External AdminService endpoint, bailing out" -Severity 3
-							
-							# Throw terminating error							
+
+							# Throw terminating error
 							$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 						}
 					}
@@ -906,8 +929,8 @@ Process {
 						}
 						else {
 							Write-CMLogEntry -Value " - Detected as an Intranet client but unable to determine Internal AdminService endpoint, bailing out" -Severity 3
-							
-							# Throw terminating error							
+
+							# Throw terminating error
 							$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 						}
 					}
@@ -916,7 +939,7 @@ Process {
 		}
 		Write-CMLogEntry -Value " - Determined AdminService endpoint type as: $($AdminServiceEndpointType)" -Severity 1
 	}
-	
+
 	function Set-AdminServiceEndpointURL {
 		switch ($Script:AdminServiceEndpointType) {
 			"Internal" {
@@ -928,107 +951,49 @@ Process {
 		}
 		Write-CMLogEntry -Value " - Setting 'AdminServiceURL' variable to: $($Script:AdminServiceURL)" -Severity 1
 	}
-	
-	function Read-AuthErrorDetail {
-		<#
-		.SYNOPSIS
-			Return the reason Microsoft Entra ID rejected a token request.
-
-		.DESCRIPTION
-			Entra returns the reason as JSON in the response body, while the exception message alone
-			is only the HTTP status, e.g. "The remote server returned an error: (400) Bad Request".
-			The body carries an AADSTS code that names the actual cause, which is the difference
-			between a diagnosable task sequence failure and a dead end:
-
-			  AADSTS50126    the user name or password is wrong
-			  AADSTS50076    the account requires multi-factor authentication
-			  AADSTS50079    the account must enrol for multi-factor authentication
-			  AADSTS53003    access blocked by a Conditional Access policy
-			  AADSTS65001    the client app has no consent for the requested resource
-			  AADSTS7000218  the client app is not enabled for public client flows
-
-			Falls back to the exception message when the body cannot be read.
-		#>
-		param (
-			[parameter(Mandatory = $true, HelpMessage = "Specify the error record captured from the token request.")]
-			[ValidateNotNullOrEmpty()]
-			$ErrorRecord
-		)
-		try {
-			$ResponseStream = $ErrorRecord.Exception.Response.GetResponseStream()
-			$ResponseStream.Position = 0
-			$StreamReader = New-Object -TypeName System.IO.StreamReader -ArgumentList $ResponseStream
-			$ErrorDetail = $StreamReader.ReadToEnd() | ConvertFrom-Json
-
-			# error_description is multi-line; the first line carries the AADSTS code and the reason
-			$Description = ($ErrorDetail.error_description -split "`r?`n")[0]
-
-			# Handle return value
-			return "$($ErrorDetail.error): $($Description)"
-		}
-		catch [System.Exception] {
-			# Handle return value
-			return $ErrorRecord.Exception.Message
-		}
-	}
 
 	function Get-AuthToken {
-		<#
-		.SYNOPSIS
-			Retrieve an access token for the AdminService from Microsoft Entra ID.
-
-		.DESCRIPTION
-			Requests the token directly from the Entra ID token endpoint. This previously ran through
-			the PSIntuneAuth module, which loads ADAL out of the AzureAD module and installs both from
-			the PSGallery on demand. The AzureAD module was retired in October 2025, so that path no
-			longer works at all -- and installing modules inside WinPE required the NuGet provider, a
-			reachable PSGallery and a writable module path, three failure modes in the most fragile
-			part of a deployment, to obtain what is a single HTTPS POST.
-
-			The grant is unchanged: a delegated (user) token requested by the CMG native client app,
-			for the CMG server app as the audience, using the v1.0 endpoint and a 'resource' value.
-			That is precisely what the module was doing underneath, so no app registration or task
-			sequence variable has to change.
-		#>
-		# Reuse a cached token while more than five minutes of its lifetime remain. A driver package
-		# phase on a slow link can outlive a token, and nothing here refreshed one previously.
-		if (($null -ne $Script:AuthTokenExpiry) -and ((Get-Date) -lt $Script:AuthTokenExpiry.AddMinutes(-5))) {
-			Write-CMLogEntry -Value " - Reusing cached authentication token, valid until $($Script:AuthTokenExpiry.ToString("u"))" -Severity 1
-			return
-		}
-
-		$TokenEndpointUri = "https://login.microsoftonline.com/$($TenantName)/oauth2/token"
-		$TokenRequestBody = @{
-			grant_type = "password"
-			client_id  = $ClientID
-			resource   = $ApplicationIDURI
-			username   = $Credential.UserName
-			password   = $Credential.GetNetworkCredential().Password
-		}
-
+		$TokenRequest = $null
+		$TokenResponse = $null
 		try {
-			# Retrieve authentication token
+			# Retrieve an OAuth token directly so deployment never installs or executes a gallery module as SYSTEM
 			Write-CMLogEntry -Value " - Attempting to retrieve authentication token using native client with ID: $($ClientID)" -Severity 1
-			Write-CMLogEntry -Value " - Requesting token for resource: $($ApplicationIDURI)" -Severity 1
-			$TokenResponse = Invoke-RestMethod -Method Post -Uri $TokenEndpointUri -Body $TokenRequestBody -ContentType "application/x-www-form-urlencoded" -UseBasicParsing -ErrorAction Stop
-
-			# Headers only -- every value in this table is sent as an HTTP header on each AdminService
-			# call, so the token expiry is held separately rather than added here
-			$Script:AuthToken = @{
-				"Content-Type"  = "application/json"
-				"Authorization" = "Bearer $($TokenResponse.access_token)"
+			$TenantIdentifier = [Uri]::EscapeDataString($TenantName.Trim())
+			$TokenUri = "https://login.microsoftonline.com/$($TenantIdentifier)/oauth2/token"
+			$TokenRequest = @{
+				grant_type = "password"
+				client_id = $ClientID
+				resource = $ApplicationIDURI
+				username = $Credential.UserName
+				password = $Script:Password
 			}
-			$Script:AuthTokenExpiry = (Get-Date).AddSeconds([int]$TokenResponse.expires_in)
-			Write-CMLogEntry -Value " - Successfully retrieved authentication token, valid until $($Script:AuthTokenExpiry.ToString("u"))" -Severity 1
+			$TokenResponse = Invoke-RestMethod -Method Post -Uri $TokenUri -Body $TokenRequest -ContentType "application/x-www-form-urlencoded" -ErrorAction Stop
+			if ([string]::IsNullOrWhiteSpace($TokenResponse.token_type) -or [string]::IsNullOrWhiteSpace($TokenResponse.access_token)) {
+				throw "The Microsoft identity platform response did not contain a token type and access token"
+			}
+			$Script:AuthToken = @{
+				Authorization = "$($TokenResponse.token_type) $($TokenResponse.access_token)"
+			}
+			Write-CMLogEntry -Value " - Successfully retrieved authentication token" -Severity 1
 		}
 		catch [System.Exception] {
-			Write-CMLogEntry -Value " - Failed to retrieve authentication token. Error message: $(Read-AuthErrorDetail -ErrorRecord $PSItem)" -Severity 3
+			Write-CMLogEntry -Value " - Failed to retrieve authentication token. Error message: $($PSItem.Exception.Message)" -Severity 3
 
 			# Throw terminating error
 			$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 		}
+		finally {
+			if ($null -ne $TokenRequest) {
+				$TokenRequest.password = $null
+			}
+			if ($null -ne $TokenResponse) {
+				$TokenResponse.access_token = $null
+			}
+			$Script:Password = $null
+			$Script:Credential = $null
+		}
 	}
-	
+
 	function Get-AuthDomainName {
 		<#
 		.SYNOPSIS
@@ -1134,7 +1099,7 @@ Process {
 			$NetBIOSName = [string]::Empty
 		}
 
-		# UPN form -- the format required from ConfigMgr 2603 onwards
+		# UPN form -- the preferred unambiguous domain-qualified format
 		if (-not [string]::IsNullOrWhiteSpace($DomainName)) {
 			$UserPrincipalName = "$($AccountName)@$($DomainName)"
 			if ($Candidates -notcontains $UserPrincipalName) {
@@ -1170,20 +1135,6 @@ Process {
 	}
 
 	function Expand-ArchiveSafely {
-		<#
-		.SYNOPSIS
-			Expands a .zip after verifying that no entry escapes the destination directory.
-
-		.DESCRIPTION
-			A zip entry may carry a traversing relative path ("..\..\Windows\System32\evil.dll").
-			Windows PowerShell 5.1's Expand-Archive does not reject one, so an archive can write
-			outside the folder it is expanded into, the flaw known as Zip Slip. This script runs as
-			SYSTEM in WinPE and in the full OS, so such a write lands with full privilege.
-
-			Every entry is resolved against the destination and the archive is rejected outright
-			unless all of them stay underneath it. Validation completes before anything is written,
-			so a rejected archive leaves no partial tree behind.
-		#>
 		param (
 			[parameter(Mandatory = $true)]
 			[ValidateNotNullOrEmpty()]
@@ -1233,89 +1184,75 @@ Process {
 		}
 	}
 
-	function Set-PinnedCertificateValidationCallback {
+	function Enable-AdminServiceCertificatePinning {
 		<#
 		.SYNOPSIS
-			Pin AdminService TLS validation to one expected certificate thumbprint.
+			Temporarily permit an untrusted AdminService certificate only when its leaf thumbprint matches.
 
 		.DESCRIPTION
-			This replaces the previous behaviour, which installed a callback that returned true for
-			every certificate presented by any host for the remainder of the process. Any machine that
-			could answer for the endpoint address was therefore trusted, and the service account
-			credential was sent to it, so that behaviour has been removed.
-
-			Pinning is the only supported way to keep using a certificate that does not chain to a
-			trusted root. The expected thumbprint comes from the MDMCertificateThumbprint task
-			sequence variable or the CertificateThumbprint parameter. When neither supplies one this
-			function changes nothing and returns false, so the caller fails with guidance instead of
-			authenticating to an endpoint whose identity it could not verify.
-
-			A certificate that already validates normally is unaffected -- the callback only rescues
-			the one pinned certificate, and every other validation failure stays a failure.
+			The callback rejects name mismatches and any certificate other than the configured pin.
+			Disable-AdminServiceCertificatePinning restores the prior process callback immediately
+			after the retry.
 		#>
-		if ([string]::IsNullOrWhiteSpace($Script:CertificateThumbprint)) {
-			return $false
-		}
-		if ($Script:CertificateValidationCallbackEnabled -eq $true) {
-			return $true
+		if ([string]::IsNullOrWhiteSpace($Script:AdminServiceCertificateThumbprint)) {
+			throw "No AdminService certificate thumbprint was configured"
 		}
 
-		# Thumbprints are routinely copied out of the certificate UI carrying spaces and a leading
-		# invisible mark, so reduce the value to hex characters before checking its length
-		$ExpectedThumbprint = ($Script:CertificateThumbprint -replace '[^0-9A-Fa-f]', '').ToUpper()
-		if ($ExpectedThumbprint -notmatch '^[0-9A-F]{40}$') {
-			Write-CMLogEntry -Value " - The configured AdminService certificate thumbprint is not a 40 character SHA1 thumbprint and will be ignored" -Severity 3
-			return $false
-		}
-
-		$PinnedValidationType = @'
+		if (-not ("AdminServiceCertificateValidation" -as [type])) {
+			Add-Type -TypeDefinition @"
 using System;
 using System.Net;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
-public class DATPinnedCertificateValidation
+
+public static class AdminServiceCertificateValidation
 {
-    public static string ExpectedThumbprint = String.Empty;
-    public static RemoteCertificateValidationCallback PreviousCallback = null;
-    public static void Enable(string thumbprint)
-    {
-        ExpectedThumbprint = thumbprint;
-        PreviousCallback = ServicePointManager.ServerCertificateValidationCallback;
-        ServicePointManager.ServerCertificateValidationCallback =
-            delegate(Object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
-            {
-                if (errors == SslPolicyErrors.None) { return true; }
-                if (errors != SslPolicyErrors.RemoteCertificateChainErrors) { return false; }
-                if (certificate == null) { return false; }
-                if (String.IsNullOrEmpty(ExpectedThumbprint)) { return false; }
-                return String.Equals(certificate.GetCertHashString(), ExpectedThumbprint, StringComparison.OrdinalIgnoreCase);
-            };
-    }
-    public static void Restore()
-    {
-        ServicePointManager.ServerCertificateValidationCallback = PreviousCallback;
-        PreviousCallback = null;
-        ExpectedThumbprint = String.Empty;
-    }
-}
-'@
+	private static RemoteCertificateValidationCallback previousCallback;
+	private static string expectedThumbprint;
 
-		if (-not ("DATPinnedCertificateValidation" -as [type])) {
-			Add-Type -TypeDefinition $PinnedValidationType
+	public static void Enable(string thumbprint)
+	{
+		if (expectedThumbprint != null)
+		{
+			throw new InvalidOperationException("AdminService certificate pinning is already enabled.");
 		}
-		[DATPinnedCertificateValidation]::Enable($ExpectedThumbprint)
-		$Script:CertificateValidationCallbackEnabled = $true
-		Write-CMLogEntry -Value " - AdminService certificate validation is pinned to thumbprint: $($ExpectedThumbprint)" -Severity 1
 
-		# Handle return value
-		return $true
+		expectedThumbprint = thumbprint.Replace(" ", String.Empty);
+		previousCallback = ServicePointManager.ServerCertificateValidationCallback;
+		ServicePointManager.ServerCertificateValidationCallback = Validate;
 	}
 
-	function Reset-PinnedCertificateValidationCallback {
-		if ($Script:CertificateValidationCallbackEnabled -eq $true -and
-			("DATPinnedCertificateValidation" -as [type])) {
-			[DATPinnedCertificateValidation]::Restore()
-			$Script:CertificateValidationCallbackEnabled = $false
+	private static bool Validate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+	{
+		if (errors == SslPolicyErrors.None)
+		{
+			return previousCallback == null || previousCallback(sender, certificate, chain, errors);
+		}
+
+		if (errors != SslPolicyErrors.RemoteCertificateChainErrors || certificate == null)
+		{
+			return false;
+		}
+
+		X509Certificate2 certificate2 = certificate as X509Certificate2 ?? new X509Certificate2(certificate);
+		return String.Equals(certificate2.Thumbprint, expectedThumbprint, StringComparison.OrdinalIgnoreCase);
+	}
+
+	public static void Disable()
+	{
+		ServicePointManager.ServerCertificateValidationCallback = previousCallback;
+		previousCallback = null;
+		expectedThumbprint = null;
+	}
+}
+"@
+		}
+		[AdminServiceCertificateValidation]::Enable($Script:AdminServiceCertificateThumbprint)
+	}
+
+	function Disable-AdminServiceCertificatePinning {
+		if ("AdminServiceCertificateValidation" -as [type]) {
+			[AdminServiceCertificateValidation]::Disable()
 		}
 	}
 
@@ -1358,13 +1295,12 @@ public class DATPinnedCertificateValidation
 		# Construct PSCredential object for authentication
 		$Script:Credential = New-AuthCredential -UserName $Script:UserName
 
-		# Build the ordered list of user name formats to attempt against the AdminService. ConfigMgr
-		# 2603 introduced security changes that reject a service account supplied as a bare user name,
-		# a configuration that worked on earlier builds, so warn when the configured value is not a UPN
-		# and prepare the domain qualified alternatives for Get-AdminServiceItem to fall back on.
+		# Build an ordered list of user name formats to attempt when an environment rejects the
+		# configured value with 401 Unauthorized. Microsoft does not document a ConfigMgr 2603
+		# UPN-only requirement, so always try the configured value first.
 		$Script:CredentialCandidates = Get-AuthUserNameCandidate -UserName $Script:UserName
 		if ($Script:UserName -notmatch "@") {
-			Write-CMLogEntry -Value " - WARNING: The service account user name is not in UPN format. ConfigMgr 2603 and later reject AdminService authentication that uses a bare user name, it is recommended that the service account is specified in the UPN format (user@domain.com)" -Severity 2
+			Write-CMLogEntry -Value " - The service account user name is not in UPN format. If the configured value is rejected, domain-qualified alternatives will be attempted; UPN format (user@domain.com) is recommended to avoid ambiguity" -Severity 2
 			if (($Script:CredentialCandidates | Measure-Object).Count -gt 1) {
 				$AlternativeNames = ($Script:CredentialCandidates | Select-Object -Skip 1 | ForEach-Object { ConvertTo-ObfuscatedUserName -InputObject $PSItem }) -join ", "
 				Write-CMLogEntry -Value " - Alternative user name formats will be attempted automatically if the configured value is rejected: $($AlternativeNames)" -Severity 2
@@ -1374,7 +1310,7 @@ public class DATPinnedCertificateValidation
 			}
 		}
 	}
-	
+
 	function Get-AdminServiceItem {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the resource for the AdminService API call, e.g. '/SMS_Package'.")]
@@ -1383,7 +1319,7 @@ public class DATPinnedCertificateValidation
 		)
 		# Construct array object to hold return value
 		$PackageArray = New-Object -TypeName System.Collections.ArrayList
-		
+
 		switch ($Script:AdminServiceEndpointType) {
 			"External" {
 				try {
@@ -1393,8 +1329,8 @@ public class DATPinnedCertificateValidation
 				}
 				catch [System.Exception] {
 					Write-CMLogEntry -Value " - Failed to retrieve available package items from AdminService endpoint. Error message: $($PSItem.Exception.Message)" -Severity 3
-					
-					# Throw terminating error					
+
+					# Throw terminating error
 					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
 			}
@@ -1404,8 +1340,7 @@ public class DATPinnedCertificateValidation
 
 				# Attempt each user name format in turn. The configured value is always first, so a
 				# working environment is unaffected; the domain qualified alternatives are only used
-				# after the AdminService rejects the credentials with 401 Unauthorized, which is what
-				# ConfigMgr 2603 and later return for a service account supplied as a bare user name.
+				# after the AdminService rejects the credentials with 401 Unauthorized.
 				$CandidateList = @($Script:CredentialCandidates)
 				if ($CandidateList.Count -eq 0) {
 					$CandidateList = @($Script:UserName)
@@ -1427,12 +1362,12 @@ public class DATPinnedCertificateValidation
 						$RequestSucceeded = $true
 					}
 					catch [System.Security.Authentication.AuthenticationException] {
+						$LastErrorRecord = $PSItem
 						Write-CMLogEntry -Value " - The remote AdminService endpoint certificate is invalid according to the validation procedure. Error message: $($PSItem.Exception.Message)" -Severity 2
-						if (Set-PinnedCertificateValidationCallback) {
-							Write-CMLogEntry -Value " - Retrying the AdminService endpoint connection against the pinned certificate thumbprint" -Severity 2
-
+						if (-not [string]::IsNullOrWhiteSpace($Script:AdminServiceCertificateThumbprint)) {
+							Write-CMLogEntry -Value " - Retrying with the configured AdminService leaf-certificate thumbprint pin" -Severity 2
 							try {
-								# Call AdminService endpoint to retrieve package data
+								Enable-AdminServiceCertificatePinning
 								$AdminServiceResponse = Invoke-RestMethod -Method Get -Uri $AdminServiceUri -Credential $CandidateCredential -ErrorAction Stop
 								$RequestSucceeded = $true
 							}
@@ -1440,12 +1375,11 @@ public class DATPinnedCertificateValidation
 								$LastErrorRecord = $PSItem
 							}
 							finally {
-								Reset-PinnedCertificateValidationCallback
+								Disable-AdminServiceCertificatePinning
 							}
 						}
 						else {
-							Write-CMLogEntry -Value " - The AdminService endpoint identity could not be verified, so the service account credential was not sent. Trust the issuing CA on this machine (import the root certificate into the boot image for WinPE), or set the 'MDMCertificateThumbprint' task sequence variable to the expected AdminService certificate thumbprint" -Severity 3
-							$LastErrorRecord = $PSItem
+							Write-CMLogEntry -Value " - Certificate validation failed closed. Trust the issuing CA in the deployment environment or configure MDMAdminServiceCertificateThumbprint with the exact internal AdminService leaf-certificate thumbprint" -Severity 3
 						}
 					}
 					catch {
@@ -1473,7 +1407,7 @@ public class DATPinnedCertificateValidation
 					$FailureMessage = if ($null -ne $LastErrorRecord) { $LastErrorRecord.Exception.Message } else { "No response was returned from the AdminService endpoint" }
 					Write-CMLogEntry -Value " - Failed to retrieve available package items from AdminService endpoint. Error message: $($FailureMessage)" -Severity 3
 					if (Test-AuthenticationFailure -ErrorRecord $LastErrorRecord) {
-						Write-CMLogEntry -Value " - All attempted user name formats were rejected by the AdminService. ConfigMgr 2603 introduced security changes that require the service account to be specified in UPN format (user@domain.com), update the MDMUserName task sequence variable or the UserName parameter accordingly" -Severity 3
+						Write-CMLogEntry -Value " - All attempted user name formats were rejected by the AdminService. Verify the credentials, account policy, endpoint configuration, and accepted user name format; prefer UPN format (user@domain.com) for the MDMUserName task sequence variable or UserName parameter" -Severity 3
 					}
 
 					# Throw terminating error
@@ -1488,11 +1422,11 @@ public class DATPinnedCertificateValidation
 				$PackageArray.Add($Package) | Out-Null
 			}
 		}
-		
+
 		# Handle return value
 		return $PackageArray
 	}
-	
+
 	function Get-OSImageDetails {
 		switch ($Script:DeploymentMode) {
 			"DriverUpdate" {
@@ -1510,16 +1444,16 @@ public class DATPinnedCertificateValidation
 				}
 			}
 		}
-		
+
 		# Handle output to log file for OS image details
 		Write-CMLogEntry -Value " - Target operating system name configured as: $($OSImageDetails.Name)" -Severity 1
 		Write-CMLogEntry -Value " - Target operating system architecture configured as: $($OSImageDetails.Architecture)" -Severity 1
 		Write-CMLogEntry -Value " - Target operating system version configured as: $($OSImageDetails.Version)" -Severity 1
-		
+
 		# Handle return value
 		return $OSImageDetails
 	}
-	
+
 	function Get-OSBuild {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "OS version data to be translated.")]
@@ -1528,16 +1462,16 @@ public class DATPinnedCertificateValidation
 
 			[parameter(Mandatory = $true, HelpMessage = "OS name data to differentiate builds.")]
 			[ValidateNotNullOrEmpty()]
-			[string]$OSName	
+			[string]$OSName
 		)
 		switch ($OSName) {
 			"Windows 11" {
 				switch (([System.Version]$InputObject).Build) {
-					"28000" {
-						$OSVersion = '26H1'
-					}
 					"26300" {
 						$OSVersion = '26H2'
+					}
+					"28000" {
+						$OSVersion = '26H1'
 					}
 					"26200" {
 						$OSVersion = '25H2'
@@ -1556,12 +1490,10 @@ public class DATPinnedCertificateValidation
 					}
 					default {
 						# Build number not in the table above. New Windows 11 releases keep arriving, so
-						# rather than failing on every build this script version predates, read the
-						# authoritative feature update token from the DisplayVersion value under
-						# CurrentVersion. It is present on every build from 20H2 onwards and always
-						# reflects the enablement package that is actually installed, which is exactly
-						# what driver package names are stamped with (e.g. 'Drivers - Dell Latitude
-						# 7455 - Windows 11 26H1 Arm64').
+						# rather than failing on every build this script version predates, try the
+						# CurrentVersion DisplayVersion value used by supported Windows releases.
+						# Validate its format before using it as the package version token (for example,
+						# 'Drivers - Dell Latitude 7455 - Windows 11 26H1 Arm64').
 						$DisplayVersion = $null
 						try {
 							$DisplayVersion = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name "DisplayVersion" -ErrorAction Stop).DisplayVersion
@@ -1625,18 +1557,18 @@ public class DATPinnedCertificateValidation
 					default {
 						Write-CMLogEntry -Value " - Unable to translate OS version using input object: $($InputObject)" -Severity 3
 						Write-CMLogEntry -Value " - Unsupported OS version detected, please reach out to the developers of this script" -Severity 3
-						
-						# Throw terminating error						
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
 				}
 			}
 		}
-		
+
 		# Handle return value from function
 		return [string]$OSVersion
 	}
-	
+
 	function Get-OSArchitecture {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "OS architecture data to be translated.")]
@@ -1661,51 +1593,106 @@ public class DATPinnedCertificateValidation
 			}
 			default {
 				Write-CMLogEntry -Value " - Unable to translate OS architecture using input object: $($InputObject)" -Severity 3
-				
-				# Throw terminating error				
+
+				# Throw terminating error
 				$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 			}
 		}
-		
+
 		# Handle return value from function
 		return $OSArchitecture
 	}
-	
+
+	function Read-DriverPackageLogicFile {
+		param(
+			[parameter(Mandatory = $true)]
+			[ValidateNotNullOrEmpty()]
+			[string]$Path
+		)
+
+		$Reader = $null
+		try {
+			$Settings = New-Object System.Xml.XmlReaderSettings
+			$Settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+			$Settings.XmlResolver = $null
+			$Reader = [System.Xml.XmlReader]::Create($Path, $Settings)
+			$Document = New-Object System.Xml.XmlDocument
+			$Document.XmlResolver = $null
+			$Document.Load($Reader)
+			return $Document
+		}
+		finally {
+			if ($null -ne $Reader) {
+				$Reader.Dispose()
+			}
+		}
+	}
+
+	function Resolve-SiteCode {
+		if ($Script:PSCmdlet.ParameterSetName -like "XMLPackage") {
+			$Script:SiteCode = $null
+			return
+		}
+
+		if ([string]::IsNullOrWhiteSpace($Script:SiteCode) -and $Script:PSCmdlet.ParameterSetName -notlike "Debug") {
+			$Script:SiteCode = $TSEnvironment.Value("MDMSiteCode")
+		}
+
+		if ([string]::IsNullOrWhiteSpace($Script:SiteCode)) {
+			$Script:SiteCode = $null
+			return
+		}
+
+		$Script:SiteCode = $Script:SiteCode.Trim().ToUpperInvariant()
+		if ($Script:SiteCode -notmatch "^[A-Z0-9]{3}$") {
+			throw "SiteCode must contain exactly three letters or numbers."
+		}
+		Write-CMLogEntry -Value " - Limiting package selection to ConfigMgr source site '$($Script:SiteCode)'" -Severity 1
+	}
+
 	function Get-DriverPackages {
 		try {
+			Resolve-SiteCode
+			$AdminServiceFilter = "contains(Name,'$($Filter)')"
+			if ($null -ne $Script:SiteCode) {
+				$AdminServiceFilter += " and SourceSite eq '$($Script:SiteCode)'"
+			}
+
 			# Retrieve driver packages but filter out matches depending on script operational mode
 			switch ($OperationalMode) {
 				"Production" {
 					if ($Script:PSCmdlet.ParameterSetName -like "XMLPackage") {
 						Write-CMLogEntry -Value " - Reading XML content logic file driver package entries" -Severity 1
-						$Packages = (([xml]$(Get-Content -Path $XMLPackageLogicFile -Raw)).ArrayOfCMPackage).CMPackage | Where-Object {
+						$PackageLogic = Read-DriverPackageLogicFile -Path $XMLPackageLogicFile
+						$Packages = $PackageLogic.ArrayOfCMPackage.CMPackage | Where-Object {
 							$_.Name -notmatch "Pilot" -and $_.Name -notmatch "Legacy" -and $_.Name -match $Filter
 						}
 					}
 					else {
 						Write-CMLogEntry -Value " - Querying AdminService for driver package instances" -Severity 1
-						$Packages = Get-AdminServiceItem -Resource "/SMS_Package?`$filter=contains(Name,'$($Filter)')" | Where-Object {
+						$Packages = Get-AdminServiceItem -Resource "/SMS_Package?`$filter=$($AdminServiceFilter)" | Where-Object {
 							$_.Name -notmatch "Pilot" -and $_.Name -notmatch "Retired"
 						}
 					}
-					
+
 				}
 				"Pilot" {
 					if ($Script:PSCmdlet.ParameterSetName -like "XMLPackage") {
 						Write-CMLogEntry -Value " - Reading XML content logic file driver package entries" -Severity 1
-						$Packages = (([xml]$(Get-Content -Path $XMLPackageLogicFile -Raw)).ArrayOfCMPackage).CMPackage | Where-Object {
+						$PackageLogic = Read-DriverPackageLogicFile -Path $XMLPackageLogicFile
+						$Packages = $PackageLogic.ArrayOfCMPackage.CMPackage | Where-Object {
 							$_.Name -match "Pilot" -and $_.Name -match $Filter
 						}
 					}
 					else {
 						Write-CMLogEntry -Value " - Querying AdminService for driver package instances" -Severity 1
-						$Packages = Get-AdminServiceItem -Resource "/SMS_Package?`$filter=contains(Name,'$($Filter)')" | Where-Object {
+						$Packages = Get-AdminServiceItem -Resource "/SMS_Package?`$filter=$($AdminServiceFilter)" | Where-Object {
 							$_.Name -match "Pilot"
 						}
 					}
 				}
 			}
-			
+
 			# Handle return value
 			if ($Packages -ne $null) {
 				Write-CMLogEntry -Value " - Retrieved a total of '$(($Packages | Measure-Object).Count)' driver packages from $($Script:PackageSource) matching operational mode: $($OperationalMode)" -Severity 1
@@ -1713,19 +1700,19 @@ public class DATPinnedCertificateValidation
 			}
 			else {
 				Write-CMLogEntry -Value " - Retrieved a total of '0' driver packages from $($Script:PackageSource) matching operational mode: $($OperationalMode)" -Severity 3
-				
-				# Throw terminating error				
+
+				# Throw terminating error
 				$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 			}
 		}
 		catch [System.Exception] {
 			Write-CMLogEntry -Value " - An error occurred while calling $($Script:PackageSource) for a list of available driver packages. Error message: $($_.Exception.Message)" -Severity 3
-			
-			# Throw terminating error			
+
+			# Throw terminating error
 			$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 		}
 	}
-	
+
 	function Get-ComputerData {
 		# Create a custom object for computer details gathered from local WMI
 		$ComputerDetails = [PSCustomObject]@{
@@ -1735,22 +1722,17 @@ public class DATPinnedCertificateValidation
 			FallbackSKU = $null
 		}
 
-		# A virtual machine allowed by -AllowVirtualMachine is identified by its hypervisor, not by the
-		# hardware it imitates. The OEM branches below are skipped: Hyper-V reports Microsoft Corporation
-		# and would be matched against Surface packages, and no SystemSKU is read, so matching is by
-		# model ('Virtual Machine') within the hypervisor or Generic manufacturer only.
-		if ($null -ne $Script:VirtualMachine) {
-			$ComputerDetails.Manufacturer = $Script:VirtualMachine.PackageManufacturers[0]
-			$ComputerDetails.Model = $Script:VirtualMachine.Model
-			Write-CMLogEntry -Value " - Computer manufacturer determined as: $($ComputerDetails.Manufacturer) (virtual machine, hypervisor: $($Script:VirtualMachine.Hypervisor))" -Severity 1
-			Write-CMLogEntry -Value " - Computer model determined as: $($ComputerDetails.Model)" -Severity 1
-			Write-CMLogEntry -Value " - Computer SystemSKU not used for virtual machine matching" -Severity 1
-			return $ComputerDetails
+		# Gather computer details based upon specific computer manufacturer
+		$ComputerManufacturer = ([string](Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Manufacturer)).Trim()
+		if ([string]::IsNullOrWhiteSpace($ComputerManufacturer)) {
+			try {
+				$ComputerManufacturer = ([string](Get-CIMInstance -ClassName "MS_SystemInformation" -NameSpace "root\WMI").SystemManufacturer).Trim()
+			}
+			catch [System.Exception] {
+				Write-CMLogEntry -Value " - Win32_ComputerSystem returned a blank manufacturer and MS_SystemInformation fallback failed. Error message: $($_.Exception.Message)" -Severity 2
+			}
 		}
 
-		# Gather computer details based upon specific computer manufacturer
-		$ComputerManufacturer =(Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Manufacturer).Trim()
-		
 		# Wrapped in try/catch so a failure in any manufacturer-specific WMI/parse step (e.g. a null
 		# BaseBoardProduct, a short Lenovo Model for SubString, or a Dell OEMString without a bracketed
 		# SKU) is logged with the manufacturer context, instead of surfacing only as a generic error
@@ -1786,23 +1768,14 @@ public class DATPinnedCertificateValidation
 				$ComputerDetails.SystemSKU = ((Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).SubString(0, 4)).Trim()
 			}
 			"*Panasonic*" {
-				$ComputerDetails.Manufacturer = "Panasonic Corporation"
+				$ComputerDetails.Manufacturer = "Panasonic"
 				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
 				$ComputerDetails.SystemSKU = (Get-CIMInstance -ClassName "MS_SystemInformation" -NameSpace "root\WMI").BaseBoardProduct.Trim()
 			}
 			"*Viglen*" {
 				$ComputerDetails.Manufacturer = "Viglen"
 				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
-				# Same unguarded Trim() as the Fujitsu branch above, so an empty SKU stops the run in
-				# the prerequisite phase. The property is only guarded here, not changed: whether
-				# Viglen reports its identifier in SKU or in BaseBoardProduct is unverified, and
-				# swapping it blind could trade a crash for a silent no-match. An empty value now
-				# leaves SystemSKU unset and falls back to computer model matching, as it does
-				# everywhere else.
-				$ViglenSystemSKU = (Get-WmiObject -Class "Win32_BaseBoard" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SKU -ErrorAction SilentlyContinue)
-				if (-not [string]::IsNullOrWhiteSpace($ViglenSystemSKU)) {
-					$ComputerDetails.SystemSKU = $ViglenSystemSKU.Trim()
-				}
+				$ComputerDetails.SystemSKU = (Get-WmiObject -Class "Win32_BaseBoard" | Select-Object -ExpandProperty SKU).Trim()
 			}
 			"*AZW*" {
 				$ComputerDetails.Manufacturer = "AZW"
@@ -1812,21 +1785,7 @@ public class DATPinnedCertificateValidation
 			"*Fujitsu*" {
 				$ComputerDetails.Manufacturer = "Fujitsu"
 				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
-				# Win32_BaseBoard.SKU is empty on several Fujitsu models (ESPRIMO D757 among them), so
-				# Trim() threw and the run stopped in the prerequisite phase (#945, PR #946).
-				#
-				# BaseBoardProduct is also the value that has to be read here for matching to work at
-				# all: the build writes the Fujitsu catalog's SupportedDevices -- mainboard IDs such as
-				# D3531-A1 -- into the package description and the Intune detection rule, and that is
-				# BaseBoardProduct, not SKU. Guarding the Trim() alone would have turned the crash into
-				# a silent no-match against the package the tool itself created.
-				$FujitsuSystemSKU = (Get-CimInstance -ClassName "MS_SystemInformation" -NameSpace "root\WMI" -ErrorAction SilentlyContinue).BaseBoardProduct
-				if ([string]::IsNullOrWhiteSpace($FujitsuSystemSKU)) {
-					$FujitsuSystemSKU = (Get-WmiObject -Class "Win32_BaseBoard" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Product -ErrorAction SilentlyContinue)
-				}
-				if (-not [string]::IsNullOrWhiteSpace($FujitsuSystemSKU)) {
-					$ComputerDetails.SystemSKU = $FujitsuSystemSKU.Trim()
-				}
+				$ComputerDetails.SystemSKU = (Get-WmiObject -Class "Win32_BaseBoard" | Select-Object -ExpandProperty SKU).Trim()
 			}
 			"*ASUS*" {
 				# ASUS commercial (ExpertBook/ExpertCenter) packages are matched by ComputerModel;
@@ -1838,6 +1797,26 @@ public class DATPinnedCertificateValidation
 				$ComputerDetails.Manufacturer = "Getac"
 				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
 				$ComputerDetails.SystemSKU = (Get-CIMInstance -ClassName "MS_SystemInformation" -NameSpace root\WMI).BaseBoardProduct.Trim()
+			}
+			"*Micro-Star*" {
+				$ComputerDetails.Manufacturer = "MSI"
+				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
+			}
+			"*MSI*" {
+				$ComputerDetails.Manufacturer = "MSI"
+				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
+			}
+			"*Gigabyte*" {
+				$ComputerDetails.Manufacturer = "GIGABYTE"
+				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
+			}
+			"*Dynabook*" {
+				$ComputerDetails.Manufacturer = "Dynabook"
+				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
+			}
+			"*Toshiba*" {
+				$ComputerDetails.Manufacturer = "Dynabook"
+				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
 			}
 			"*Intel*" {
 				$ComputerDetails.Manufacturer = "Intel"
@@ -1851,6 +1830,19 @@ public class DATPinnedCertificateValidation
 					$ComputerDetails.Manufacturer = "ByteSpeed"
 					$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
 				}
+			}
+			"*Parallels*" {
+				$ComputerDetails.Manufacturer = "Parallels"
+				$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
+			}
+			"*Nutanix*" {
+				$SystemInformation = Get-CIMInstance -ClassName "MS_SystemInformation" -NameSpace "root\WMI"
+				$ComputerDetails.Manufacturer = "Nutanix"
+				$ComputerDetails.Model = ([string]$SystemInformation.SystemProductName).Trim()
+				if ([string]::IsNullOrWhiteSpace($ComputerDetails.Model)) {
+					$ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim()
+				}
+				$ComputerDetails.SystemSKU = ([string]$SystemInformation.SystemSKU).Trim()
 			}
 			Default {
 				# =============================================================================
@@ -1903,7 +1895,7 @@ public class DATPinnedCertificateValidation
 				try { $ComputerDetails.Model = (Get-WmiObject -Class "Win32_ComputerSystem" | Select-Object -ExpandProperty Model).Trim() } catch { Write-CMLogEntry -Value " - Unable to determine computer model during fallback. Error message: $($_.Exception.Message)" -Severity 3 }
 			}
 		}
-		
+
 		# Handle overriding computer details if debug mode and additional parameters was specified
 		if ($Script:PSCmdlet.ParameterSetName -like "Debug") {
 			if (-not([string]::IsNullOrEmpty($Manufacturer))) {
@@ -1916,11 +1908,11 @@ public class DATPinnedCertificateValidation
 				$ComputerDetails.SystemSKU = $SystemSKU
 			}
 		}
-		
+
 		# Handle output to log file for computer details
 		Write-CMLogEntry -Value " - Computer manufacturer determined as: $($ComputerDetails.Manufacturer)" -Severity 1
 		Write-CMLogEntry -Value " - Computer model determined as: $($ComputerDetails.Model)" -Severity 1
-		
+
 		# Handle output to log file for computer SystemSKU
 		if (-not([string]::IsNullOrEmpty($ComputerDetails.SystemSKU))) {
 			Write-CMLogEntry -Value " - Computer SystemSKU determined as: $($ComputerDetails.SystemSKU)" -Severity 1
@@ -1928,105 +1920,135 @@ public class DATPinnedCertificateValidation
 		else {
 			Write-CMLogEntry -Value " - Computer SystemSKU determined as: <null>" -Severity 2
 		}
-		
+
 		# Handle output to log file for Fallback SKU
 		if (-not([string]::IsNullOrEmpty($ComputerDetails.FallBackSKU))) {
 			Write-CMLogEntry -Value " - Computer Fallback SystemSKU determined as: $($ComputerDetails.FallBackSKU)" -Severity 1
 		}
-		
+
 		# Handle return value from function
 		return $ComputerDetails
 	}
-	
-	function Get-VirtualMachineHypervisor {
-		param(
-			[parameter(Mandatory = $false, HelpMessage = "Specify the Win32_ComputerSystem Manufacturer value.")]
-			[AllowEmptyString()]
-			[string]$Manufacturer = "",
 
-			[parameter(Mandatory = $false, HelpMessage = "Specify the Win32_ComputerSystem Model value.")]
-			[AllowEmptyString()]
-			[string]$Model = ""
+	function Test-VirtualMachineDriverPackage {
+		param(
+			[parameter(Mandatory = $true)]
+			[PSObject]$Package
 		)
-		# Returns the hypervisor name used as the Manufacturer of its driver packages, or $null for a
-		# physical device. Values come from Win32_ComputerSystem, which is available in WinPE and the
-		# full OS. Hyper-V is only recognised with both values: Surface devices also report Microsoft
-		# Corporation, and only the model tells them apart.
-		$Manufacturer = $Manufacturer.Trim()
-		$Model = $Model.Trim()
-		if (($Manufacturer -like "Microsoft*") -and ($Model -eq "Virtual Machine")) { return "Hyper-V" }
-		if (($Manufacturer -like "VMware*") -or ($Model -like "VMware*")) { return "VMware" }
-		if (($Manufacturer -eq "innotek GmbH") -or ($Model -eq "VirtualBox")) { return "VirtualBox" }
-		if (($Manufacturer -like "Parallels*") -or ($Model -like "Parallels*")) { return "Parallels" }
-		# QEMU covers Proxmox and other KVM hosts that keep the default SMBIOS values. A host that sets
-		# custom SMBIOS values to look like a physical model is matched as that model instead.
-		if (($Manufacturer -eq "QEMU") -or ($Model -eq "KVM")) { return "KVM" }
-		if (($Manufacturer -eq "Xen") -or ($Model -eq "HVM domU")) { return "Xen" }
-		if (($Manufacturer -eq "Nutanix") -and ($Model -eq "AHV")) { return "Nutanix" }
-		return $null
+
+		$PackageIdentity = @(
+			$Package.Name
+			$Package.PackageName
+			$Package.Description
+			$Package.Manufacturer
+		) -join " "
+		return $PackageIdentity -match $Script:VirtualMachinePackagePattern
 	}
 
 	function Get-ComputerSystemType {
 		$ComputerSystem = Get-WmiObject -Class "Win32_ComputerSystem"
-		$ComputerSystemType = $ComputerSystem | Select-Object -ExpandProperty "Model"
-		$Hypervisor = Get-VirtualMachineHypervisor -Manufacturer "$($ComputerSystem.Manufacturer)" -Model "$($ComputerSystemType)"
-
-		# The models refused without -AllowVirtualMachine are unchanged from earlier versions, so the
-		# default behaviour is too. Hypervisor identification is wider (VMware20,1, QEMU 'Standard PC')
-		# but is only acted on when virtual machine support is enabled.
-		$BlockedVirtualMachineModel = $ComputerSystemType -in @("Virtual Machine", "VMware Virtual Platform", "VirtualBox", "HVM domU", "KVM", "VMWare7,1")
-
-		if ($null -ne $Hypervisor) {
-			Write-CMLogEntry -Value " - Virtual machine detected, hypervisor: $($Hypervisor) (Manufacturer: '$($ComputerSystem.Manufacturer)', Model: '$($ComputerSystemType)')" -Severity 1
-		}
-
-		if ($AllowVirtualMachine -and (($null -ne $Hypervisor) -or $BlockedVirtualMachineModel)) {
-			$DebugOverride = ($Script:PSCmdlet.ParameterSetName -like "Debug") -and ((-not [string]::IsNullOrEmpty($Manufacturer)) -or (-not [string]::IsNullOrEmpty($ComputerModel)) -or (-not [string]::IsNullOrEmpty($SystemSKU)))
-			if ($DebugOverride) {
-				Write-CMLogEntry -Value " - AllowVirtualMachine was passed, but DebugMode computer detail overrides were also specified; simulating that physical device instead of matching virtual machine driver packages" -Severity 2
+		$ComputerSystemType = ([string]$ComputerSystem.Model).Trim()
+		$ComputerSystemManufacturer = ([string]$ComputerSystem.Manufacturer).Trim()
+		if ([string]::IsNullOrWhiteSpace($ComputerSystemManufacturer)) {
+			try {
+				$ComputerSystemManufacturer = ([string](Get-CIMInstance -ClassName "MS_SystemInformation" -NameSpace "root\WMI").SystemManufacturer).Trim()
 			}
-			else {
-				# A model on the refused list with no recognised hypervisor can still use a generic package
-				if ($null -eq $Hypervisor) {
-					$PackageManufacturers = @("Generic")
-					Write-CMLogEntry -Value " - Virtual machine model '$($ComputerSystemType)' detected, but the hypervisor could not be identified from manufacturer '$($ComputerSystem.Manufacturer)'; only generic virtual machine driver packages will be considered" -Severity 2
-				}
-				else {
-					$PackageManufacturers = @($Hypervisor, "Generic")
-				}
-				$Script:VirtualMachine = [PSCustomObject]@{
-					Hypervisor = if ($null -ne $Hypervisor) { $Hypervisor } else { "Unknown" }
-					Model = "Virtual Machine"
-					PackageManufacturers = $PackageManufacturers
-				}
-				Write-CMLogEntry -Value " - AllowVirtualMachine was passed, virtual machine driver package matching enabled. Package manufacturers considered, in order of preference: $($PackageManufacturers -join ', ')" -Severity 1
-				return
+			catch [System.Exception] {
+				Write-CMLogEntry -Value " - Unable to resolve a blank computer manufacturer from MS_SystemInformation. Error message: $($_.Exception.Message)" -Severity 2
 			}
 		}
-
-		if (-not $BlockedVirtualMachineModel) {
-			if (($null -ne $Hypervisor) -and (-not $AllowVirtualMachine)) {
-				# Not refused by earlier versions either, so it continues as a physical device would
-				Write-CMLogEntry -Value " - Virtual machine is not on the list of refused models and continues with physical device matching, as in earlier versions. Pass -AllowVirtualMachine to match virtual machine driver packages instead" -Severity 2
+		if ($ComputerSystemType -like "VMware*") {
+			$Script:ComputerPlatform = "Hypervisor-VMware"
+		}
+		elseif (($ComputerSystemType -eq "Virtual Machine") -and ($ComputerSystemManufacturer -like "*Microsoft*")) {
+			$Script:ComputerPlatform = "Hypervisor-HyperV"
+		}
+		elseif (($ComputerSystemType -like "*Parallels*") -or ($ComputerSystemManufacturer -like "*Parallels*")) {
+			$Script:ComputerPlatform = "Hypervisor-Parallels"
+		}
+		elseif (($ComputerSystemType -like "*Nutanix*") -or ($ComputerSystemManufacturer -like "*Nutanix*")) {
+			$Script:ComputerPlatform = "Hypervisor-NutanixAHV"
+		}
+		elseif ($ComputerSystemType -eq "VirtualBox") {
+			$Script:ComputerPlatform = "Hypervisor-VirtualBox"
+		}
+		elseif (($ComputerSystemType -eq "HVM domU") -or ($ComputerSystemType -like "*Xen*") -or
+			($ComputerSystemType -like "*Citrix*") -or ($ComputerSystemManufacturer -like "*Xen*") -or
+			($ComputerSystemManufacturer -like "*Citrix*")) {
+			$Script:ComputerPlatform = "Hypervisor-XenCitrix"
+		}
+		elseif ((($ComputerSystemType -like "*Standard PC*") -and
+				(($ComputerSystemManufacturer -like "*QEMU*") -or ($ComputerSystemManufacturer -like "*Red Hat*"))) -or
+			($ComputerSystemType -like "*KVM*") -or
+			($ComputerSystemManufacturer -like "*QEMU*") -or
+			(($ComputerSystemManufacturer -like "*Red Hat*") -and ($ComputerSystemType -like "*Virtual Machine*"))) {
+			$Script:ComputerPlatform = "Hypervisor-QEMUKVM"
+		}
+		else {
+			$Script:ComputerPlatform = "Physical-Unknown"
+			switch -Wildcard ($ComputerSystemManufacturer) {
+				"*Dell*" {
+					if ($ComputerSystemType -like "*Alienware*") {
+						$Script:ComputerPlatform = "OEM-Alienware"
+					}
+					else {
+						$Script:ComputerPlatform = "OEM-Dell"
+					}
+					break
+				}
+				"*Alienware*" { $Script:ComputerPlatform = "OEM-Alienware"; break }
+				"*HP*" { $Script:ComputerPlatform = "OEM-HP"; break }
+				"*Hewlett-Packard*" { $Script:ComputerPlatform = "OEM-HP"; break }
+				"*Lenovo*" { $Script:ComputerPlatform = "OEM-Lenovo"; break }
+				"*Fujitsu*" { $Script:ComputerPlatform = "OEM-Fujitsu"; break }
+				"*Panasonic*" { $Script:ComputerPlatform = "OEM-Panasonic"; break }
+				"*ASUS*" { $Script:ComputerPlatform = "OEM-ASUS"; break }
+				"*ASUSTeK*" { $Script:ComputerPlatform = "OEM-ASUS"; break }
+				"*Acer*" { $Script:ComputerPlatform = "OEM-Acer"; break }
+				"*Intel*" {
+					if ($ComputerSystemType -like "*NUC*") {
+						$Script:ComputerPlatform = "OEM-IntelNUC"
+					}
+					else {
+						$Script:ComputerPlatform = "OEM-Intel"
+					}
+					break
+				}
+				"*Microsoft*" {
+					if ($ComputerSystemType -like "*Surface*") {
+						$Script:ComputerPlatform = "OEM-Surface"
+					}
+					break
+				}
+				"*Getac*" { $Script:ComputerPlatform = "OEM-Getac"; break }
+				"*Micro-Star*" { $Script:ComputerPlatform = "OEM-MSI"; break }
+				"*MSI*" { $Script:ComputerPlatform = "OEM-MSI"; break }
+				"*Gigabyte*" { $Script:ComputerPlatform = "OEM-GIGABYTE"; break }
+				"*Dynabook*" { $Script:ComputerPlatform = "OEM-Dynabook"; break }
+				"*Toshiba*" { $Script:ComputerPlatform = "OEM-Dynabook"; break }
 			}
-			elseif ($AllowVirtualMachine) {
-				Write-CMLogEntry -Value " - AllowVirtualMachine was passed, but this is not a virtual machine; the switch has no effect" -Severity 1
-			}
+		}
+		$Script:IsVirtualMachine = $Script:ComputerPlatform -like "Hypervisor-*"
+		Write-CMLogEntry -Value " - Detected computer platform: '$($Script:ComputerPlatform)' | Manufacturer: '$($ComputerSystemManufacturer)' | Model: '$($ComputerSystemType)'" -Severity 1
+		if (-not $Script:IsVirtualMachine) {
 			Write-CMLogEntry -Value " - Supported computer platform detected, script execution allowed to continue" -Severity 1
 		}
 		else {
-			if ($Script:PSCmdlet.ParameterSetName -like "Debug") {
-				Write-CMLogEntry -Value " - Unsupported computer platform detected, virtual machines are not supported but will be allowed in DebugMode" -Severity 2
+			if ($AllowVirtualMachine) {
+				Write-CMLogEntry -Value " - Virtual machine platform detected: '$($ComputerSystemType)'. Execution explicitly allowed by -AllowVirtualMachine; only virtual-machine driver packages will be eligible" -Severity 2
+			}
+			elseif ($Script:PSCmdlet.ParameterSetName -like "Debug") {
+				Write-CMLogEntry -Value " - Virtual machine platform detected: '$($ComputerSystemType)'. DebugMode permits detection only; package download and installation remain disabled" -Severity 2
 			}
 			else {
-				Write-CMLogEntry -Value " - Unsupported computer platform detected, virtual machines are not supported unless -AllowVirtualMachine is passed" -Severity 3
+				Write-CMLogEntry -Value " - Unsupported computer platform detected, virtual machines are not supported" -Severity 3
 
 				# Throw terminating error
 				$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 			}
 		}
 	}
-	
+
 	function Get-OperatingSystemVersion {
 		if (($Script:PSCmdlet.ParameterSetName -like "DriverUpdate") -or ($Script:PSCmdlet.ParameterSetName -like "OSUpgrade")) {
 			$OperatingSystemVersion = Get-WmiObject -Class "Win32_OperatingSystem" | Select-Object -ExpandProperty "Version"
@@ -2035,13 +2057,13 @@ public class DATPinnedCertificateValidation
 			}
 			else {
 				Write-CMLogEntry -Value " - Unsupported operating system version detected, this script is only supported on Windows 10 and above" -Severity 3
-				
-				# Throw terminating error				
+
+				# Throw terminating error
 				$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 			}
 		}
 	}
-	
+
 	function Test-ComputerDetails {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer details object from Get-ComputerDetails function.")]
@@ -2053,28 +2075,28 @@ public class DATPinnedCertificateValidation
 			"ModelDetected" = $false
 			"SystemSKUDetected" = $false
 		}
-		
+
 		if (($InputObject.Model -ne $null) -and (-not ([System.String]::IsNullOrEmpty($InputObject.Model)))) {
 			Write-CMLogEntry -Value " - Computer model detection was successful" -Severity 1
 			$ComputerDetection.ModelDetected = $true
 		}
-		
+
 		if (($InputObject.SystemSKU -ne $null) -and (-not ([System.String]::IsNullOrEmpty($InputObject.SystemSKU)))) {
 			Write-CMLogEntry -Value " - Computer SystemSKU detection was successful" -Severity 1
 			$ComputerDetection.SystemSKUDetected = $true
 		}
-		
+
 		if (($ComputerDetection.ModelDetected -eq $false) -and ($ComputerDetection.SystemSKUDetected -eq $false)) {
 			Write-CMLogEntry -Value " - Computer model and SystemSKU values are missing, script execution is not allowed since required values to continue could not be gathered" -Severity 3
-			
-			# Throw terminating error			
+
+			# Throw terminating error
 			$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 		}
 		else {
 			Write-CMLogEntry -Value " - Computer details successfully verified" -Severity 1
 		}
 	}
-	
+
 	function Set-ComputerDetectionMethod {
 		if ($ComputerDetection.SystemSKUDetected -eq $true) {
 			Write-CMLogEntry -Value " - Determined primary computer detection method: SystemSKU" -Severity 1
@@ -2085,21 +2107,21 @@ public class DATPinnedCertificateValidation
 			return "ComputerModel"
 		}
 	}
-	
+
 	function Confirm-DriverPackage {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer details object from Get-ComputerDetails function.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$ComputerData,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Specify the OS Image details object from Get-OSImageDetails function.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$OSImageData,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Specify the driver package object to be validated.")]
 			[ValidateNotNullOrEmpty()]
 			[System.Object[]]$DriverPackage,
-			
+
 			[parameter(Mandatory = $false, HelpMessage = "Set to True to check for drivers packages that matches earlier versions of Windows than what's detected from admin service call.")]
 			[ValidateNotNullOrEmpty()]
 			[bool]$OSVersionFallback = $false
@@ -2108,15 +2130,21 @@ public class DATPinnedCertificateValidation
 		$DriverPackages = $DriverPackage | Sort-Object -Property PackageName
 		$DriverPackagesCount = ($DriverPackages | Measure-Object).Count
 		Write-CMLogEntry -Value " - Initial count of driver packages before starting filtering process: $($DriverPackagesCount)" -Severity 1
-		
+
 		# Filter out driver packages that does not match with the vendor
 		Write-CMLogEntry -Value " - Filtering driver package results to detected computer manufacturer: $($ComputerData.Manufacturer)" -Severity 1
 		$DriverPackages = $DriverPackages | Where-Object {
 			$_.Manufacturer -like $ComputerData.Manufacturer
 		}
+		if ($Script:IsVirtualMachine -and $AllowVirtualMachine) {
+			Write-CMLogEntry -Value " - Filtering virtual-machine results to packages explicitly labelled for virtual hardware" -Severity 1
+			$DriverPackages = $DriverPackages | Where-Object {
+				Test-VirtualMachineDriverPackage -Package $_
+			}
+		}
 		$DriverPackagesCount = ($DriverPackages | Measure-Object).Count
 		Write-CMLogEntry -Value " - Count of driver packages after filter processing: $($DriverPackagesCount)" -Severity 1
-		
+
 		# Filter out driver packages that does not contain any value in the package description
 		Write-CMLogEntry -Value " - Filtering driver package results to only include packages that have details added to the description field" -Severity 1
 		$DriverPackages = $DriverPackages | Where-Object {
@@ -2124,7 +2152,7 @@ public class DATPinnedCertificateValidation
 		}
 		$DriverPackagesCount = ($DriverPackages | Measure-Object).Count
 		Write-CMLogEntry -Value " - Count of driver packages after filter processing: $($DriverPackagesCount)" -Severity 1
-		
+
 		foreach ($DriverPackageItem in $DriverPackages) {
 			# Construct custom object to hold values for current driver package properties used for matching with current computer details
 			$DriverPackageDetails = [PSCustomObject]@{
@@ -2139,7 +2167,7 @@ public class DATPinnedCertificateValidation
 				OSVersion = $null
 				Architecture = $null
 			}
-			
+
 			# Add driver package model details depending on manufacturer to custom driver package details object
 			# - HP computer models require the manufacturer name to be a part of the model name, other manufacturers do not
 			try {
@@ -2158,22 +2186,22 @@ public class DATPinnedCertificateValidation
 			catch [System.Exception] {
 				Write-CMLogEntry -Value "Failed. Error: $($_.Exception.Message)" -Severity 3
 			}
-			
+
 			# Add driver package OS architecture details to custom driver package details object
 			if ($DriverPackageItem.Name -match "^.*(?<Architecture>(x86|x64|Arm64)).*") {
 				$DriverPackageDetails.Architecture = $Matches.Architecture
 			}
-			
+
 			# Add driver package OS name details to custom driver package details object
 			if ($DriverPackageItem.Name -match "^.*Windows.*(?<OSName>(10|11)).*") {
 				$DriverPackageDetails.OSName = -join @("Windows ", $Matches.OSName)
 			}
-			
+
 			# Add driver package OS version details to custom driver package details object
 			if ($DriverPackageItem.Name -match "^.*Windows.*(?<OSVersion>(\d){4}).*|^.*Windows.*(?<OSVersion>(\d){2}(\D){1}(\d){1}).*") {
 				$DriverPackageDetails.OSVersion = $Matches.OSVersion
 			}
-			
+
 			# Set counters for logging output of how many matching checks was successfull
 			$DetectionCounter = 0
 			if ($DriverPackageDetails.OSVersion -ne $null) {
@@ -2183,7 +2211,7 @@ public class DATPinnedCertificateValidation
 				$DetectionMethodsCount = 3
 			}
 			Write-CMLogEntry -Value "[DriverPackage:$($DriverPackageDetails.PackageID)]: Processing driver package with $($DetectionMethodsCount) detection methods: $($DriverPackageDetails.PackageName)" -Severity 1
-			
+
 			switch ($ComputerDetectionMethod) {
 				"SystemSKU" {
 					if ([string]::IsNullOrEmpty($DriverPackageDetails.SystemSKU)) {
@@ -2192,7 +2220,7 @@ public class DATPinnedCertificateValidation
 					else {
 						# Attempt to match against SystemSKU
 						$ComputerDetectionMethodResult = Confirm-SystemSKU -DriverPackageInput $DriverPackageDetails.SystemSKU -ComputerData $ComputerData -ErrorAction Stop
-						
+
 						# Fall back to using computer model as the detection method instead of SystemSKU
 						if ($ComputerDetectionMethodResult.Detected -eq $false) {
 							$ComputerDetectionMethodResult = Confirm-ComputerModel -DriverPackageInput $DriverPackageDetails.Model -ComputerData $ComputerData
@@ -2204,22 +2232,22 @@ public class DATPinnedCertificateValidation
 					$ComputerDetectionMethodResult = Confirm-ComputerModel -DriverPackageInput $DriverPackageDetails.Model -ComputerData $ComputerData
 				}
 			}
-			
+
 			if ($ComputerDetectionMethodResult.Detected -eq $true) {
 				# Increase detection counter since computer detection was successful
 				$DetectionCounter++
-				
+
 				# Attempt to match against OS name
 				$OSNameDetectionResult = Confirm-OSName -DriverPackageInput $DriverPackageDetails.OSName -OSImageData $OSImageData
 				if ($OSNameDetectionResult -eq $true) {
 					# Increase detection counter since OS name detection was successful
 					$DetectionCounter++
-					
+
 					$OSArchitectureDetectionResult = Confirm-Architecture -DriverPackageInput $DriverPackageDetails.Architecture -OSImageData $OSImageData
 					if ($OSArchitectureDetectionResult -eq $true) {
 						# Increase detection counter since OS architecture detection was successful
 						$DetectionCounter++
-						
+
 						if ($DriverPackageDetails.OSVersion -ne $null) {
 							# Handle if OS version should check for fallback versions or match with data from OSImageData variable
 							if ($OSVersionFallback -eq $true) {
@@ -2228,20 +2256,20 @@ public class DATPinnedCertificateValidation
 							else {
 								$OSVersionDetectionResult = Confirm-OSVersion -DriverPackageInput $DriverPackageDetails.OSVersion -OSImageData $OSImageData
 							}
-							
+
 							if ($OSVersionDetectionResult -eq $true) {
 								# Increase detection counter since OS version detection was successful
 								$DetectionCounter++
-								
+
 								# Match found for all critiera including OS version
 								Write-CMLogEntry -Value "[DriverPackage:$($DriverPackageItem.PackageID)]: Driver package was created on: $($DriverPackageDetails.DateCreated)" -Severity 1
 								Write-CMLogEntry -Value "[DriverPackage:$($DriverPackageItem.PackageID)]: Match found between driver package and computer for $($DetectionCounter)/$($DetectionMethodsCount) checks, adding to list for post-processing of matched driver packages" -Severity 1
-								
+
 								# Update the SystemSKU value for the custom driver package details object to account for multiple values from original driver package data
 								if ($ComputerDetectionMethod -like "SystemSKU") {
 									$DriverPackageDetails.SystemSKU = $ComputerDetectionMethodResult.SystemSKUValue
 								}
-								
+
 								# Add custom driver package details object to list of driver packages for post-processing
 								$DriverPackageList.Add($DriverPackageDetails) | Out-Null
 							}
@@ -2253,12 +2281,12 @@ public class DATPinnedCertificateValidation
 							# Match found for all critiera except for OS version, assuming here that the vendor does not provide OS version specific driver packages
 							Write-CMLogEntry -Value "[DriverPackage:$($DriverPackageItem.PackageID)]: Driver package was created on: $($DriverPackageDetails.DateCreated)" -Severity 1
 							Write-CMLogEntry -Value "[DriverPackage:$($DriverPackageItem.PackageID)]: Match found between driver package and computer, adding to list for post-processing of matched driver packages" -Severity 1
-							
+
 							# Update the SystemSKU value for the custom driver package details object to account for multiple values from original driver package data
 							if ($ComputerDetectionMethod -like "SystemSKU") {
 								$DriverPackageDetails.SystemSKU = $ComputerDetectionMethodResult.SystemSKUValue
 							}
-							
+
 							# Add custom driver package details object to list of driver packages for post-processing
 							$DriverPackageList.Add($DriverPackageDetails) | Out-Null
 						}
@@ -2267,38 +2295,44 @@ public class DATPinnedCertificateValidation
 			}
 		}
 	}
-	
+
 	function Confirm-FallbackDriverPackage {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer details object from Get-ComputerDetails function.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$ComputerData,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Specify the OS Image details object from Get-OSImageDetails function.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$OSImageData
 		)
 		if ($Script:DriverPackageList.Count -eq 0) {
 			Write-CMLogEntry -Value " - Previous validation process could not find a match for a specific driver package, starting fallback driver package matching process" -Severity 1
-			
+
 			try {
 				# Attempt to retrieve fallback driver packages from ConfigMgr WebService
 				$FallbackDriverPackages = Get-AdminServiceItem -Resource "/SMS_Package?`$filter=contains(Name,'Driver Fallback Package')" | Where-Object {
 					$_.Name -notmatch "Pilot" -and $_.Name -notmatch "Retired"
 				}
-				
+
 				if ($FallbackDriverPackages -ne $null) {
 					Write-CMLogEntry -Value " - Retrieved a total of '$(($FallbackDriverPackages | Measure-Object).Count)' fallback driver packages from AdminService matching 'Driver Fallback Package' within the name" -Severity 1
-					
+
 					# Sort all fallback driver package objects by package name property
 					$FallbackDriverPackages = $FallbackDriverPackages | Sort-Object -Property PackageName
-					
+
 					# Filter out driver packages that does not match with the vendor
 					Write-CMLogEntry -Value " - Filtering fallback driver package results to detected computer manufacturer: $($ComputerData.Manufacturer)" -Severity 1
 					$FallbackDriverPackages = $FallbackDriverPackages | Where-Object {
 						$_.Manufacturer -like $ComputerData.Manufacturer
 					}
-					
+					if ($Script:IsVirtualMachine -and $AllowVirtualMachine) {
+						Write-CMLogEntry -Value " - Filtering virtual-machine fallback results to packages explicitly labelled for virtual hardware" -Severity 1
+						$FallbackDriverPackages = $FallbackDriverPackages | Where-Object {
+							Test-VirtualMachineDriverPackage -Package $_
+						}
+					}
+
 					foreach ($DriverPackageItem in $FallbackDriverPackages) {
 						# Construct custom object to hold values for current driver package properties used for matching with current computer details
 						$DriverPackageDetails = [PSCustomObject]@{
@@ -2309,21 +2343,21 @@ public class DATPinnedCertificateValidation
 							OSName = $null
 							Architecture = $null
 						}
-						
+
 						# Add driver package OS architecture details to custom driver package details object
-						if ($DriverPackageItem.Name -match "^.*(?<Architecture>(x86|x64)).*") {
+						if ($DriverPackageItem.Name -match "^.*(?<Architecture>(x86|x64|Arm64)).*") {
 							$DriverPackageDetails.Architecture = $Matches.Architecture
 						}
-						
+
 						# Add driver package OS name details to custom driver package details object
 						if ($DriverPackageItem.Name -match "^.*Windows.*(?<OSName>(10|11)).*") {
 							$DriverPackageDetails.OSName = -join @("Windows ", $Matches.OSName)
 						}
-						
+
 						# Set counters for logging output of how many matching checks was successfull
 						$DetectionCounter = 0
 						$DetectionMethodsCount = 2
-						
+
 						Write-CMLogEntry -Value "[DriverPackageFallback:$($DriverPackageItem.PackageID)]: Processing fallback driver package with $($DetectionMethodsCount) detection methods: $($DriverPackageItem.PackageName)" -Severity 1
 
 						# Attempt to match against OS name
@@ -2331,16 +2365,16 @@ public class DATPinnedCertificateValidation
 						if ($OSNameDetectionResult -eq $true) {
 							# Increase detection counter since OS name detection was successful
 							$DetectionCounter++
-							
+
 							$OSArchitectureDetectionResult = Confirm-Architecture -DriverPackageInput $DriverPackageDetails.Architecture -OSImageData $OSImageData
 							if ($OSArchitectureDetectionResult -eq $true) {
 								# Increase detection counter since OS architecture detection was successful
 								$DetectionCounter++
-								
+
 								# Match found for all critiera including OS version
 								Write-CMLogEntry -Value "[DriverPackageFallback:$($DriverPackageItem.PackageID)]: Fallback driver package was created on: $($DriverPackageDetails.DateCreated)" -Severity 1
 								Write-CMLogEntry -Value "[DriverPackageFallback:$($DriverPackageItem.PackageID)]: Match found for fallback driver package with $($DetectionCounter)/$($DetectionMethodsCount) checks, adding to list for post-processing of matched fallback driver packages" -Severity 1
-								
+
 								# Add custom driver package details object to list of fallback driver packages for post-processing
 								$DriverPackageList.Add($DriverPackageDetails) | Out-Null
 							}
@@ -2349,15 +2383,15 @@ public class DATPinnedCertificateValidation
 				}
 				else {
 					Write-CMLogEntry -Value " - Retrieved a total of '0' fallback driver packages from AdminService matching operational mode: $($OperationalMode)" -Severity 3
-					
-					# Throw terminating error					
+
+					# Throw terminating error
 					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
 			}
 			catch [System.Exception] {
 				Write-CMLogEntry -Value " - An error occurred while attempting to retrieve a list of available fallback driver packages from AdminService endpoint. Error message: $($_.Exception.Message)" -Severity 3
-				
-				# Throw terminating error				
+
+				# Throw terminating error
 				$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 			}
 		}
@@ -2366,17 +2400,17 @@ public class DATPinnedCertificateValidation
 			$Script:SkipFallbackDriverPackageValidation = $true
 		}
 	}
-	
+
 	function Confirm-OSVersion {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the OS version value from the driver package object.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$DriverPackageInput,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer data object.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$OSImageData,
-			
+
 			[parameter(Mandatory = $false, HelpMessage = "Set to True to check for drivers packages that matches earlier versions of Windows than what's detected from web service call.")]
 			[ValidateNotNullOrEmpty()]
 			[bool]$OSVersionFallback = $false
@@ -2408,13 +2442,13 @@ public class DATPinnedCertificateValidation
 			}
 		}
 	}
-	
+
 	function Confirm-Architecture {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the Architecture value from the driver package object.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$DriverPackageInput,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer data object.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$OSImageData
@@ -2430,13 +2464,13 @@ public class DATPinnedCertificateValidation
 			return $false
 		}
 	}
-	
+
 	function Confirm-OSName {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the OS name value from the driver package object.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$DriverPackageInput,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer data object.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$OSImageData
@@ -2452,13 +2486,13 @@ public class DATPinnedCertificateValidation
 			return $false
 		}
 	}
-	
+
 	function Confirm-ComputerModel {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer model value from the driver package object.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$DriverPackageInput,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer data object.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$ComputerData
@@ -2472,15 +2506,15 @@ public class DATPinnedCertificateValidation
 			Detected = $null
 			SystemSKUValue = $null
 		}
-		
+
 		if ($DriverPackageInput -eq $ComputerData.Model) {
 			# Computer model match found
 			Write-CMLogEntry -Value " - Matched computer model: $($ComputerData.Model)" -Severity 1
-			
+
 			# Set properties for custom object for return value
 			$ModelDetectionResult.Detected = $true
 			$ModelDetectionResult.SystemSKUValue = $ComputerData.SystemSKU
-			
+
 			return $ModelDetectionResult
 		}
 		else {
@@ -2488,193 +2522,79 @@ public class DATPinnedCertificateValidation
 			# Set properties for custom object for return value
 			$ModelDetectionResult.Detected = $false
 			$ModelDetectionResult.SystemSKUValue = ""
-			
+
 			return $ModelDetectionResult
 		}
 	}
-	
+
 	function Confirm-SystemSKU {
 		param(
 			[parameter(Mandatory = $true, HelpMessage = "Specify the SystemSKU value from the driver package object.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$DriverPackageInput,
-			
+
 			[parameter(Mandatory = $true, HelpMessage = "Specify the computer data object.")]
 			[ValidateNotNullOrEmpty()]
 			[PSCustomObject]$ComputerData
 		)
-		
-		# Handle multiple SystemSKU's from driver package input and determine the proper delimiter
-		if ($DriverPackageInput -match ",") {
-			$SystemSKUDelimiter = ","
-		}
-		if ($DriverPackageInput -match ";") {
-			$SystemSKUDelimiter = ";"
-		}
-		
-		# Remove any space characters from driver package input data, replace them with a comma instead and ensure there's no duplicate entries
-		$DriverPackageInputArray = $DriverPackageInput.Replace(" ", ",").Split($SystemSKUDelimiter) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
-		
-		# Construct custom object for return value
+
+		$DriverPackageInputArray = $DriverPackageInput -split "[,;\s]+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 		$SystemSKUDetectionResult = [PSCustomObject]@{
-			Detected = $null
-			SystemSKUValue = $null
+			Detected = $false
+			SystemSKUValue = ""
 		}
-		
-		# Attempt to determine if the driver package input matches with the computer data input and account for multiple SystemSKU's by separating them with the detected delimiter
-		if (-not ([string]::IsNullOrEmpty($SystemSKUDelimiter))) {
-			# Construct table for keeping track of matched SystemSKU items
-			$SystemSKUTable = @{
-			}
-			
-			# Attempt to match for each SystemSKU item based on computer data input
-			foreach ($SystemSKUItem in $DriverPackageInputArray) {
-				if ((-not([string]::IsNullOrEmpty($ComputerData.SystemSKU))) -and ($ComputerData.SystemSKU -eq $SystemSKUItem)) {
-					# Add key value pair with match success
-					$SystemSKUTable.Add($SystemSKUItem, $true)
-					
-					# Set custom object property with SystemSKU value that was matched on the detection result object
-					$SystemSKUDetectionResult.SystemSKUValue = $SystemSKUItem
-				}
-				else {
-					# Add key value pair with match failure
-					$SystemSKUTable.Add($SystemSKUItem, $false)
-				}
-			}
-			
-			# Check if table contains a matched SystemSKU
-			if ($SystemSKUTable.Values -contains $true) {
-				# SystemSKU match found based upon multiple items detected in computer data input
-				Write-CMLogEntry -Value " - Matched SystemSKU: $($ComputerData.SystemSKU)" -Severity 1
-				
-				# Set custom object property that SystemSKU value that was matched on the detection result object
+		foreach ($CandidateSKU in @($ComputerData.SystemSKU, $ComputerData.FallbackSKU)) {
+			if ((-not [string]::IsNullOrWhiteSpace($CandidateSKU)) -and ($DriverPackageInputArray -contains $CandidateSKU)) {
+				Write-CMLogEntry -Value " - Matched SystemSKU: $($CandidateSKU)" -Severity 1
 				$SystemSKUDetectionResult.Detected = $true
-				
-				return $SystemSKUDetectionResult
-			}
-			else {
-				# SystemSKU match was not found based upon multiple items detected in computer data input
-				# Set properties for custom object for return value
-				$SystemSKUDetectionResult.SystemSKUValue = ""
-				$SystemSKUDetectionResult.Detected = $false
-				
+				$SystemSKUDetectionResult.SystemSKUValue = $CandidateSKU
 				return $SystemSKUDetectionResult
 			}
 		}
-		elseif ($DriverPackageInput -match $ComputerData.SystemSKU) {
-			# SystemSKU match found based upon single item detected in computer data input
-			Write-CMLogEntry -Value " - Matched SystemSKU: $($ComputerData.SystemSKU)" -Severity 1
-			
-			# Set properties for custom object for return value
-			$SystemSKUDetectionResult.SystemSKUValue = $ComputerData.SystemSKU
-			$SystemSKUDetectionResult.Detected = $true
-			
-			return $SystemSKUDetectionResult
-		}
-		elseif ((-not ([string]::IsNullOrEmpty($ComputerData.FallbackSKU))) -and ($DriverPackageInput -match $ComputerData.FallbackSKU)) {
-			# SystemSKU match found using FallbackSKU value using detection method OEMString, this should only be valid for Dell
-			Write-CMLogEntry -Value " - Matched SystemSKU: $($ComputerData.FallbackSKU)" -Severity 1
-			
-			# Set properties for custom object for return value
-			$SystemSKUDetectionResult.SystemSKUValue = $ComputerData.FallbackSKU
-			$SystemSKUDetectionResult.Detected = $true
-			
-			return $SystemSKUDetectionResult
-		}
-		else {
-			# None of the above methods worked to match SystemSKU from driver package input with computer data input
-			# Set properties for custom object for return value
-			$SystemSKUDetectionResult.SystemSKUValue = ""
-			$SystemSKUDetectionResult.Detected = $false
-			
-			return $SystemSKUDetectionResult
-		}
-	}
-	
-	function Invoke-DriverPackageMatching {
-		param(
-			[parameter(Mandatory = $false, HelpMessage = "Set to True to check for drivers packages that matches earlier versions of Windows than what's detected from admin service call.")]
-			[bool]$OSVersionFallback = $false
-		)
-		# A physical device is matched once, exactly as before
-		if ($null -eq $Script:VirtualMachine) {
-			Confirm-DriverPackage -ComputerData $ComputerData -OSImageData $OSImageDetails -DriverPackage $DriverPackages -OSVersionFallback $OSVersionFallback
-			return
-		}
-
-		# A virtual machine tries each package manufacturer in order of preference (hypervisor, then
-		# Generic) and stops at the first that matches. Called once for the target OS version and again
-		# for OSVersionFallback, so both are tried at the target version before either at an earlier one.
-		foreach ($PackageManufacturer in $Script:VirtualMachine.PackageManufacturers) {
-			$PackageScope = if ($PackageManufacturer -eq "Generic") { "generic" } else { "$($PackageManufacturer) specific" }
-			Write-CMLogEntry -Value "[VirtualMachine]: Matching $($PackageScope) virtual machine driver packages (Manufacturer: '$($PackageManufacturer)', Model: '$($Script:VirtualMachine.Model)')" -Severity 1
-			$ComputerData.Manufacturer = $PackageManufacturer
-			Confirm-DriverPackage -ComputerData $ComputerData -OSImageData $OSImageDetails -DriverPackage $DriverPackages -OSVersionFallback $OSVersionFallback
-			if ($DriverPackageList.Count -ge 1) {
-				Write-CMLogEntry -Value "[VirtualMachine]: Matched $($DriverPackageList.Count) $($PackageScope) virtual machine driver package(s)" -Severity 1
-				return
-			}
-			Write-CMLogEntry -Value "[VirtualMachine]: No $($PackageScope) virtual machine driver package matched" -Severity 2
-		}
-
-		$ExampleManufacturer = $Script:VirtualMachine.PackageManufacturers[0]
-		Write-CMLogEntry -Value "[VirtualMachine]: No virtual machine driver package matched. Create a package with Manufacturer '$($ExampleManufacturer)' and a name such as 'Drivers - $($ExampleManufacturer) $($Script:VirtualMachine.Model) - $($OSImageDetails.Name) $($OSImageDetails.Architecture)', or use Manufacturer 'Generic' for any hypervisor. Physical OEM packages are never used for a virtual machine" -Severity 2
-	}
-
-	function Confirm-VirtualMachineDriverPackage {
-		# Last check before download: whatever path selected the package, a virtual machine only ever
-		# installs a package for its hypervisor or a generic virtual machine package
-		$SelectedPackage = @($DriverPackageList)[0]
-		if (($null -eq $SelectedPackage) -or ($SelectedPackage.Manufacturer -notin $Script:VirtualMachine.PackageManufacturers)) {
-			Write-CMLogEntry -Value " - Selected driver package '$($SelectedPackage.PackageName)' has manufacturer '$($SelectedPackage.Manufacturer)', which is not a virtual machine package manufacturer ($($Script:VirtualMachine.PackageManufacturers -join ', ')); script execution will be terminated" -Severity 3
-
-			# Throw terminating error
-			$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
-		}
-		Write-CMLogEntry -Value " - Virtual machine driver package confirmed: '$($SelectedPackage.PackageName)' (Manufacturer: '$($SelectedPackage.Manufacturer)', hypervisor: $($Script:VirtualMachine.Hypervisor))" -Severity 1
+		return $SystemSKUDetectionResult
 	}
 
 	function Confirm-DriverPackageList {
 		switch ($DriverPackageList.Count) {
 			0 {
 				Write-CMLogEntry -Value " - Amount of driver packages detected by validation process: $($DriverPackageList.Count)" -Severity 2
-				
+
 				if ($Script:PSBoundParameters["OSVersionFallback"]) {
 					Write-CMLogEntry -Value " - Validation process detected empty list of matched driver packages, however OSVersionFallback switch was passed on the command line" -Severity 2
 					Write-CMLogEntry -Value " - Starting re-matching process of driver packages for older Windows versions" -Severity 1
-					
+
 					# Attempt to match all drivers packages again but this time where OSVersion from driver packages is lower than what's detected from web service call
 					Write-CMLogEntry -Value "[DriverPackageFallback]: Starting driver package OS version fallback matching phase" -Severity 1
-					Invoke-DriverPackageMatching -OSVersionFallback $true
-					
+					Confirm-DriverPackage -ComputerData $ComputerData -OSImageData $OSImageDetails -DriverPackage $DriverPackages -OSVersionFallback $true
+
 					if ($DriverPackageList.Count -ge 1) {
 						# Sort driver packages descending based on OSVersion, DateCreated properties and select the most recently created one
 						$Script:DriverPackageList = $DriverPackageList | Sort-Object -Property OSVersion, DateCreated -Descending | Select-Object -First 1
-						
+
 						Write-CMLogEntry -Value " - Selected driver package '$($DriverPackageList[0].PackageID)' with name: $($DriverPackageList[0].PackageName)" -Severity 1
 						Write-CMLogEntry -Value " - Successfully completed validation after fallback process and detected a single driver package, script execution is allowed to continue" -Severity 1
 						Write-CMLogEntry -Value "[DriverPackageFallback]: Completed driver package OS version fallback matching phase" -Severity 1
 					}
 					else {
-						if ($Script:UseDriverFallbackEnabled) {
+						if ($Script:PSBoundParameters["UseDriverFallback"]) {
 							Write-CMLogEntry -Value " - Validation process detected an empty list of matched driver packages, however the UseDriverFallback parameter was specified" -Severity 1
 						}
 						else {
 							Write-CMLogEntry -Value " - Validation after fallback process failed with empty list of matched driver packages, script execution will be terminated" -Severity 3
-							
-							# Throw terminating error							
+
+							# Throw terminating error
 							$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 						}
 					}
 				}
 				else {
-					if ($Script:UseDriverFallbackEnabled) {
+					if ($Script:PSBoundParameters["UseDriverFallback"]) {
 						Write-CMLogEntry -Value " - Validation process detected an empty list of matched driver packages, however the UseDriverFallback parameter was specified" -Severity 1
 					}
 					else {
 						Write-CMLogEntry -Value " - Validation failed with empty list of matched driver packages, script execution will be terminated" -Severity 3
-						
-						# Throw terminating error						
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
 				}
@@ -2685,16 +2605,16 @@ public class DATPinnedCertificateValidation
 			}
 			default {
 				Write-CMLogEntry -Value " - Amount of driver packages detected by validation process: $($DriverPackageList.Count)" -Severity 1
-				
+
 				if ($ComputerDetectionMethod -like "SystemSKU") {
 					if (($DriverPackageList | Where-Object { $_.SystemSKU -notlike $DriverPackageList[0].SystemSKU }) -eq $null) {
 						Write-CMLogEntry -Value " - NOTICE: Computer detection method is currently '$($ComputerDetectionMethod)', and multiple packages have been matched with the same SystemSKU value" -Severity 1
 						Write-CMLogEntry -Value " - NOTICE: This is a supported scenario where the vendor use the same driver package for multiple models" -Severity 1
 						Write-CMLogEntry -Value " - NOTICE: Validation process will automatically choose the most recently created driver package, even if it means that the computer model names may not match" -Severity 1
-						
+
 						# Sort driver packages descending based on DateCreated property and select the most recently created one
 						$Script:DriverPackageList = $DriverPackageList | Sort-Object -Property DateCreated -Descending | Select-Object -First 1
-						
+
 						Write-CMLogEntry -Value " - Selected driver package '$($DriverPackageList[0].PackageID)' with name: $($DriverPackageList[0].PackageName)" -Severity 1
 						Write-CMLogEntry -Value " - Successfully completed validation with multiple detected driver packages, script execution is allowed to continue" -Severity 1
 					}
@@ -2702,10 +2622,10 @@ public class DATPinnedCertificateValidation
 						# Multiple packages matched with different SystemSKU values - fallback to latest package
 						Write-CMLogEntry -Value " - WARNING: Computer detection method is currently '$($ComputerDetectionMethod)', and multiple packages have been matched but with different SystemSKU values" -Severity 2
 						Write-CMLogEntry -Value " - WARNING: This is an unexpected scenario - falling back to using the most recently created driver package" -Severity 2
-						
+
 						# Sort driver packages descending based on DateCreated property and select the most recently created one
 						$Script:DriverPackageList = $DriverPackageList | Sort-Object -Property DateCreated -Descending | Select-Object -First 1
-						
+
 						Write-CMLogEntry -Value " - Selected driver package '$($DriverPackageList[0].PackageID)' with name: $($DriverPackageList[0].PackageName)" -Severity 1
 						Write-CMLogEntry -Value " - Successfully completed validation with multiple detected driver packages using fallback to latest match, script execution is allowed to continue" -Severity 1
 					}
@@ -2713,7 +2633,7 @@ public class DATPinnedCertificateValidation
 				else {
 					Write-CMLogEntry -Value " - NOTICE: Computer detection method is currently '$($ComputerDetectionMethod)', and multiple packages have been matched with the same Model value" -Severity 1
 					Write-CMLogEntry -Value " - NOTICE: Validation process will automatically choose the most recently created driver package by the DateCreated property" -Severity 1
-					
+
 					# Sort driver packages descending based on DateCreated property and select the most recently created one
 					$Script:DriverPackageList = $DriverPackageList | Sort-Object -Property DateCreated -Descending | Select-Object -First 1
 					Write-CMLogEntry -Value " - Selected driver package '$($DriverPackageList[0].PackageID)' with name: $($DriverPackageList[0].PackageName)" -Severity 1
@@ -2721,15 +2641,15 @@ public class DATPinnedCertificateValidation
 			}
 		}
 	}
-	
+
 	function Confirm-FallbackDriverPackageList {
 		if ($Script:SkipFallbackDriverPackageValidation -eq $false) {
 			switch ($DriverPackageList.Count) {
 				0 {
 					Write-CMLogEntry -Value " - Amount of fallback driver packages detected by validation process: $($DriverPackageList.Count)" -Severity 3
 					Write-CMLogEntry -Value " - Validation failed with empty list of matched fallback driver packages, script execution will be terminated" -Severity 3
-					
-					# Throw terminating error					
+
+					# Throw terminating error
 					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
 				1 {
@@ -2739,7 +2659,7 @@ public class DATPinnedCertificateValidation
 				default {
 					Write-CMLogEntry -Value " - Amount of fallback driver packages detected by validation process: $($DriverPackageList.Count)" -Severity 1
 					Write-CMLogEntry -Value " - NOTICE: Multiple fallback driver packages have been matched, validation process will automatically choose the most recently created fallback driver package by the DateCreated property" -Severity 1
-					
+
 					# Sort driver packages descending based on DateCreated property and select the most recently created one
 					$Script:DriverPackageList = $DriverPackageList | Sort-Object -Property DateCreated -Descending | Select-Object -First 1
 					Write-CMLogEntry -Value " - Selected fallback driver package '$($DriverPackageList[0].PackageID)' with name: $($DriverPackageList[0].PackageName)" -Severity 1
@@ -2750,28 +2670,28 @@ public class DATPinnedCertificateValidation
 			Write-CMLogEntry -Value " - Fallback driver package validation process is being skipped since 'SkipFallbackDriverPackageValidation' variable was set to True" -Severity 1
 		}
 	}
-	
+
 	function Invoke-DownloadDriverPackageContent {
 		Write-CMLogEntry -Value " - Attempting to download content files for matched driver package: $($DriverPackageList[0].PackageName)" -Severity 1
-		
+
 		# Depending on current deployment type, attempt to download driver package content
 		switch ($Script:PSCmdlet.ParameterSetName) {
 			"PreCache" {
 				if ($Script:PSBoundParameters["PreCachePath"]) {
 					if (-not (Test-Path -Path $Script:PreCachePath)) {
 						Write-CMLogEntry -Value " - Attempting to create PreCachePath directory, as it doesn't exist: $($Script:PreCachePath)" -Severity 1
-						
+
 						try {
 							New-Item -Path $PreCachePath -ItemType Directory -Force -ErrorAction Stop | Out-Null
 						}
 						catch [System.Exception] {
 							Write-CMLogEntry -Value " - Failed to create PreCachePath directory '$($Script:PreCachePath)'. Error message: $($_.Exception.Message)" -Severity 3
-							
-							# Throw terminating error							
+
+							# Throw terminating error
 							$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 						}
 					}
-					
+
 					if (Test-Path -Path $Script:PreCachePath) {
 						$DownloadInvocation = Invoke-CMDownloadContent -PackageID $DriverPackageList[0].PackageID -DestinationLocationType "Custom" -DestinationVariableName "OSDDriverPackage" -CustomLocationPath "$($Script:PreCachePath)"
 					}
@@ -2784,34 +2704,45 @@ public class DATPinnedCertificateValidation
 				$DownloadInvocation = Invoke-CMDownloadContent -PackageID $DriverPackageList[0].PackageID -DestinationLocationType "Custom" -DestinationVariableName "OSDDriverPackage" -CustomLocationPath "%_SMSTSMDataPath%\DriverPackage"
 			}
 		}
-		
+
 		# If download process was successful, meaning exit code from above function was 0, return the download location path
 		if ($DownloadInvocation -eq 0) {
 			$DriverPackageContentLocation = $TSEnvironment.Value("OSDDriverPackage01")
 			Write-CMLogEntry -Value " - Driver package content files was successfully downloaded to: $($DriverPackageContentLocation)" -Severity 1
-			
+
 			# Handle return value for successful download of driver package content files
 			return $DriverPackageContentLocation
 		}
 		else {
 			Write-CMLogEntry -Value " - Driver package content download process returned an unhandled exit code: $($DownloadInvocation)" -Severity 3
-			
-			# Throw terminating error			
+
+			# Throw terminating error
 			$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 		}
 	}
-	
+
 	function Install-DriverPackageContent {
 		param (
 			[parameter(Mandatory = $true, HelpMessage = "Specify the full local path to the downloaded driver package content.")]
 			[ValidateNotNullOrEmpty()]
 			[string]$ContentLocation
 		)
+
+		if ($Script:DeploymentMode -like "PreCache") {
+			Write-CMLogEntry -Value " - Driver package content successfully downloaded and pre-cached to: $($ContentLocation)" -Severity 1
+			return
+		}
+
 		# Detect if downloaded driver package content is a compressed archive that needs to be extracted before drivers are installed
-		$DriverPackageCompressedFile = Get-ChildItem -Path $ContentLocation -Filter "DriverPackage.*"
+		$DriverPackageCompressedFiles = @(Get-ChildItem -Path $ContentLocation -Filter "DriverPackage.*")
+		if ($DriverPackageCompressedFiles.Count -gt 1) {
+			Write-CMLogEntry -Value " - Driver package content contains multiple DriverPackage.* archives; exactly one compressed archive is supported" -Severity 3
+			$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
+		}
+		$DriverPackageCompressedFile = $DriverPackageCompressedFiles | Select-Object -First 1
 		if ($DriverPackageCompressedFile -ne $null) {
 			Write-CMLogEntry -Value " - Downloaded driver package content contains a compressed archive with driver content" -Severity 1
-			
+
 			# Detect if compressed format is Windows native zip or 7-Zip exe
 			switch -wildcard ($DriverPackageCompressedFile.Name) {
 				"*.zip" {
@@ -2824,11 +2755,11 @@ public class DATPinnedCertificateValidation
 					}
 					catch [System.Exception] {
 						Write-CMLogEntry -Value " - Failed to decompress driver package content file. Error message: $($_.Exception.Message)" -Severity 3
-						
-						# Throw terminating error						
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
-					
+
 					try {
 						# Remove compressed driver package archive file
 						if (Test-Path -Path $DriverPackageCompressedFile.FullName) {
@@ -2837,8 +2768,8 @@ public class DATPinnedCertificateValidation
 					}
 					catch [System.Exception] {
 						Write-CMLogEntry -Value " - Failed to remove compressed driver package content file after decompression. Error message: $($_.Exception.Message)" -Severity 3
-						
-						# Throw terminating error						
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
 				}
@@ -2846,19 +2777,20 @@ public class DATPinnedCertificateValidation
 					Write-CMLogEntry -Value " - Attempting to decompress 7-Zip driver package content file: $($DriverPackageCompressedFile.Name)" -Severity 1
 					Write-CMLogEntry -Value " - Decompression destination: $($ContentLocation)" -Severity 1
 					$ReturnCode = Invoke-Executable -FilePath $DriverPackageCompressedFile.FullName -Arguments "-o`"$($ContentLocation)`" -y"
-					
+
 					# Validate 7-Zip driver extraction
 					if ($ReturnCode -eq 0) {
 						Write-CMLogEntry -Value " - Successfully decompressed 7-Zip driver package content file" -Severity 1
 					}
 					else {
 						Write-CMLogEntry -Value " - An error occurred while decompressing 7-Zip driver package content file. Return code from self-extracing executable: $($ReturnCode)" -Severity 3
-						
-						# Throw terminating error						
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
 				}
 				"*.wim" {
+					$WimMounted = $false
 					try {
 						# Create mount location for driver package WIM file
 						$DriverPackageMountLocation = Join-Path -Path $ContentLocation -ChildPath "Mount"
@@ -2869,51 +2801,68 @@ public class DATPinnedCertificateValidation
 					}
 					catch [System.Exception] {
 						Write-CMLogEntry -Value " - Failed to create mount location for WIM file. Error message: $($_.Exception.Message)" -Severity 3
-						
-						# Throw terminating error						
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
-					
+
 					try {
 						# Expand compressed driver package WIM file
 						Write-CMLogEntry -Value " - Attempting to mount driver package content WIM file: $($DriverPackageCompressedFile.Name)" -Severity 1
 						Write-CMLogEntry -Value " - Mount location: $($DriverPackageMountLocation)" -Severity 1
-						# Read-only: the content is only copied out, and a read-write mount fails on some devices with
-						# "You do not have permissions to mount and modify this image" (upstream PR #339)
 						Mount-WindowsImage -ImagePath $DriverPackageCompressedFile.FullName -Path $DriverPackageMountLocation -Index 1 -ReadOnly -ErrorAction Stop
+						$WimMounted = $true
 						Write-CMLogEntry -Value " - Successfully mounted driver package content WIM file" -Severity 1
 						Write-CMLogEntry -Value " - Copying items from mount directory" -Severity 1
-						Get-ChildItem -Path $DriverPackageMountLocation | Copy-Item -destination $ContentLocation -Recurse -container
+						Get-ChildItem -Path $DriverPackageMountLocation | Copy-Item -Destination $ContentLocation -Recurse -Container -Force -ErrorAction Stop
+						Write-CMLogEntry -Value " - Dismounting driver package content WIM before driver processing" -Severity 1
+						Dismount-WindowsImage -Path $DriverPackageMountLocation -Discard -ErrorAction Stop
+						$WimMounted = $false
+						Write-CMLogEntry -Value " - Successfully dismounted driver package content WIM file" -Severity 1
 					}
 					catch [System.Exception] {
-						Write-CMLogEntry -Value " - Failed to mount driver package content WIM file. Error message: $($_.Exception.Message)" -Severity 3
-						
-						# Throw terminating error						
+						$WimErrorMessage = $_.Exception.Message
+						if ($WimMounted) {
+							try {
+								Dismount-WindowsImage -Path $DriverPackageMountLocation -Discard -ErrorAction Stop
+							}
+							catch [System.Exception] {
+								Write-CMLogEntry -Value " - Failed to dismount driver package content WIM during error cleanup. Error message: $($_.Exception.Message)" -Severity 3
+							}
+						}
+						Write-CMLogEntry -Value " - Failed to extract driver package content WIM file. Error message: $($WimErrorMessage)" -Severity 3
+
+						# Throw terminating error
 						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
 				}
+				default {
+					Write-CMLogEntry -Value " - Unsupported compressed driver package format: $($DriverPackageCompressedFile.Name). Supported formats are ZIP, self-extracting EXE, and WIM" -Severity 3
+					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
+				}
 			}
 		}
-		
+
 		switch ($Script:DeploymentMode) {
 			"BareMetal" {
 				# Apply drivers recursively from downloaded driver package location
 				Write-CMLogEntry -Value " - Attempting to apply drivers using dism.exe located in: $($ContentLocation)" -Severity 1
-				
+				$DismLogPath = Join-Path -Path $LogsDirectory -ChildPath "DISM.log"
+
 				# Determine driver injection method from parameter input
 				switch ($DriverInstallMode) {
 					"Single" {
 						try {
 							Write-CMLogEntry -Value " - DriverInstallMode is currently set to: $($DriverInstallMode)" -Severity 1
-							
+
 							# Get driver full path and install each driver seperately
 							$DriverINFs = Get-ChildItem -Path $ContentLocation -Recurse -Filter "*.inf" -ErrorAction Stop | Select-Object -Property FullName, Name
 							if ($DriverINFs -ne $null) {
 								foreach ($DriverINF in $DriverINFs) {
 									# Install specific driver
 									Write-CMLogEntry -Value " - Attempting to install driver: $($DriverINF.FullName)" -Severity 1
-									$ApplyDriverInvocation = Invoke-Executable -FilePath "dism.exe" -Arguments "/Image:$($TSEnvironment.Value('OSDTargetSystemDrive'))\ /Add-Driver /Driver:`"$($DriverINF.FullName)`""
-									
+									$ApplyDriverInvocation = Invoke-Executable -FilePath "dism.exe" -Arguments "/Image:$($TSEnvironment.Value('OSDTargetSystemDrive'))\ /Add-Driver /Driver:`"$($DriverINF.FullName)`" /LogPath:`"$($DismLogPath)`""
+
 									# Validate driver injection
 									if ($ApplyDriverInvocation -eq 0) {
 										Write-CMLogEntry -Value " - Successfully installed driver using dism.exe" -Severity 1
@@ -2925,24 +2874,24 @@ public class DATPinnedCertificateValidation
 							}
 							else {
 								Write-CMLogEntry -Value " - An error occurred while enumerating driver paths, downloaded driver package does not contain any INF files" -Severity 3
-								
-								# Throw terminating error								
+
+								# Throw terminating error
 								$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 							}
 						}
 						catch [System.Exception] {
 							Write-CMLogEntry -Value " - An error occurred while installing drivers. See DISM.log for more details" -Severity 2
-							
-							# Throw terminating error							
+
+							# Throw terminating error
 							$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 						}
 					}
 					"Recurse" {
 						Write-CMLogEntry -Value " - DriverInstallMode is currently set to: $($DriverInstallMode)" -Severity 1
-						
+
 						# Apply drivers recursively
-						$ApplyDriverInvocation = Invoke-Executable -FilePath "dism.exe" -Arguments "/Image:$($TSEnvironment.Value('OSDTargetSystemDrive'))\ /Add-Driver /Driver:$($ContentLocation) /Recurse"
-						
+						$ApplyDriverInvocation = Invoke-Executable -FilePath "dism.exe" -Arguments "/Image:$($TSEnvironment.Value('OSDTargetSystemDrive'))\ /Add-Driver /Driver:`"$($ContentLocation)`" /Recurse /LogPath:`"$($DismLogPath)`""
+
 						# Validate driver injection
 						if ($ApplyDriverInvocation -eq 0) {
 							Write-CMLogEntry -Value " - Successfully installed drivers recursively in driver package content location using dism.exe" -Severity 1
@@ -2956,7 +2905,7 @@ public class DATPinnedCertificateValidation
 			"OSUpgrade" {
 				# For OSUpgrade, don't attempt to install drivers as this is handled by setup.exe when used together with OSDUpgradeStagedContent
 				Write-CMLogEntry -Value " - Driver package content downloaded successfully and located in: $($ContentLocation)" -Severity 1
-				
+
 				# Set OSDUpgradeStagedContent task sequence variable
 				Write-CMLogEntry -Value " - Attempting to set OSDUpgradeStagedContent task sequence variable with value: $($ContentLocation)" -Severity 1
 				$TSEnvironment.Value("OSDUpgradeStagedContent") = "$($ContentLocation)"
@@ -2965,39 +2914,24 @@ public class DATPinnedCertificateValidation
 			"DriverUpdate" {
 				# Apply drivers recursively from downloaded driver package location
 				Write-CMLogEntry -Value " - Driver package content downloaded successfully, attempting to apply drivers using pnputil.exe located in: $($ContentLocation)" -Severity 1
-				$ApplyDriverInvocation = Invoke-Executable -FilePath "powershell.exe" -Arguments "pnputil /add-driver $(Join-Path -Path $ContentLocation -ChildPath '*.inf') /subdirs /install | Out-File -FilePath (Join-Path -Path $($LogsDirectory) -ChildPath 'Install-Drivers.txt') -Force"
-				Write-CMLogEntry -Value " - Successfully installed drivers" -Severity 1
-			}
-			"PreCache" {
-				# Driver package content downloaded successfully, log output and exit script
-				Write-CMLogEntry -Value " - Driver package content successfully downloaded and pre-cached to: $($ContentLocation)" -Severity 1
-			}
-		}
-		
-		# Cleanup potential compressed driver package content
-		if ($DriverPackageCompressedFile -ne $null) {
-			switch -wildcard ($DriverPackageCompressedFile.Name) {
-				"*.wim" {
-					try {
-						# Attempt to dismount compressed driver package content WIM file
-						Write-CMLogEntry -Value " - Attempting to dismount driver package content WIM file: $($DriverPackageCompressedFile.Name)" -Severity 1
-						Write-CMLogEntry -Value " - Mount location: $($DriverPackageMountLocation)" -Severity 1
-						Dismount-WindowsImage -Path $DriverPackageMountLocation -Discard -ErrorAction Stop
-						Write-CMLogEntry -Value " - Successfully dismounted driver package content WIM file" -Severity 1
-					}
-					catch [System.Exception] {
-						Write-CMLogEntry -Value " - Failed to dismount driver package content WIM file. Error message: $($_.Exception.Message)" -Severity 3
-						
-						# Throw terminating error						
-						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
-					}
+				$DriverPath = (Join-Path -Path $ContentLocation -ChildPath '*.inf').Replace("'", "''")
+				$DriverLogPath = (Join-Path -Path $LogsDirectory -ChildPath 'Install-Drivers.txt').Replace("'", "''")
+				$DriverInstallCommand = "`$ErrorActionPreference = 'Stop'; & pnputil.exe /add-driver '$($DriverPath)' /subdirs /install | Out-File -FilePath '$($DriverLogPath)' -Force; exit `$LASTEXITCODE"
+				$EncodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($DriverInstallCommand))
+				$ApplyDriverInvocation = Invoke-Executable -FilePath "powershell.exe" -Arguments "-NoProfile -NonInteractive -EncodedCommand $($EncodedCommand)"
+				if ($ApplyDriverInvocation -in @(0, 3010)) {
+					Write-CMLogEntry -Value " - Driver installation completed. Exit code: $($ApplyDriverInvocation); code 3010 indicates a restart is required" -Severity 1
+				}
+				else {
+					Write-CMLogEntry -Value " - Driver installation failed with exit code: $($ApplyDriverInvocation). See Install-Drivers.txt for details" -Severity 3
+					$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 				}
 			}
 		}
 	}
-	
+
 	Write-CMLogEntry -Value "[ApplyDriverPackage]: Apply Driver Package process initiated" -Severity 1
-	Write-CMLogEntry -Value " - Script version: 4.3.5" -Severity 1
+	Write-CMLogEntry -Value " - Script version: 4.3.6" -Severity 1
 	if ($PSCmdLet.ParameterSetName -like "Debug") {
 		Write-CMLogEntry -Value " - Apply driver package process initiated in debug mode" -Severity 1
 	}
@@ -3005,7 +2939,7 @@ public class DATPinnedCertificateValidation
 	Write-CMLogEntry -Value " - Apply driver package operational mode: $($OperationalMode)" -Severity 1
 	Write-CMLogEntry -Value " - Endpoint: '$($Endpoint)' | Filter: '$($Filter)' | DriverInstallMode: '$($DriverInstallMode)'" -Severity 1
 	Write-CMLogEntry -Value " - Target OS: '$($TargetOSName)' | Version: '$($TargetOSVersion)' | Architecture: '$($TargetOSArchitecture)'" -Severity 1
-	Write-CMLogEntry -Value " - UseDriverFallback: $($UseDriverFallback.IsPresent) | OSVersionFallback: $($OSVersionFallback.IsPresent) | AllowVirtualMachine: $($AllowVirtualMachine.IsPresent)" -Severity 1
+	Write-CMLogEntry -Value " - UseDriverFallback: $($UseDriverFallback.IsPresent) | OSVersionFallback: $($OSVersionFallback.IsPresent)" -Severity 1
 
 	# Set script error preference variable
 	$ErrorActionPreference = "Stop"
@@ -3016,10 +2950,6 @@ public class DATPinnedCertificateValidation
 	# Set initial values that control whether some functions should be executed or not
 	$SkipFallbackDriverPackageValidation = $false
 
-	# Set by Get-ComputerSystemType when -AllowVirtualMachine is passed on a virtual machine
-	$Script:VirtualMachine = $null
-	$Script:UseDriverFallbackEnabled = $UseDriverFallback.IsPresent
-
 	try {
 		Write-CMLogEntry -Value "[PrerequisiteChecker]: Starting environment prerequisite checker" -Severity 1
 
@@ -3029,108 +2959,96 @@ public class DATPinnedCertificateValidation
 		# Determine if running on supported computer system type
 		Get-ComputerSystemType
 
-		# Driver fallback packages are keyed to physical OEMs; for a virtual machine the generic virtual
-		# machine package takes that role, so a run with no match fails rather than installing one
-		if (($null -ne $Script:VirtualMachine) -and $Script:UseDriverFallbackEnabled) {
-			Write-CMLogEntry -Value " - UseDriverFallback is ignored for virtual machines; a generic virtual machine driver package (Manufacturer 'Generic') is used when no package for the hypervisor matches" -Severity 2
-			$Script:UseDriverFallbackEnabled = $false
-		}
-
 		# Determine if running on supported operating system version
 		Get-OperatingSystemVersion
-		
+
 		# Determine computer manufacturer, model, SystemSKU and FallbackSKU
 		$ComputerData = Get-ComputerData
-		
+
 		# Validate required computer details have successfully been gathered from WMI
 		Test-ComputerDetails -InputObject $ComputerData
-		
+
 		# Determine the computer detection method to be used for matching against driver packages
 		$ComputerDetectionMethod = Set-ComputerDetectionMethod
-		
+
 		Write-CMLogEntry -Value "[PrerequisiteChecker]: Completed environment prerequisite checker" -Severity 1
-		
+
 		if ($Script:PSCmdLet.ParameterSetName -notlike "XMLPackage") {
 			Write-CMLogEntry -Value "[AdminService]: Starting AdminService endpoint phase" -Severity 1
-			
+
 			# Detect AdminService endpoint type
 			Get-AdminServiceEndpointType
-			
+
 			# Determine if required values to connect to AdminService are provided
 			Test-AdminServiceData
-			
+
 			# Determine the AdminService endpoint URL based on endpoint type
 			Set-AdminServiceEndpointURL
-			
+
 			# Construct PSCredential object for AdminService authentication, this is required for both endpoint types
 			Get-AuthCredential
-			
+
 			# Attempt to retrieve an authentication token for external AdminService endpoint connectivity
 			# This will only execute when the endpoint type has been detected as External, which means that authentication is needed against the Cloud Management Gateway
 			if ($Script:AdminServiceEndpointType -like "External") {
 				Get-AuthToken
 			}
-			
+
 			Write-CMLogEntry -Value "[AdminService]: Completed AdminService endpoint phase" -Severity 1
 		}
-		
+
 		Write-CMLogEntry -Value "[DriverPackage]: Starting driver package retrieval using method: $($Script:PackageSource)" -Severity 1
-		
+
 		# Retrieve available driver packages from web service
 		$DriverPackages = Get-DriverPackages
-		
+
 		# Determine the OS image version and architecture values based upon parameter input
 		$OSImageDetails = Get-OSImageDetails
-		
+
 		Write-CMLogEntry -Value "[DriverPackage]: Starting driver package matching phase" -Severity 1
-		
+
 		# Match detected driver packages from web service call with computer details and OS image details gathered previously
-		Invoke-DriverPackageMatching
-		
+		Confirm-DriverPackage -ComputerData $ComputerData -OSImageData $OSImageDetails -DriverPackage $DriverPackages
+
 		Write-CMLogEntry -Value "[DriverPackage]: Completed driver package matching phase" -Severity 1
 		Write-CMLogEntry -Value "[DriverPackageValidation]: Starting driver package validation phase" -Severity 1
-		
+
 		# Validate that at least one driver package was matched against computer data
 		# Check if multiple driver packages were detected and ensure the most recent one by sorting after the DateCreated property from original AdminService call
 		Confirm-DriverPackageList
-		
+
 		Write-CMLogEntry -Value "[DriverPackageValidation]: Completed driver package validation phase" -Severity 1
-		
+
 		# Handle UseDriverFallback parameter if it was passed on the command line and attempt to detect if there's any available fallback packages
 		# This function will only run in the case that the parameter UseDriverFallback was specified and if the $DriverPackageList is empty at the point of execution
-		if ($Script:UseDriverFallbackEnabled) {
+		if ($PSBoundParameters["UseDriverFallback"]) {
 			Write-CMLogEntry -Value "[DriverPackageFallback]: Starting fallback driver package detection phase" -Severity 1
-			
+
 			# Match detected fallback driver packages from web service call with computer details and OS image details
 			Confirm-FallbackDriverPackage -ComputerData $ComputerData -OSImageData $OSImageDetails
-			
+
 			Write-CMLogEntry -Value "[DriverPackageFallback]: Completed fallback driver package detection phase" -Severity 1
 			Write-CMLogEntry -Value "[DriverPackageFallbackValidation]: Starting fallback driver package validation phase" -Severity 1
-			
+
 			# Validate that at least one fallback driver package was matched against computer data
 			Confirm-FallbackDriverPackageList
-			
-			Write-CMLogEntry -Value "[DriverPackageFallbackValidation]: Completed fallback driver package validation phase" -Severity 1
-		}
 
-		# A virtual machine only ever installs a package for its hypervisor or a generic one
-		if ($null -ne $Script:VirtualMachine) {
-			Confirm-VirtualMachineDriverPackage
+			Write-CMLogEntry -Value "[DriverPackageFallbackValidation]: Completed fallback driver package validation phase" -Severity 1
 		}
 
 		# At this point, the code below here is not allowed to be executed in debug mode, as it requires access to the Microsoft.SMS.TSEnvironment COM object
 		if ($PSCmdLet.ParameterSetName -notlike "Debug") {
 			Write-CMLogEntry -Value "[DriverPackageDownload]: Starting driver package download phase" -Severity 1
-			
+
 			# Attempt to download the matched driver package content files from distribution point
 			$DriverPackageContentLocation = Invoke-DownloadDriverPackageContent
-			
+
 			Write-CMLogEntry -Value "[DriverPackageDownload]: Completed driver package download phase" -Severity 1
 			Write-CMLogEntry -Value "[DriverPackageInstall]: Starting driver package install phase" -Severity 1
-			
+
 			# Depending on deployment type, take action accordingly when applying the driver package files
 			Install-DriverPackageContent -ContentLocation $DriverPackageContentLocation
-			
+
 			Write-CMLogEntry -Value "[DriverPackageInstall]: Completed driver package install phase" -Severity 1
 		}
 		else {
@@ -3143,7 +3061,7 @@ public class DATPinnedCertificateValidation
 
 		# Main try-catch block warning message
 		Write-CMLogEntry -Value "[ApplyDriverPackage]: Apply Driver Package process failed, please refer to previous error or warning messages" -Severity 3
-		
+
 		# Main try-catch block was triggered, this should cause the script to fail with exit code 1
 		exit 1
 	}
@@ -3153,7 +3071,7 @@ End {
 		# Reset OSDDownloadContent.exe dependant variables for further use of the task sequence step
 		Invoke-CMResetDownloadContentVariables
 	}
-	
+
 	# Write final output to log file
 	Write-CMLogEntry -Value "[ApplyDriverPackage]: Completed Apply Driver Package process" -Severity 1
 }
