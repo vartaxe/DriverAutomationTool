@@ -624,25 +624,8 @@ try {
         # 1. Dismount and remove only WIM records whose mount path is inside this DAT temp root.
         # Never use process-name cleanup or DISM /Cleanup-Wim here: both are machine-global and
         # can disrupt an unrelated servicing operation running at the same time.
-        $dismMountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
-        if (-not [string]::IsNullOrEmpty($safeStorageRoot) -and (Test-Path $dismMountKey)) {
-            $ownedRoot = $safeStorageRoot.TrimEnd('\') + '\'
-            foreach ($mountEntry in @(Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue)) {
-                $mountProperties = Get-ItemProperty -LiteralPath $mountEntry.PSPath -ErrorAction SilentlyContinue
-                $mountPath = [string]$mountProperties.'Mount Path'
-                if ([string]::IsNullOrWhiteSpace($mountPath)) { continue }
-                try { $mountFullPath = [IO.Path]::GetFullPath($mountPath).TrimEnd('\') + '\' } catch { continue }
-                if (-not $mountFullPath.StartsWith($ownedRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
-
-                Write-DATLogEntry -Value "[Headless] Cleanup: Releasing DAT-owned WIM mount '$mountPath'" -Severity 1
-                try { Dismount-WindowsImage -Path $mountPath -Discard -ErrorAction Stop | Out-Null } catch {
-                    Write-DATLogEntry -Value "[Headless] Warning: DAT-owned WIM dismount failed: $($_.Exception.Message)" -Severity 2
-                }
-                if (Test-Path -LiteralPath $mountEntry.PSPath) {
-                    Remove-Item -LiteralPath $mountEntry.PSPath -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
+        $mountCleanupComplete = -not [string]::IsNullOrEmpty($safeStorageRoot) -and
+            (Dismount-DATOwnedImages -StorageRoot $safeStorageRoot)
 
         # 2. Remove the temp content over several passes. Released
         #    handles can take a moment to settle, so retry locked items with a GC + short pause
@@ -651,7 +634,7 @@ try {
         # checked against the drive root and the well-known system directories before anything is
         # deleted. A bad TempPath now aborts the cleanup instead of emptying what it names.
         $removeTempContent = {
-            if ([string]::IsNullOrEmpty($safeStorageRoot)) { return @() }
+            if (-not $mountCleanupComplete) { return @() }
             $remaining = @(Get-ChildItem -LiteralPath $safeStorageRoot -Force -ErrorAction SilentlyContinue)
             $failed = @()
             foreach ($item in $remaining) {
@@ -688,7 +671,10 @@ try {
             }
         }
 
-        if ($stillFailed.Count -gt 0) {
+        if (-not $mountCleanupComplete) {
+            Write-DATLogEntry -Value "[Headless] Temporary storage preserved because mount cleanup was incomplete or unverified: $storagePath" -Severity 3
+            Write-Host "[Headless] Temporary storage preserved; review WIM cleanup errors."
+        } elseif ($stillFailed.Count -gt 0) {
             Write-DATLogEntry -Value "[Headless] Warning: Temporary storage cleanup incomplete -- $($stillFailed.Count) item(s) could not be removed (still in use): $storagePath" -Severity 3
             Write-Host "[Headless] Warning: $($stillFailed.Count) temp item(s) could not be removed (still in use)."
             foreach ($sf in $stillFailed) {

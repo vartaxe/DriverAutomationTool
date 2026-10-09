@@ -864,6 +864,10 @@ function Stop-DATCustomBuildProcessTree {
                 continue
             }
             $target.Kill()
+            if (-not $target.HasExited -and -not $target.WaitForExit(5000)) {
+                throw 'Process did not exit within five seconds of the termination request'
+            }
+            if ($target.HasExited -ne $true) { throw 'Unable to confirm process termination' }
             Write-DATLogEntry -Value "[Custom Build] - Stopped DAT custom-build process PID $targetId" -Severity 2
             $result.StoppedCount++
             if ($isRoot) { $result.RootStopped = $true }
@@ -943,11 +947,12 @@ function Start-DATCustomDismProcess {
         Write-DATLogEntry -Value "- [DISM] - Unable to read the custom build abort flag before launch -- $($_.Exception.Message). The flag will be re-checked while DISM runs" -Severity 2
     }
     if ($abortRequested -eq 1) {
+        Set-DATRegistryValue -Name 'CustomDismProcessID' -Value 0 -Type DWord
         throw 'Custom build aborted before DISM started.'
     }
 
     $process = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c `"$BatchFile`"" `
-        -WindowStyle Hidden -PassThru
+        -WindowStyle Hidden -PassThru -ErrorAction Stop
     $identity = $null
     $resolved = $null
     try {
@@ -1024,6 +1029,139 @@ function Stop-DATCustomDismProcess {
 }
 
 #endregion Custom Build Process Ownership
+
+function Assert-DATDismRuntimePath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $trustedOwners = @('S-1-5-18', 'S-1-5-32-544',
+        'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if ($fullPath.StartsWith('\\')) { throw 'DISM runtime storage must be local.' }
+    $current = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+    $isRuntime = $true
+    while ($null -ne $current) {
+        if (-not ($current.Attributes -band [IO.FileAttributes]::Directory) -or
+            ($current.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Unsafe DISM runtime directory or ancestor: $($current.FullName)"
+        }
+        $acl = Get-Acl -LiteralPath $current.FullName -ErrorAction Stop
+        $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if ($trustedOwners -notcontains $owner) {
+            throw "DISM runtime directory or ancestor has an untrusted owner: $($current.FullName)"
+        }
+        if ($isRuntime) {
+            if (@(Get-DATNonAdminWriteAccess -Path $current.FullName).Count -gt 0) {
+                throw "DISM runtime directory is writable by a non-administrator: $($current.FullName)"
+            }
+        } else {
+            # Creating siblings is harmless; replacing this ancestry is not.
+            $replacementRights = 0x000D0040 # Delete, DeleteChild, WriteDac, WriteOwner
+            foreach ($ace in $acl.Access) {
+                if ($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                    ($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
+                $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+                if ($trustedOwners -notcontains $sid -and
+                    ((Get-DATEffectiveFileSystemRights -Rights ([int]$ace.FileSystemRights)) -band $replacementRights)) {
+                    throw "DISM runtime ancestry can be replaced by a non-administrator: $($current.FullName)"
+                }
+            }
+        }
+        $isRuntime = $false
+        $current = $current.Parent
+    }
+}
+
+function New-DATDismRuntimeDirectory {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+
+    try {
+        $parent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+        Assert-DATDismRuntimePath -Path $parent
+        $security = New-Object Security.AccessControl.DirectorySecurity
+        $security.SetAccessRuleProtection($true, $false)
+        $administrators = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
+        $security.SetOwner($administrators)
+        foreach ($sidText in @('S-1-5-18', 'S-1-5-32-544')) {
+            $sid = New-Object Security.Principal.SecurityIdentifier($sidText)
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+                $sid, [Security.AccessControl.FileSystemRights]::FullControl,
+                [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+                [Security.AccessControl.PropagationFlags]::None,
+                [Security.AccessControl.AccessControlType]::Allow)
+            $security.AddAccessRule($rule)
+        }
+        $runtimeRoot = Join-Path $parent 'DriverAutomationTool-Runtime'
+        # Create with the restrictive ACL, not a permissive create-then-repair window.
+        if (-not (Test-Path -LiteralPath $runtimeRoot -ErrorAction Stop)) {
+            [IO.Directory]::CreateDirectory($runtimeRoot, $security) | Out-Null
+        }
+        Assert-DATDismRuntimePath -Path $runtimeRoot
+        $runtime = Join-Path $runtimeRoot ([guid]::NewGuid().ToString('N'))
+        [IO.Directory]::CreateDirectory($runtime, $security) | Out-Null
+        Assert-DATDismRuntimePath -Path $runtime
+        return $runtime
+    } catch {
+        Write-DATLogEntry -Value "[DISM] Refusing to create executable runtime content: $($_.Exception.Message)" -Severity 3
+        throw
+    }
+}
+
+function New-DATDismBatchFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Command
+    )
+    try {
+        Assert-DATDismRuntimePath -Path (Split-Path -Parent $Path)
+        $bytes = [Text.Encoding]::ASCII.GetBytes("@echo off`r`n$Command`r`nexit /b %ERRORLEVEL%`r`n")
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush() } finally { $stream.Dispose() }
+    } catch {
+        Write-DATLogEntry -Value "[DISM] Refusing to launch after batch creation failed: $($_.Exception.Message)" -Severity 3
+        throw
+    }
+
+}
+
+function Dismount-DATOwnedImages {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)][string]$StorageRoot)
+
+    $complete = $true
+    try {
+        $ownedRoot = (Test-DATSafeContentRoot -Path $StorageRoot).TrimEnd('\') + '\'
+        $mountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
+        if (-not (Test-Path -LiteralPath $mountKey -ErrorAction Stop)) { return $true }
+        foreach ($mountRecord in @(Get-ChildItem -LiteralPath $mountKey -ErrorAction Stop)) {
+            $properties = Get-ItemProperty -LiteralPath $mountRecord.PSPath -ErrorAction Stop
+            $mountPath = [string]$properties.'Mount Path'
+            if ([string]::IsNullOrWhiteSpace($mountPath)) {
+                throw 'A WIM mount record has no mount path; cleanup cannot safely classify it.'
+            }
+            $mountFullPath = [IO.Path]::GetFullPath($mountPath).TrimEnd('\') + '\'
+            if (-not $mountFullPath.StartsWith($ownedRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            try {
+                Dismount-WindowsImage -Path $mountPath -Discard -ErrorAction Stop | Out-Null
+                if (Test-Path -LiteralPath $mountRecord.PSPath -ErrorAction Stop) {
+                    Remove-Item -LiteralPath $mountRecord.PSPath -Recurse -Force -ErrorAction Stop
+                }
+                Write-DATLogEntry -Value "[Cleanup] Released DAT WIM mount '$mountPath'" -Severity 1
+            } catch {
+                $complete = $false
+                Write-DATLogEntry -Value "[Cleanup] WIM release failed for '$mountPath'; retaining mount state and temporary storage: $($_.Exception.Message)" -Severity 3
+            }
+        }
+    } catch {
+        $complete = $false
+        Write-DATLogEntry -Value "[Cleanup] Cannot verify WIM mount state; temporary storage will be preserved: $($_.Exception.Message)" -Severity 3
+    }
+    return $complete
+}
 
 #region OEM Sources
 
@@ -1851,6 +1989,7 @@ function Invoke-DATContentDownload {
             $curlWindowStyle = if ($curlRunMode -eq 'Show Window') { 'Normal' } else { 'Hidden' }
             $curlWorkDir = Split-Path -Path $CurlProcess -Parent
             $DownloadProcess = Start-Process -FilePath $CurlProcess -ArgumentList $CurlArgs -PassThru -WindowStyle $curlWindowStyle -WorkingDirectory $curlWorkDir
+            $null = Get-DATRetainedProcessStartTicks -Process $DownloadProcess
             Set-DATRegistryValue -Name "RunningProcessID" -Type String -Value "$($DownloadProcess.Id)"
             # Wait for CURL initialization
             Start-Sleep -Seconds 5
@@ -1865,10 +2004,16 @@ function Invoke-DATContentDownload {
                 $abortReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
                 if ($abortReg.RunningState -eq 'Aborted') {
                     Write-DATLogEntry -Value "[CURL] Abort detected -- killing curl process" -Severity 2
-                    try { $DownloadProcess.Kill() } catch { Stop-Process -Id $DownloadProcess.Id -Force -ErrorAction SilentlyContinue }
+                    try {
+                        $DownloadProcess.Kill()
+                        if (-not $DownloadProcess.WaitForExit(5000)) { throw 'CURL did not exit within five seconds' }
+                    } catch {
+                        Write-DATLogEntry -Value "[CURL] Owned-process cancellation failed: $($_.Exception.Message)" -Severity 3
+                        throw
+                    }
                     return
                 }
-                $CURLBytes = Get-CimInstance -ClassName Win32_Process -Filter "Name = 'Curl.exe'" -ErrorAction SilentlyContinue |
+                $CURLBytes = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($DownloadProcess.Id)" -ErrorAction SilentlyContinue |
                     Select-Object -ExpandProperty WriteTransferCount
 
                 # If size still unknown, try reading Content-Length from CURL's dumped response headers
@@ -3189,6 +3334,8 @@ function Invoke-DATDriverFilePackaging {
 
             } else {
                 # ── External dism.exe /Capture-Image ─────────────────────────────────
+                Set-DATRegistryValue -Name "RunningProcess" -Type String -Value "DATOwnedDism"
+                Set-DATRegistryValue -Name "RunningProcessID" -Type String -Value "-1"
                 # Run DISM as an external process instead of the in-process New-WindowsImage
                 # cmdlet. The cmdlet uses COM interop with dismhost.exe -- if the user aborts
                 # and dismhost is killed, the shared COM state corrupts the PowerShell process
@@ -3206,22 +3353,23 @@ function Invoke-DATDriverFilePackaging {
 
                 Set-DATRegistryValue -Name "RunningMessage" -Value "Creating WIM for $OEM $Model ($compressionType)..." -Type String
 
-                $dismLogFile = Join-Path $localWorkDir "DAT_DISM_capture.log"
-                $dismStdoutFile = Join-Path $localWorkDir "DAT_DISM_stdout.log"
+                $dismRuntimeDirectory = New-DATDismRuntimeDirectory
+                $dismLogFile = Join-Path $dismRuntimeDirectory "DAT_DISM_capture.log"
+                $dismStdoutFile = Join-Path $dismRuntimeDirectory "DAT_DISM_stdout.log"
                 $dismArgs = "/Capture-Image /ImageFile:`"$WimFile`" /CaptureDir:`"$DriverFolder`" /Name:`"$WimDescription`" /Description:`"$WimDescription`" /Compress:$compressionType /Verify /LogPath:`"$dismLogFile`" /LogLevel:3"
                 Write-DATLogEntry -Value "[$OEM] DISM command: dism.exe $dismArgs" -Severity 1
 
                 # Run dism.exe directly -- -WindowStyle Hidden allocates a real console
                 # (required by DISM; CreateNoWindow/RedirectStandardOutput causes hangs).
                 # Use a batch wrapper for stdout capture while preserving console allocation.
-                $dismBatchFile = Join-Path $localWorkDir "DAT_DISM_capture.cmd"
+                $dismBatchFile = Join-Path $dismRuntimeDirectory "DAT_DISM_capture.cmd"
                 $dismCmd = "`"$env:SystemRoot\System32\dism.exe`" $dismArgs"
-                Set-Content -Path $dismBatchFile -Value "@echo off`r`n$dismCmd > `"$dismStdoutFile`" 2>&1`r`nexit /b %ERRORLEVEL%" -Encoding ASCII
+                New-DATDismBatchFile -Path $dismBatchFile -Command "$dismCmd > `"$dismStdoutFile`" 2>&1"
 
                 $dismProcess = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c `"$dismBatchFile`"" `
                     -WindowStyle Hidden -PassThru
                 $null = Get-DATRetainedProcessStartTicks -Process $dismProcess
-                Set-DATRegistryValue -Name "RunningProcess" -Type String -Value "dism"
+                Set-DATRegistryValue -Name "RunningProcess" -Type String -Value "DATOwnedDism"
                 Set-DATRegistryValue -Name "RunningProcessID" -Type String -Value "$($dismProcess.Id)"
 
                 $dismHostLookupWarned = $false
@@ -3356,6 +3504,9 @@ function Invoke-DATDriverFilePackaging {
                 Remove-Item $dismBatchFile -Force -ErrorAction SilentlyContinue
                 if ($effectiveExitCode -eq 0) {
                     Remove-Item $dismLogFile -Force -ErrorAction SilentlyContinue
+                    try { [IO.Directory]::Delete($dismRuntimeDirectory) } catch {
+                        Write-DATLogEntry -Value "[$OEM] DISM runtime cleanup incomplete: $($_.Exception.Message)" -Severity 2
+                    }
                 } else {
                     Write-DATLogEntry -Value "[$OEM] DISM log preserved for diagnostics: $dismLogFile" -Severity 2
                 }
@@ -5822,10 +5973,11 @@ function Invoke-DATDismExternal {
         [int]$TimeoutSec = 3600
     )
     $stamp       = [System.IO.Path]::GetRandomFileName().Replace('.', '')
-    $stdoutFile  = Join-Path $WorkDir "DAT_DISM_$stamp.out"
-    $batchFile   = Join-Path $WorkDir "DAT_DISM_$stamp.cmd"
+    $runtimeDirectory = New-DATDismRuntimeDirectory
+    $stdoutFile  = Join-Path $runtimeDirectory "DAT_DISM_$stamp.out"
+    $batchFile   = Join-Path $runtimeDirectory "DAT_DISM_$stamp.cmd"
     $dismExe     = "$env:SystemRoot\System32\dism.exe"
-    Set-Content -Path $batchFile -Value "@echo off`r`n`"$dismExe`" $Arguments > `"$stdoutFile`" 2>&1`r`nexit /b %ERRORLEVEL%" -Encoding ASCII
+    New-DATDismBatchFile -Path $batchFile -Command "`"$dismExe`" $Arguments > `"$stdoutFile`" 2>&1"
     Write-DATLogEntry -Value "[$Label] dism.exe $Arguments" -Severity 1
 
     $proc = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c `"$batchFile`"" -WindowStyle Hidden -PassThru
@@ -5850,6 +6002,9 @@ function Invoke-DATDismExternal {
         }
     }
     Remove-Item $stdoutFile, $batchFile -Force -ErrorAction SilentlyContinue
+    try { [IO.Directory]::Delete($runtimeDirectory) } catch {
+        Write-DATLogEntry -Value "[$Label] DISM runtime cleanup incomplete: $($_.Exception.Message)" -Severity 2
+    }
     Write-DATLogEntry -Value "[$Label] dism.exe exit code: $exitCode" -Severity $(if ($exitCode -eq 0) { 1 } else { 3 })
     return $exitCode
 }

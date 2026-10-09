@@ -11,7 +11,7 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 | | |
 |---|---|
 | Version | `10.3.2.0` |
-| Generated (UTC) | 2026-10-09 22:46:41 |
+| Generated (UTC) | 2026-10-09 23:45:49 |
 | Files | 20 |
 | Algorithm | SHA256 |
 
@@ -20,14 +20,14 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
 | Start-DriverAutomationTool.ps1 | `Start-DriverAutomationTool.ps1` | 8.9 | `3173A26B88DA68EC02E1E88C9D7322AA1C3CE1BC167548501E0DFA332A8CE5FE` |
-| Start-DATHeadlessBuild.ps1 | `Start-DATHeadlessBuild.ps1` | 45.9 | `5C8A99CB8081D96E18DB64A63470853592CD3841ACA2318D23037887E53A0F68` |
+| Start-DATHeadlessBuild.ps1 | `Start-DATHeadlessBuild.ps1` | 44.9 | `FE3061B6796B8CFD1F1F966284B55C002DE4AF3A4592606E01763B04FA6AA331` |
 
 ## Core Module
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.5 | `0D71140570505F8E3FDF968D47D6A4C18A4298F2CF7DEE8B4996A29710686241` |
-| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1439.8 | `5E8658FDDA9CF1EE3D2DA759881E298F294E24A50D30AF3F711777E7DE045E9A` |
+| DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.6 | `B8ABE6521AEACF22DCD470FAB4D49ACBBC78E05FFF3447BD597CD18F18F1DEED` |
+| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1447.9 | `C3C2A3EC92B0AC9924372AA03ACBB363874DDC67250540650EEBE4068A5DBC89` |
 | Deploy-BIOSPassword-Detection.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Detection.ps1` | 1.7 | `7A7DCE6AD49DE2634FB5014D2E02594E36A5A212FA0BF3C21C3E6C5ACC64B235` |
 | Deploy-BIOSPassword-Remediation.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Remediation.ps1` | 2.9 | `DA0A9097595C3D10B0E5C13CA7B1E73B8026A5F7F627E90A28844F4512F962E7` |
 | Import-CMOfflinePackages.ps1 | `Modules/DriverAutomationToolCore/Templates/Import-CMOfflinePackages.ps1` | 9.9 | `E6DB9F4D3873152AFCA5DC897541E2E5BCB58039AE0AC04B3B9BB5894A5FE15A` |
@@ -40,7 +40,7 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| MainApplication.ps1 | `UI/MainApplication.ps1` | 1708.7 | `83831D2373B3E1796DFE6A6C615E87D8953C002A7BDD69690A20A60CA7195A0E` |
+| MainApplication.ps1 | `UI/MainApplication.ps1` | 1707.3 | `7DF5354F28CFD8B986E80A27DC6305FAD4FB5C14F5B7B176A0836925C63980DC` |
 | ThemeDefinitions.ps1 | `UI/Themes/ThemeDefinitions.ps1` | 8.9 | `B7C6D8D529D3581C7EDCD79092F24F2550BE2B3DD7CB647DF690CC161520933A` |
 
 ## Deployment Scripts
