@@ -2822,18 +2822,20 @@ public static class AdminServiceCertificateValidation
 					}
 					catch [System.Exception] {
 						$WimErrorMessage = $_.Exception.Message
+						Write-CMLogEntry -Value " - Failed to extract driver package content WIM file. Error message: $($WimErrorMessage)" -Severity 3
+						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
+					}
+					finally {
 						if ($WimMounted) {
 							try {
 								Dismount-WindowsImage -Path $DriverPackageMountLocation -Discard -ErrorAction Stop
+								$WimMounted = $false
 							}
 							catch [System.Exception] {
 								Write-CMLogEntry -Value " - Failed to dismount driver package content WIM during error cleanup. Error message: $($_.Exception.Message)" -Severity 3
+								throw
 							}
 						}
-						Write-CMLogEntry -Value " - Failed to extract driver package content WIM file. Error message: $($WimErrorMessage)" -Severity 3
-
-						# Throw terminating error
-						$PSCmdlet.ThrowTerminatingError((New-TerminatingErrorRecord))
 					}
 				}
 				default {
@@ -2916,7 +2918,7 @@ public static class AdminServiceCertificateValidation
 				Write-CMLogEntry -Value " - Driver package content downloaded successfully, attempting to apply drivers using pnputil.exe located in: $($ContentLocation)" -Severity 1
 				$DriverPath = (Join-Path -Path $ContentLocation -ChildPath '*.inf').Replace("'", "''")
 				$DriverLogPath = (Join-Path -Path $LogsDirectory -ChildPath 'Install-Drivers.txt').Replace("'", "''")
-				$DriverInstallCommand = "`$ErrorActionPreference = 'Stop'; & pnputil.exe /add-driver '$($DriverPath)' /subdirs /install | Out-File -FilePath '$($DriverLogPath)' -Force; exit `$LASTEXITCODE"
+				$DriverInstallCommand = "`$ErrorActionPreference = 'Stop'; & pnputil.exe /add-driver '$($DriverPath)' /subdirs /install | Out-File -LiteralPath '$($DriverLogPath)' -Force; exit `$LASTEXITCODE"
 				$EncodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($DriverInstallCommand))
 				$ApplyDriverInvocation = Invoke-Executable -FilePath "powershell.exe" -Arguments "-NoProfile -NonInteractive -EncodedCommand $($EncodedCommand)"
 				if ($ApplyDriverInvocation -in @(0, 3010)) {

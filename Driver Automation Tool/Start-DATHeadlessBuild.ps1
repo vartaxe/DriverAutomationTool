@@ -614,43 +614,6 @@ try {
         #    so force a GC + finalizer pass to close any lingering handles before deletion.
         [System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers(); [System.GC]::Collect()
 
-        # 1. Kill orphaned DISM/dismhost processes that may hold handles in the temp folder
-        $orphanProcs = @()
-        foreach ($procName in @('dismhost', 'dism')) {
-            $orphanProcs += @(Get-Process -Name $procName -ErrorAction SilentlyContinue)
-        }
-        if ($orphanProcs.Count -gt 0) {
-            Write-DATLogEntry -Value "[Headless] Cleanup: Stopping $($orphanProcs.Count) orphaned DISM process(es) before temp removal" -Severity 1
-            foreach ($proc in $orphanProcs) {
-                try { $proc.Kill() } catch { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-            }
-        }
-
-        # 2. Discard any stale WIM mount registry entries and run DISM image cleanup so a
-        #    left-over mounted image (e.g. after an aborted build) releases its directory lock.
-        $dismMountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
-        $hasMountedImages = (Test-Path $dismMountKey) -and
-            @(Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue).Count -gt 0
-        if ($hasMountedImages) {
-            Write-DATLogEntry -Value "[Headless] Cleanup: Clearing stale WIM mount registry entries" -Severity 1
-            Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            try {
-                $dismClean = Start-Process -FilePath "$env:SystemRoot\System32\dism.exe" `
-                    -ArgumentList '/Cleanup-Wim' -WindowStyle Hidden -PassThru
-                $dismClean.WaitForExit(10000)
-                if (-not $dismClean.HasExited) { $dismClean.Kill() }
-            } catch {
-                Write-DATLogEntry -Value "[Headless] Warning: DISM /Cleanup-Wim failed: $($_.Exception.Message)" -Severity 2
-            }
-        }
-
-        # 3. Remove the temp content over several passes. Killed dismhost processes and released
-        #    handles can take a moment to settle, so retry locked items with a GC + short pause
-        #    between passes rather than giving up after a single retry.
-        # The root comes from BuildConfig.json and this runs as SYSTEM, so it is canonicalised and
-        # checked against the drive root and the well-known system directories before anything is
-        # deleted. A bad TempPath now aborts the cleanup instead of emptying what it names.
         $safeStorageRoot = $null
         try {
             $safeStorageRoot = Test-DATSafeContentRoot -Path $storagePath
@@ -658,6 +621,35 @@ try {
             Write-DATLogEntry -Value "[Headless] Cleanup skipped: $($_.Exception.Message)" -Severity 3
         }
 
+        # 1. Dismount and remove only WIM records whose mount path is inside this DAT temp root.
+        # Never use process-name cleanup or DISM /Cleanup-Wim here: both are machine-global and
+        # can disrupt an unrelated servicing operation running at the same time.
+        $dismMountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
+        if (-not [string]::IsNullOrEmpty($safeStorageRoot) -and (Test-Path $dismMountKey)) {
+            $ownedRoot = $safeStorageRoot.TrimEnd('\') + '\'
+            foreach ($mountEntry in @(Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue)) {
+                $mountProperties = Get-ItemProperty -LiteralPath $mountEntry.PSPath -ErrorAction SilentlyContinue
+                $mountPath = [string]$mountProperties.'Mount Path'
+                if ([string]::IsNullOrWhiteSpace($mountPath)) { continue }
+                try { $mountFullPath = [IO.Path]::GetFullPath($mountPath).TrimEnd('\') + '\' } catch { continue }
+                if (-not $mountFullPath.StartsWith($ownedRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+
+                Write-DATLogEntry -Value "[Headless] Cleanup: Releasing DAT-owned WIM mount '$mountPath'" -Severity 1
+                try { Dismount-WindowsImage -Path $mountPath -Discard -ErrorAction Stop | Out-Null } catch {
+                    Write-DATLogEntry -Value "[Headless] Warning: DAT-owned WIM dismount failed: $($_.Exception.Message)" -Severity 2
+                }
+                if (Test-Path -LiteralPath $mountEntry.PSPath) {
+                    Remove-Item -LiteralPath $mountEntry.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        # 2. Remove the temp content over several passes. Released
+        #    handles can take a moment to settle, so retry locked items with a GC + short pause
+        #    between passes rather than giving up after a single retry.
+        # The root comes from BuildConfig.json and this runs as SYSTEM, so it is canonicalised and
+        # checked against the drive root and the well-known system directories before anything is
+        # deleted. A bad TempPath now aborts the cleanup instead of emptying what it names.
         $removeTempContent = {
             if ([string]::IsNullOrEmpty($safeStorageRoot)) { return @() }
             $remaining = @(Get-ChildItem -LiteralPath $safeStorageRoot -Force -ErrorAction SilentlyContinue)
