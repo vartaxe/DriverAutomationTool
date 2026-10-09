@@ -976,9 +976,9 @@ try {
     }
 
     if ($infCount -eq 0) {
-        Write-CMTraceLog "WARNING: No INF files found in extracted drivers" -Severity 2
-        if (-not $WhatIf) { Set-DATInstallStatus -RegPath $VersionRegPath -Result 'NoContent' -Phase 'InfScan' -ScriptExitCode 0 -ErrorMessage 'No INF driver files were found in the extracted package' }
-        exit 0
+        Write-CMTraceLog "ERROR: No INF files found in extracted drivers" -Severity 3
+        if (-not $WhatIf) { Set-DATInstallStatus -RegPath $VersionRegPath -Result 'NoContent' -Phase 'InfScan' -ScriptExitCode 1 -ErrorMessage 'No INF driver files were found in the extracted package' }
+        exit 1
     }
 
     # Install drivers using PNPUtil
@@ -1032,13 +1032,12 @@ try {
         Write-CMTraceLog "PNPUtil completed with exit code: $($pnpProcess.ExitCode)"
         $driverToolExitCode = $pnpProcess.ExitCode
 
-        # Known PNPUtil exit codes:
+        # Explicitly accepted PNPUtil success codes:
         #   0    = Success, no reboot required
-        #   1    = Partial success / some drivers not added (treated as success)
         #   259  = ERROR_NO_MORE_ITEMS -- all drivers already staged/current (success)
         #   3010 = ERROR_SUCCESS_REBOOT_REQUIRED -- success, reboot needed
-        # Anything else is a genuine failure.
-        if ($pnpProcess.ExitCode -notin @(0, 1, 259, 3010)) {
+        # Generic exit code 1 and every other value are failures.
+        if ($pnpProcess.ExitCode -notin @(0, 259, 3010)) {
             Write-CMTraceLog "ERROR: PNPUtil reported a failure (exit code $($pnpProcess.ExitCode))" -Severity 3
             Set-DATInstallStatus -RegPath $VersionRegPath -Result 'Failed' -Phase 'PnpUtil' -ToolExitCode $pnpProcess.ExitCode -ScriptExitCode 1 -ErrorMessage "PNPUtil returned failure exit code $($pnpProcess.ExitCode)"
             exit 1

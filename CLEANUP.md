@@ -28,6 +28,9 @@ enumeration failures even after stopping a verified wrapper. Custom capture
 rejects incomplete cancellation and never reports an abort as successful
 packaging. The driver deployment script retains pre-install WIM dismounting,
 uses a finally block for error cleanup, and uses a literal installer-log path.
+The maintained and bundled hotfix driver-install templates now include the
+duplicate checkout's reviewed fix: empty INF packages and generic pnputil code
+1 are failures, while the existing accepted codes 0, 259, and 3010 are preserved.
 
 Offline regressions cover these contracts. This does not claim validation on
 real hardware, ConfigMgr, Intune, firmware, or a live servicing workload.
