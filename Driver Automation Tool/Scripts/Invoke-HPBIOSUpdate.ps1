@@ -30,7 +30,7 @@
 	1.0.5 - (2019-05-14) Fixed an issue where the flash utility would look in the script executing location instead of the passed $Path location for the update file
 	1.0.6 - (2020-02-06) Previous "fix" in 1.0.5 was a mistake, this version corrects it
 	1.0.7 - (2020-04-23) Added additional logging output when flash utility is being executed including exit code. Removed the LogFileName parameter as the
-			   	         exit code from the flash utility is now embedded in the Invoke-HPBIOSUpdate.log file.
+					 exit code from the flash utility is now embedded in the Invoke-HPBIOSUpdate.log file.
 #>
 
 [CmdletBinding()]
