@@ -13178,45 +13178,20 @@ $btn_Abort.Add_Click({
             $pidVal = 0
             if (-not [string]::IsNullOrEmpty($RunningProcessID) -and [int]::TryParse($RunningProcessID, [ref]$pidVal)) {
                 if ($pidVal -gt 0 -and $pidVal -ne $PID) {
-                    Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
+                    $trackedProcess = Get-Process -Id $pidVal -ErrorAction SilentlyContinue
+                    if ($trackedProcess -and -not [string]::IsNullOrWhiteSpace($RunningProcessName) -and
+                        $trackedProcess.ProcessName -eq [IO.Path]::GetFileNameWithoutExtension($RunningProcessName)) {
+                        Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
+                    }
                 }
-            } elseif (-not [string]::IsNullOrEmpty($RunningProcessName) -and
-                      $RunningProcessName -notmatch '^(powershell|pwsh)$') {
-                Get-Process -Name $RunningProcessName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             }
         } catch {}
-
-        # Kill orphaned DISM/dismhost processes
-        foreach ($procName in @('dismhost', 'dism')) {
-            Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
-                try { $_.Kill() } catch {}
-            }
-        }
-
-        # Kill any running HP SoftPaq self-extracting processes (SP*.exe)
-        Get-Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.ProcessName -match '^SP\d+$'
-        } | ForEach-Object {
-            try { $_.Kill() } catch {}
-        }
-
-        # Kill any running curl processes spawned by the tool
-        Get-Process -Name 'curl' -ErrorAction SilentlyContinue | ForEach-Object {
-            try { $_.Kill() } catch {}
-        }
 
         # Signal the runspace to stop -- BeginStop is fire-and-forget, does NOT block the UI thread.
         # The runspace will complete asynchronously; CleanupTimer below handles Dispose once done.
         if ($script:BuildPS) {
             try { [void]$script:BuildPS.BeginStop($null, $null) } catch {}
         }
-
-        # Fire-and-forget DISM cleanup -- runs in a separate process so no session state conflict.
-        # The Window.Closing handler also does this, but we want to clean up promptly after abort.
-        try {
-            Start-Process -FilePath "$env:SystemRoot\System32\dism.exe" `
-                -ArgumentList '/Cleanup-Wim' -WindowStyle Hidden
-        } catch {}
 
         # Close build progress modal without marking remaining as success
         if ($script:BuildModal) {
@@ -13267,12 +13242,6 @@ $btn_Abort.Add_Click({
                     try { $script:BuildPS.Dispose()      } catch {}
                     try { $script:BuildRunspace.Dispose() } catch {}
 
-                    # Kill any DISM/dismhost processes orphaned by the now-stopped runspace
-                    foreach ($procName in @('dismhost', 'dism')) {
-                        Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
-                            try { $_.Kill() } catch {}
-                        }
-                    }
                     $script:BuildAsyncResult = $null
                     $script:BuildPS          = $null
                     $script:BuildRunspace    = $null
@@ -20054,6 +20023,89 @@ $script:CustomBuildRunspace = $null
 $script:CustomBuildPS = $null
 $script:CustomBuildAsyncResult = $null
 
+function Invoke-DATCustomBuildAbortCleanup {
+    # Returns $true when the build runspace must stay alive to cancel the DISM process it launched.
+    # Nothing is stopped unless its PID, creation time, executable and command line are verified.
+    try {
+        $trackedId = [int](Get-ItemPropertyValue -Path $global:RegPath -Name 'CustomDismProcessID' -ErrorAction Stop)
+    } catch [System.Management.Automation.PSArgumentException], [System.Management.Automation.ItemNotFoundException] {
+        return $false
+    } catch {
+        Write-DATActivityLog "Custom Driver Pack: Unable to read the tracked DISM process state -- $($_.Exception.Message). No process was stopped" -Level Warn
+        return $false
+    }
+
+    if ($trackedId -eq -1) {
+        Write-DATActivityLog "Custom Driver Pack: DISM launch is pending or its identity is unverified; the build will cancel its own DISM process" -Level Warn
+        return $true
+    }
+    if ($trackedId -le 0) { return $false }
+
+    try {
+        $creationTimeValue = [string](Get-ItemPropertyValue -Path $global:RegPath -Name 'CustomDismProcessCreationTime' -ErrorAction Stop)
+        $rootExecutable = [string](Get-ItemPropertyValue -Path $global:RegPath -Name 'CustomDismProcessExecutable' -ErrorAction Stop)
+        $rootCommandLine = [string](Get-ItemPropertyValue -Path $global:RegPath -Name 'CustomDismProcessCommandLine' -ErrorAction Stop)
+    } catch {
+        Write-DATActivityLog "Custom Driver Pack: Unable to read the recorded identity of DISM process (PID: $trackedId) -- $($_.Exception.Message). The build will cancel its own DISM process" -Level Warn
+        return $true
+    }
+    $rootCreationTime = 0L
+    if (-not [long]::TryParse($creationTimeValue, [ref]$rootCreationTime) -or
+        [string]::IsNullOrWhiteSpace($rootExecutable) -or
+        [string]::IsNullOrWhiteSpace($rootCommandLine)) {
+        Write-DATActivityLog "Custom Driver Pack: Recorded identity of DISM process (PID: $trackedId) is incomplete. The build will cancel its own DISM process" -Level Warn
+        return $true
+    }
+
+    try {
+        $ownedProcesses = @(Get-DATCustomBuildProcessTree -RootProcessId $trackedId `
+            -RootCreationTimeUtcTicks $rootCreationTime -RootExecutablePath $rootExecutable `
+            -RootCommandLine $rootCommandLine)
+    } catch {
+        Write-DATActivityLog "Custom Driver Pack: Unable to verify processes owned by DISM process (PID: $trackedId) -- $($_.Exception.Message). No process was stopped; the build will cancel its own DISM process" -Level Warn
+        return $true
+    }
+    if ($ownedProcesses.Count -eq 0) {
+        Write-DATActivityLog "Custom Driver Pack: Tracked DISM process (PID: $trackedId) has exited or no longer matches its recorded identity. No process was stopped" -Level Warn
+        return $true
+    }
+
+    $stopResult = Stop-DATCustomBuildProcessTree -ProcessTree $ownedProcesses
+    if ($stopResult.FailedCount -gt 0) {
+        Write-DATActivityLog "Custom Driver Pack: $($stopResult.FailedCount) DISM process(es) could not be verified or stopped and were left running" -Level Warn
+    }
+    if ($stopResult.StoppedCount -gt 0) {
+        Write-DATActivityLog "Custom Driver Pack: Stopped $($stopResult.StoppedCount) DISM process(es) started by this build" -Level Info
+    }
+    return (-not $stopResult.RootStopped)
+}
+
+function Complete-DATCustomBuildAbort {
+    param([Parameter(Mandatory = $true)][bool]$DeferStop)
+
+    if ($DeferStop) {
+        # Keep the runspace and timer alive; the timer resets the UI once the build has cancelled DISM.
+        Write-DATActivityLog "Custom Driver Pack: Waiting for owned DISM process cancellation to complete" -Level Warn
+        return
+    }
+
+    if ($script:CustomBuildTimer) { $script:CustomBuildTimer.Stop() }
+    Set-DATRegistryValue -Name 'CustomDismProcessID' -Value 0 -Type DWord
+    Set-DATRegistryValue -Name 'CustomDismProcessCreationTime' -Value '' -Type String
+    Set-DATRegistryValue -Name 'CustomDismProcessExecutable' -Value '' -Type String
+    Set-DATRegistryValue -Name 'CustomDismProcessCommandLine' -Value '' -Type String
+    if ($script:CustomBuildPS) {
+        $script:CustomBuildPS.Stop()
+        $script:CustomBuildPS.Dispose()
+        $script:CustomBuildPS = $null
+    }
+    if ($script:CustomBuildRunspace) {
+        $script:CustomBuildRunspace.Dispose()
+        $script:CustomBuildRunspace = $null
+    }
+    $script:CustomBuildAsyncResult = $null
+}
+
 $btn_CustomBuild.Add_Click({
     # Validate fields
     $make = $txt_CustomMake.Text.Trim()
@@ -20622,38 +20674,46 @@ $btn_CustomBuild.Add_Click({
 
         $startTime = Get-Date
         $dismLogTail = ''
-        $dismProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$dismBatchFile`"" `
-            -WindowStyle Hidden -PassThru
+        # Throws if abort was requested before launch; records identity only after verifying it.
+        $dismLaunch = Start-DATCustomDismProcess -BatchFile $dismBatchFile
+        $dismProcess = $dismLaunch.Process
 
         # Wait for completion -- poll so the abort signal can be detected
-        while (-not $dismProcess.HasExited) {
-            Start-Sleep -Seconds 2
+        try {
+            while (-not $dismProcess.HasExited) {
+                if ((Get-ItemPropertyValue -Path $global:RegPath -Name 'CustomBuildAbortRequested' -ErrorAction SilentlyContinue) -eq 1) {
+                    Write-DATLogEntry -Value "- [DISM] - Abort requested -- stopping the verified DISM process tree started by this build" -Severity 2
+                    $stopResult = Stop-DATCustomDismProcess -Process $dismProcess -Identity $dismLaunch.Identity -BatchFile $dismBatchFile
+                    if ($null -eq $stopResult -or $stopResult.FailedCount -gt 0 -or
+                        -not ($stopResult.RootStopped -or $stopResult.RootExited)) {
+                        throw 'Custom build aborted, but DISM cancellation could not be verified as complete. Review the process ownership warnings before retrying.'
+                    }
+                    throw 'Custom build aborted.'
+                }
+                Start-Sleep -Seconds 2
+            }
+        } finally {
+            Set-DATRegistryValue -Name 'CustomDismProcessID' -Value 0 -Type DWord
+            Set-DATRegistryValue -Name 'CustomDismProcessCreationTime' -Value '' -Type String
+            Set-DATRegistryValue -Name 'CustomDismProcessExecutable' -Value '' -Type String
+            Set-DATRegistryValue -Name 'CustomDismProcessCommandLine' -Value '' -Type String
+            Set-DATRegistryValue -Name 'CustomBuildAbortRequested' -Value 0 -Type DWord
         }
 
         $effectiveExitCode = if ($dismProcess.HasExited) { $dismProcess.ExitCode } else { 1 }
 
-        # DISM can hang after completing -- detect via stdout and force-kill
+        # A success message is not enough unless the owned process tree is safely stopped.
         if (-not $dismProcess.HasExited) {
             $stdoutCheck = if (Test-Path $dismStdoutFile) { Get-Content $dismStdoutFile -Raw -ErrorAction SilentlyContinue } else { '' }
             if ($stdoutCheck -match 'The operation completed successfully') {
-                Write-DATLogEntry -Value "- [DISM] - Completed but process hung -- force-killing" -Severity 2
-                try { $dismProcess.Kill() } catch { Stop-Process -Id $dismProcess.Id -Force -ErrorAction SilentlyContinue }
+                Write-DATLogEntry -Value "- [DISM] - Completed but process hung -- stopping the verified process tree" -Severity 2
+                $stopResult = Stop-DATCustomDismProcess -Process $dismProcess -Identity $dismLaunch.Identity -BatchFile $dismBatchFile
+                if ($null -eq $stopResult -or $stopResult.FailedCount -gt 0 -or
+                    -not ($stopResult.RootStopped -or $stopResult.RootExited)) {
+                    throw 'DISM reported success, but cancellation could not be verified as complete. Packaging will not be reported as successful.'
+                }
                 $effectiveExitCode = 0
             }
-        }
-
-        # Wait for dismhost.exe to release file locks
-        Start-Sleep -Seconds 3
-        Get-Process -Name 'dismhost' -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-DATLogEntry -Value "- [DISM] - Killing lingering dismhost.exe (PID: $($_.Id))" -Severity 2
-            try { $_.Kill() } catch { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-        }
-
-        # Clean stale DISM mount registry entries
-        $mountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
-        if (Test-Path $mountKey) {
-            Get-ChildItem $mountKey -ErrorAction SilentlyContinue |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         }
 
         # Log DISM stdout
@@ -20906,6 +20966,11 @@ $btn_CustomBuild.Add_Click({
     [void]$script:CustomBuildPS.AddArgument(($platform -eq 'Intune') -and (Get-DATShowInstallProgress))
     [void]$script:CustomBuildPS.AddArgument([bool](Get-DATSilentDuringAutopilot))
     [void]$script:CustomBuildPS.AddArgument($additionalDriversPath)
+    Set-DATRegistryValue -Name 'CustomBuildAbortRequested' -Value 0 -Type DWord
+    Set-DATRegistryValue -Name 'CustomDismProcessID' -Value 0 -Type DWord
+    Set-DATRegistryValue -Name 'CustomDismProcessCreationTime' -Value '' -Type String
+    Set-DATRegistryValue -Name 'CustomDismProcessExecutable' -Value '' -Type String
+    Set-DATRegistryValue -Name 'CustomDismProcessCommandLine' -Value '' -Type String
     $script:CustomBuildAsyncResult = $script:CustomBuildPS.BeginInvoke()
 
     # Poll registry for progress updates
@@ -21039,6 +21104,11 @@ $btn_CustomBuild.Add_Click({
             $script:CustomBuildPS = $null
             $script:CustomBuildRunspace = $null
             $script:CustomBuildAsyncResult = $null
+            Set-DATRegistryValue -Name 'CustomDismProcessID' -Value 0 -Type DWord
+            Set-DATRegistryValue -Name 'CustomDismProcessCreationTime' -Value '' -Type String
+            Set-DATRegistryValue -Name 'CustomDismProcessExecutable' -Value '' -Type String
+            Set-DATRegistryValue -Name 'CustomDismProcessCommandLine' -Value '' -Type String
+            Set-DATRegistryValue -Name 'CustomBuildAbortRequested' -Value 0 -Type DWord
         }
     })
     $script:CustomBuildTimer.Start()
@@ -21048,42 +21118,9 @@ $btn_CustomAbort.Add_Click({
     $txt_CustomStatus.Text = "Aborting..."
     Write-DATActivityLog "Custom Driver Pack: Build aborted by user" -Level Warn
 
-    if ($script:CustomBuildTimer) { $script:CustomBuildTimer.Stop() }
-
-    # Kill orphaned DISM/dismhost processes spawned by the build runspace
-    foreach ($procName in @('dismhost', 'dism')) {
-        Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-DATActivityLog "Killing orphaned $procName process (PID: $($_.Id))" -Level Warn
-            try { $_.Kill() } catch { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-        }
-    }
-
-    # Clean up DISM mount state left by killed processes.
-    # DISM PS cmdlets share in-process COM state with the killed dismhost -- they
-    # fail with 0x80004005 after a force-kill. Use registry cleanup + external dism.exe.
-    Start-Sleep -Seconds 2
-    $dismMountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
-    if (Test-Path $dismMountKey) {
-        Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    try {
-        $dismClean = Start-Process -FilePath "$env:SystemRoot\System32\dism.exe" `
-            -ArgumentList '/Cleanup-Wim' -WindowStyle Hidden -PassThru
-        $dismClean.WaitForExit(15000)
-        if (-not $dismClean.HasExited) { $dismClean.Kill() }
-    } catch { }
-
-    if ($script:CustomBuildPS) {
-        $script:CustomBuildPS.Stop()
-        $script:CustomBuildPS.Dispose()
-        $script:CustomBuildPS = $null
-    }
-    if ($script:CustomBuildRunspace) {
-        $script:CustomBuildRunspace.Dispose()
-        $script:CustomBuildRunspace = $null
-    }
-    $script:CustomBuildAsyncResult = $null
+    Set-DATRegistryValue -Name 'CustomBuildAbortRequested' -Value 1 -Type DWord
+    $deferStopForLaunch = Invoke-DATCustomBuildAbortCleanup
+    Complete-DATCustomBuildAbort -DeferStop $deferStopForLaunch
 
     $progress_CustomBuild.Value = 0
     $txt_CustomBuildPercent.Text = ""
@@ -21094,7 +21131,7 @@ $btn_CustomAbort.Add_Click({
     $txt_CustomStatus.Foreground = [System.Windows.Media.SolidColorBrush]::new(
         [System.Windows.Media.ColorConverter]::ConvertFromString(
             (Get-DATTheme -ThemeName $script:CurrentTheme)['StatusWarning']))
-    $btn_CustomBuild.IsEnabled = $true
+    $btn_CustomBuild.IsEnabled = -not $deferStopForLaunch
     $btn_CustomAbort.IsEnabled = $false
 })
 
@@ -30567,7 +30604,6 @@ $script:SuppressModelRefresh = $false
 # Auto-refresh models if previous selections were restored
 # Deferred to ContentRendered so the Loading Sources modal appears over the main window
 $script:AutoRefreshPending = ((Get-DATSelectedOEMs).Count -gt 0 -and (Get-DATSelectedOSes).Count -gt 0)
-#Write-Host "[DEBUG] Post-restore: SelectedOSValues=$($script:SelectedOSValues.Count), AutoRefreshPending=$($script:AutoRefreshPending), Display=$($txt_OSDisplay.Text)" -ForegroundColor Magenta
 
 # Set sidebar logo image
 $logoPath = Join-Path $UIPath "Assets\NewDatLogo.png"
@@ -31372,8 +31408,14 @@ $Window.Add_Closing({
     $tempPath = $txt_TempStorage.Text
     $tempItems = $null
     if ($cleanTempEnabled -and -not [string]::IsNullOrWhiteSpace($tempPath) -and (Test-Path $tempPath)) {
-        $tempItems = Get-ChildItem -Path $tempPath -Force -ErrorAction SilentlyContinue
-        if ($null -eq $tempItems -or $tempItems.Count -eq 0) { $tempItems = $null }
+        try {
+            $tempPath = Test-DATSafeContentRoot -Path $tempPath
+            $tempItems = Get-ChildItem -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+            if ($null -eq $tempItems -or $tempItems.Count -eq 0) { $tempItems = $null }
+        } catch {
+            $tempPath = $null
+            Write-DATLogEntry -Value "[Warning] - Shutdown cleanup skipped: $($_.Exception.Message)" -Severity 2
+        }
     }
 
     # Build shutdown modal (same visual style as splash screen)
@@ -31497,40 +31539,29 @@ $Window.Add_Closing({
                 }
             } catch { }
 
-            # 2. Kill orphaned DISM/dismhost processes
-            $dismProcs = @()
-            foreach ($procName in @('dismhost', 'dism')) {
-                $dismProcs += @(Get-Process -Name $procName -ErrorAction SilentlyContinue)
-            }
-            if ($dismProcs.Count -gt 0) {
-                & $updateStatus "Stopping DISM processes ($($dismProcs.Count) found)..."
-                foreach ($proc in $dismProcs) {
-                    try { $proc.Kill() } catch { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            # 2. Clean up only WIM mounts whose mount path is under DAT temporary storage.
+            # Machine-wide process-name kills and DISM /Cleanup-Wim are intentionally avoided.
+            $dismMountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
+            if ((Test-Path $dismMountKey) -and -not [string]::IsNullOrWhiteSpace($tempPath)) {
+                $ownedRoot = [IO.Path]::GetFullPath($tempPath).TrimEnd('\') + '\'
+                foreach ($mountEntry in @(Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue)) {
+                    $mountProperties = Get-ItemProperty -LiteralPath $mountEntry.PSPath -ErrorAction SilentlyContinue
+                    $mountPath = [string]$mountProperties.'Mount Path'
+                    if ([string]::IsNullOrWhiteSpace($mountPath)) { continue }
+                    try { $mountFullPath = [IO.Path]::GetFullPath($mountPath).TrimEnd('\') + '\' } catch { continue }
+                    if (-not $mountFullPath.StartsWith($ownedRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+
+                    & $updateStatus "Releasing DAT WIM mount: $mountPath"
+                    try { Dismount-WindowsImage -Path $mountPath -Discard -ErrorAction Stop | Out-Null } catch {
+                        Write-DATLogEntry -Value "[Warning] - Cleanup: Failed to dismount DAT WIM '$mountPath': $($_.Exception.Message)" -Severity 2
+                    }
+                    if (Test-Path -LiteralPath $mountEntry.PSPath) {
+                        Remove-Item -LiteralPath $mountEntry.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+                    }
                 }
             }
 
-            # 3. Clean up DISM mount registry state
-            $dismMountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
-            $hasMountedImages = (Test-Path $dismMountKey) -and
-                @(Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue).Count -gt 0
-            if ($hasMountedImages) {
-                & $updateStatus "Cleaning DISM mount registry entries..."
-                Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue |
-                    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            }
-
-            # 4. Run dism.exe /Cleanup-Wim only if mounted images were found
-            if ($hasMountedImages) {
-                & $updateStatus "Running DISM image cleanup..."
-                try {
-                    $dismClean = Start-Process -FilePath "$env:SystemRoot\System32\dism.exe" `
-                        -ArgumentList '/Cleanup-Wim' -WindowStyle Hidden -PassThru
-                    $dismClean.WaitForExit(10000)
-                    if (-not $dismClean.HasExited) { $dismClean.Kill() }
-                } catch { }
-            }
-
-            # 5. Clean temp folder (if enabled)
+            # 3. Clean temp folder (if enabled)
             if ($null -ne $tempItems) {
                 & $updateStatus "Cleaning temporary storage ($($tempItems.Count) items)..."
                 $shutdownWin.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Render, [action]{})

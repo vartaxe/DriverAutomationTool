@@ -31,24 +31,24 @@ if (-not [Environment]::Is64BitProcess -and [Environment]::Is64BitOperatingSyste
 }
 
 $ErrorActionPreference = 'Stop'
-$BiosRoot = 'HKLM:\SOFTWARE\DriverAutomationTool\BIOS'
-$LogPath = "$env:ProgramData\DriverAutomationTool\Logs\Remove-DATStaleBIOSMarkers.log"
+$biosRoot = 'HKLM:\SOFTWARE\DriverAutomationTool\BIOS'
+$logPath = "$env:ProgramData\DriverAutomationTool\Logs\Remove-DATStaleBIOSMarkers.log"
 
 function Write-Log {
     param ([Parameter(Mandatory)][string]$Message)
     $line = "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) $Message"
     try {
-        $dir = Split-Path -Parent $LogPath
+        $dir = Split-Path -Parent $logPath
         if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
-        Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
-    } catch { }
+        Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch { return }
 }
 
 try {
     Write-Log "==== Remove-DATStaleBIOSMarkers starting ===="
 
-    if (-not (Test-Path -LiteralPath $BiosRoot)) {
-        Write-Log "No BIOS marker root at $BiosRoot -- nothing to do."
+    if (-not (Test-Path -LiteralPath $biosRoot)) {
+        Write-Log "No BIOS marker root at $biosRoot -- nothing to do."
         exit 0
     }
 
@@ -69,9 +69,9 @@ try {
     $liveIsVersion = [System.Version]::TryParse($liveVersion, [ref]$liveParsed)
 
     $removed = 0
-    foreach ($oemKey in (Get-ChildItem -LiteralPath $BiosRoot -ErrorAction SilentlyContinue)) {
+    foreach ($oemKey in (Get-ChildItem -LiteralPath $biosRoot -ErrorAction SilentlyContinue)) {
+        $oemName = Split-Path -Leaf $oemKey.PSPath
         foreach ($modelKey in (Get-ChildItem -LiteralPath $oemKey.PSPath -ErrorAction SilentlyContinue)) {
-            $oemName = Split-Path -Leaf $oemKey.PSPath
             $modelName = Split-Path -Leaf $modelKey.PSPath
 
             $props = Get-ItemProperty -LiteralPath $modelKey.PSPath -ErrorAction SilentlyContinue

@@ -83,6 +83,24 @@ jobs:
               }
             }
 
+      - name: Run servicing and installation regression tests
+        shell: powershell
+        run: |
+          Install-Module Pester -RequiredVersion 6.2.0 -Scope CurrentUser -Force -ErrorAction Stop
+          Import-Module Pester -RequiredVersion 6.2.0 -ErrorAction Stop
+          $testRoot = Join-Path $env:GITHUB_WORKSPACE 'Tests'
+          $result = Invoke-Pester -Path @(
+            (Join-Path $testRoot 'CustomDismCancellation.Tests.ps1'),
+            (Join-Path $testRoot 'DismCancellation.Tests.ps1'),
+            (Join-Path $testRoot 'CustomCaptureGuards.Tests.ps1'),
+            (Join-Path $testRoot 'DriverInstallResults.Tests.ps1')
+          ) -Output Detailed -PassThru
+          if ($null -eq $result -or $result.Result -ne 'Passed' -or $result.TotalCount -eq 0 -or
+              $result.FailedCount -gt 0 -or $result.FailedContainersCount -gt 0 -or
+              $result.FailedBlocksCount -gt 0 -or $result.SkippedCount -gt 0 -or $result.NotRunCount -gt 0) {
+            throw 'Servicing and installation regression tests did not fully pass.'
+          }
+
       - name: Verify file hash manifest
         shell: powershell
         run: |

@@ -22092,7 +22092,6 @@ $script:SuppressModelRefresh = $false
 # Auto-refresh models if previous selections were restored
 # Deferred to ContentRendered so the Loading Sources modal appears over the main window
 $script:AutoRefreshPending = ((Get-DATSelectedOEMs).Count -gt 0 -and (Get-DATSelectedOSes).Count -gt 0)
-#Write-Host "[DEBUG] Post-restore: SelectedOSValues=$($script:SelectedOSValues.Count), AutoRefreshPending=$($script:AutoRefreshPending), Display=$($txt_OSDisplay.Text)" -ForegroundColor Magenta
 
 # Set sidebar logo image
 $logoPath = Join-Path $UIPath "Assets\NewDatLogo.png"

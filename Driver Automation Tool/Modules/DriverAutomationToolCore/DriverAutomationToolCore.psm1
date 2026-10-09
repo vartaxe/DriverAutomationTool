@@ -708,6 +708,323 @@ function Reset-DATRegistryValues {
 
 #endregion Registry
 
+#region Custom Build Process Ownership
+
+# Process identity is PID + creation time (plus executable/command line for the tracked root).
+# Messages deliberately never include command lines.
+function ConvertTo-DATProcessIdentity {
+    param ([Parameter(Mandatory = $true)][object]$Process)
+
+    if ([string]::IsNullOrWhiteSpace([string]$Process.CreationDate)) {
+        throw "Creation time is unavailable for process PID $($Process.ProcessId)."
+    }
+    $creationTime = if ($Process.CreationDate -is [datetime]) {
+        $Process.CreationDate
+    } else {
+        [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$Process.CreationDate)
+    }
+    [pscustomobject]@{
+        ProcessId            = [int]$Process.ProcessId
+        ParentProcessId      = [int]$Process.ParentProcessId
+        CreationTimeUtcTicks = [long]$creationTime.ToUniversalTime().Ticks
+        ExecutablePath       = [string]$Process.ExecutablePath
+        CommandLine          = [string]$Process.CommandLine
+        Name                 = [string]$Process.Name
+    }
+}
+
+function Get-DATCustomBuildProcessTree {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)][int]$RootProcessId,
+        [Parameter(Mandatory = $true)][long]$RootCreationTimeUtcTicks,
+        [Parameter(Mandatory = $true)][string]$RootExecutablePath,
+        [Parameter(Mandatory = $true)][string]$RootCommandLine,
+        [object[]]$ProcessSnapshot
+    )
+
+    # Throws when the process list or the tracked root identity cannot be read, so callers fail closed.
+    if ($null -eq $ProcessSnapshot) {
+        $ProcessSnapshot = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+    }
+
+    $records = [Collections.Generic.List[object]]::new()
+    $unverified = [Collections.Generic.List[object]]::new()
+    foreach ($process in $ProcessSnapshot) {
+        try {
+            $records.Add((ConvertTo-DATProcessIdentity -Process $process))
+        } catch {
+            $unverified.Add([pscustomobject]@{
+                ProcessId = [int]$process.ProcessId; ParentProcessId = [int]$process.ParentProcessId
+                Reason = $_.Exception.Message
+            })
+        }
+    }
+
+    $unverifiedRoot = $unverified | Where-Object { $_.ProcessId -eq $RootProcessId } | Select-Object -First 1
+    if ($unverifiedRoot) {
+        throw "Unable to verify the identity of tracked process PID $RootProcessId -- $($unverifiedRoot.Reason)"
+    }
+    $root = $records | Where-Object { $_.ProcessId -eq $RootProcessId } | Select-Object -First 1
+    if (-not $root) {
+        Write-DATLogEntry -Value "[Custom Build] - Tracked process PID $RootProcessId has already exited" -Severity 1
+        return
+    }
+    if ($root.CreationTimeUtcTicks -ne $RootCreationTimeUtcTicks -or
+        -not [string]::Equals($root.ExecutablePath, $RootExecutablePath, [StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals($root.CommandLine, $RootCommandLine, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-DATLogEntry -Value "[Custom Build] - Process PID $RootProcessId no longer matches the identity recorded at launch; it will not be stopped" -Severity 2
+        return
+    }
+
+    $ownedIds = [Collections.Generic.HashSet[int]]::new()
+    [void]$ownedIds.Add($root.ProcessId)
+    $tree = [Collections.Generic.List[object]]::new()
+    $tree.Add([pscustomobject]@{
+        ProcessId = $root.ProcessId; Depth = 0; CreationTimeUtcTicks = $root.CreationTimeUtcTicks
+        ExecutablePath = $root.ExecutablePath; CommandLine = $root.CommandLine
+    })
+    $frontier = @($root)
+    $depth = 0
+    while ($frontier.Count -gt 0) {
+        $depth++
+        $nextFrontier = @(
+            foreach ($candidate in $records) {
+                $parent = $frontier | Where-Object { $_.ProcessId -eq $candidate.ParentProcessId } | Select-Object -First 1
+                if ($parent -and
+                    $candidate.CreationTimeUtcTicks -ge $parent.CreationTimeUtcTicks -and
+                    $ownedIds.Add($candidate.ProcessId)) {
+                    $tree.Add([pscustomobject]@{
+                        ProcessId = $candidate.ProcessId; Depth = $depth
+                        CreationTimeUtcTicks = $candidate.CreationTimeUtcTicks
+                        ExecutablePath = $candidate.ExecutablePath; CommandLine = $candidate.CommandLine
+                    })
+                    $candidate
+                }
+            }
+        )
+        $frontier = $nextFrontier
+    }
+
+    $unverifiedDescendantCount = 0
+    foreach ($candidate in $unverified) {
+        if ($ownedIds.Contains($candidate.ParentProcessId)) {
+            $unverifiedDescendantCount++
+            Write-DATLogEntry -Value "[Custom Build] - Unable to verify the identity of process PID $($candidate.ProcessId) (child of PID $($candidate.ParentProcessId)) -- $($candidate.Reason). It will not be stopped" -Severity 2
+        }
+    }
+
+    # Preserve incomplete enumeration without treating an unreadable PID as an owned process.
+    $tree[0] | Add-Member -NotePropertyName UnverifiedDescendantCount -NotePropertyValue $unverifiedDescendantCount
+    $tree.ToArray()
+}
+
+function Stop-DATCustomBuildProcessTree {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$ProcessTree,
+        # Retained handle for the root process (used instead of a PID lookup when supplied)
+        [object]$RootProcess
+    )
+
+    $result = [pscustomobject]@{ RootStopped = $false; RootExited = $false; StoppedCount = 0; FailedCount = 0 }
+    foreach ($entry in @($ProcessTree | Sort-Object -Property Depth -Descending)) {
+        $targetId = [int]$entry.ProcessId
+        $isRoot = ([int]$entry.Depth -eq 0)
+        if ($isRoot -and $entry.PSObject.Properties['UnverifiedDescendantCount']) {
+            $result.FailedCount += [int]$entry.UnverifiedDescendantCount
+        }
+        $target = $null
+        $ownsTarget = $false
+        try {
+            if ($null -ne $RootProcess -and [int]$RootProcess.Id -eq $targetId) {
+                $target = $RootProcess
+            } else {
+                try {
+                    $target = Get-Process -Id $targetId -ErrorAction Stop
+                    $ownsTarget = $true
+                } catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
+                    Write-DATLogEntry -Value "[Custom Build] - Process PID $targetId has already exited" -Severity 1
+                    if ($isRoot) { $result.RootExited = $true }
+                    continue
+                }
+            }
+            # Opening the handle pins the PID, so the creation-time check and Kill() address the same process.
+            $startTicks = Get-DATRetainedProcessStartTicks -Process $target
+            if ([math]::Abs($startTicks - [long]$entry.CreationTimeUtcTicks) -gt [TimeSpan]::TicksPerMillisecond) {
+                Write-DATLogEntry -Value "[Custom Build] - Process PID $targetId no longer matches its recorded creation time; it will not be stopped" -Severity 2
+                $result.FailedCount++
+                continue
+            }
+            $hasExited = $target.HasExited
+            if ($null -eq $hasExited) { throw 'Unable to read the process exit state' }
+            if ($hasExited) {
+                Write-DATLogEntry -Value "[Custom Build] - Process PID $targetId has already exited" -Severity 1
+                if ($isRoot) { $result.RootExited = $true }
+                continue
+            }
+            $target.Kill()
+            Write-DATLogEntry -Value "[Custom Build] - Stopped DAT custom-build process PID $targetId" -Severity 2
+            $result.StoppedCount++
+            if ($isRoot) { $result.RootStopped = $true }
+        } catch {
+            $targetExited = $false
+            if ($null -ne $target) {
+                try { $targetExited = [bool]$target.HasExited } catch { $targetExited = $false }
+            }
+            if ($targetExited) {
+                Write-DATLogEntry -Value "[Custom Build] - Process PID $targetId has already exited" -Severity 1
+                if ($isRoot) { $result.RootExited = $true }
+            } else {
+                Write-DATLogEntry -Value "[Custom Build] - Unable to verify or stop process PID $targetId -- $($_.Exception.Message). It was not stopped" -Severity 2
+                $result.FailedCount++
+            }
+        } finally {
+            if ($ownsTarget -and $target -is [System.IDisposable]) { $target.Dispose() }
+        }
+    }
+    $result
+}
+
+function Get-DATRetainedProcessStartTicks {
+    param ([Parameter(Mandatory = $true)][object]$Process)
+
+    # Windows PowerShell returns $null when a property getter throws, so verify each value explicitly.
+    $handle = $Process.Handle
+    if ($null -eq $handle -or [IntPtr]$handle -eq [IntPtr]::Zero) {
+        throw "Unable to open a handle to process PID $($Process.Id)"
+    }
+    $startTime = $Process.StartTime
+    if ($null -eq $startTime) {
+        throw "Unable to read the start time of process PID $($Process.Id)"
+    }
+    ([datetime]$startTime).ToUniversalTime().Ticks
+}
+
+function Resolve-DATCustomDismIdentity {
+    param (
+        [Parameter(Mandatory = $true)][object]$Process,
+        [Parameter(Mandatory = $true)][string]$BatchFile
+    )
+
+    # Status: Verified | Exited | Mismatch. Throws when the identity cannot be retrieved.
+    $record = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $([int]$Process.Id)" -ErrorAction Stop |
+        Select-Object -First 1
+    if ($null -eq $record) {
+        return [pscustomobject]@{ Status = 'Exited'; Identity = $null }
+    }
+    $identity = ConvertTo-DATProcessIdentity -Process $record
+    $handleStartTicks = Get-DATRetainedProcessStartTicks -Process $Process
+    $isLaunchedWrapper = (
+        [math]::Abs($identity.CreationTimeUtcTicks - $handleStartTicks) -le [TimeSpan]::TicksPerMillisecond -and
+        [string]::Equals([System.IO.Path]::GetFileName($identity.ExecutablePath), 'cmd.exe', [StringComparison]::OrdinalIgnoreCase) -and
+        $identity.CommandLine.IndexOf($BatchFile, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+    if ($isLaunchedWrapper) {
+        return [pscustomobject]@{ Status = 'Verified'; Identity = $identity }
+    }
+    [pscustomobject]@{ Status = 'Mismatch'; Identity = $null }
+}
+
+function Start-DATCustomDismProcess {
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][string]$BatchFile)
+
+    # -1 tells the UI that the build runspace owns cancellation (launch pending or identity unverified).
+    Set-DATRegistryValue -Name 'CustomDismProcessID' -Value -1 -Type DWord
+    Set-DATRegistryValue -Name 'CustomDismProcessCreationTime' -Value '' -Type String
+    Set-DATRegistryValue -Name 'CustomDismProcessExecutable' -Value '' -Type String
+    Set-DATRegistryValue -Name 'CustomDismProcessCommandLine' -Value '' -Type String
+    $abortRequested = $null
+    try {
+        $abortRequested = Get-ItemPropertyValue -Path $global:RegPath -Name 'CustomBuildAbortRequested' -ErrorAction Stop
+    } catch [System.Management.Automation.PSArgumentException], [System.Management.Automation.ItemNotFoundException] {
+        $abortRequested = $null
+    } catch {
+        Write-DATLogEntry -Value "- [DISM] - Unable to read the custom build abort flag before launch -- $($_.Exception.Message). The flag will be re-checked while DISM runs" -Severity 2
+    }
+    if ($abortRequested -eq 1) {
+        throw 'Custom build aborted before DISM started.'
+    }
+
+    $process = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c `"$BatchFile`"" `
+        -WindowStyle Hidden -PassThru
+    $identity = $null
+    $resolved = $null
+    try {
+        # Retain the handle so later HasExited/Kill() calls cannot address a reused PID.
+        $null = Get-DATRetainedProcessStartTicks -Process $process
+        $resolved = Resolve-DATCustomDismIdentity -Process $process -BatchFile $BatchFile
+        switch ($resolved.Status) {
+            'Verified' { $identity = $resolved.Identity }
+            'Exited' {
+                Write-DATLogEntry -Value "- [DISM] - Wrapper process PID $($process.Id) exited before its identity could be recorded" -Severity 1
+            }
+            default {
+                throw "Launched DISM wrapper process PID $($process.Id) does not match the expected identity; it will not be tracked or stopped."
+            }
+        }
+    } catch {
+        if ($resolved -and $resolved.Status -eq 'Mismatch') { throw }
+        Write-DATLogEntry -Value "- [DISM] - Unable to record the identity of wrapper process PID $($process.Id) -- $($_.Exception.Message). Abort will be handled by this build using its retained process handle after re-verification" -Severity 2
+    }
+
+    if ($identity) {
+        Set-DATRegistryValue -Name 'CustomDismProcessCreationTime' -Value $identity.CreationTimeUtcTicks -Type String
+        Set-DATRegistryValue -Name 'CustomDismProcessExecutable' -Value $identity.ExecutablePath -Type String
+        Set-DATRegistryValue -Name 'CustomDismProcessCommandLine' -Value $identity.CommandLine -Type String
+        Set-DATRegistryValue -Name 'CustomDismProcessID' -Value $process.Id -Type DWord
+    }
+    [pscustomobject]@{ Process = $process; Identity = $identity }
+}
+
+function Stop-DATCustomDismProcess {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)][object]$Process,
+        [object]$Identity,
+        [Parameter(Mandatory = $true)][string]$BatchFile
+    )
+
+    if ($Process.HasExited -eq $true) {
+        Write-DATLogEntry -Value "- [DISM] - Wrapper process PID $($Process.Id) has already exited" -Severity 1
+        return
+    }
+    if ($null -eq $Identity) {
+        try {
+            $resolved = Resolve-DATCustomDismIdentity -Process $Process -BatchFile $BatchFile
+        } catch {
+            Write-DATLogEntry -Value "- [DISM] - Unable to verify wrapper process PID $($Process.Id) -- $($_.Exception.Message). No process was stopped" -Severity 2
+            return
+        }
+        if ($resolved.Status -eq 'Exited') {
+            Write-DATLogEntry -Value "- [DISM] - Wrapper process PID $($Process.Id) has already exited" -Severity 1
+            return
+        }
+        if ($resolved.Status -ne 'Verified') {
+            Write-DATLogEntry -Value "- [DISM] - Wrapper process PID $($Process.Id) does not match the launched identity. No process was stopped" -Severity 2
+            return
+        }
+        $Identity = $resolved.Identity
+    }
+
+    $enumerationFailed = $false
+    try {
+        $tree = @(Get-DATCustomBuildProcessTree -RootProcessId $Identity.ProcessId `
+            -RootCreationTimeUtcTicks $Identity.CreationTimeUtcTicks -RootExecutablePath $Identity.ExecutablePath `
+            -RootCommandLine $Identity.CommandLine)
+    } catch {
+        $enumerationFailed = $true
+        Write-DATLogEntry -Value "- [DISM] - Unable to enumerate processes started by wrapper PID $($Identity.ProcessId) -- $($_.Exception.Message). Only the verified wrapper process will be stopped" -Severity 2
+        $tree = @([pscustomobject]@{ ProcessId = $Identity.ProcessId; Depth = 0; CreationTimeUtcTicks = $Identity.CreationTimeUtcTicks })
+    }
+    if ($tree.Count -eq 0) { return }
+    $result = Stop-DATCustomBuildProcessTree -ProcessTree $tree -RootProcess $Process
+    if ($enumerationFailed) { $result.FailedCount++ }
+    $result
+}
+
+#endregion Custom Build Process Ownership
+
 #region OEM Sources
 
 function Get-DATOEMSources {
@@ -2702,55 +3019,9 @@ function Invoke-DATDriverFilePackaging {
                 }
             }
 
-            # DISM-specific pre-flight: kill orphaned processes and clean stale mounts
-            # (the resolved engine is logged with a friendly name in each capture branch below)
+            # Do not kill machine-wide DISM processes or clear global mount state here.
+            # A capture only owns processes it starts and does not create a mounted image.
             if ($wimEngine -eq 'dism') {
-            # Kill any orphaned DISM/dismhost processes before starting.
-            # dismhost.exe is the actual worker - it must be killed first, then dism.exe.
-            foreach ($procName in @('dismhost', 'dism')) {
-                Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
-                    Write-DATLogEntry -Value "[$OEM] Killing orphaned $procName process (PID: $($_.Id))" -Severity 2
-                    try { $_.Kill() } catch { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-                }
-            }
-            # Wait for handles to release after process kills
-            Start-Sleep -Seconds 3
-
-            # Clean stale DISM mount registry entries that block future operations
-            $dismMountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
-            if (Test-Path $dismMountKey) {
-                try {
-                    $mountEntries = Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue
-                    if ($mountEntries) {
-                        foreach ($entry in $mountEntries) {
-                            Write-DATLogEntry -Value "[$OEM] Removing stale DISM mount registry entry: $($entry.PSChildName)" -Severity 2
-                            Remove-Item $entry.PSPath -Recurse -Force -ErrorAction SilentlyContinue
-                        }
-                    }
-                } catch {
-                    Write-DATLogEntry -Value "[$OEM] Could not clean DISM mount registry: $($_.Exception.Message)" -Severity 2
-                }
-            }
-
-            # Run dism.exe /Cleanup-Wim as an external process to clear stale mounts.
-            # Do NOT use DISM PowerShell cmdlets (Clear-WindowsCorruptMountPoint,
-            # Get-WindowsImage, Dismount-WindowsImage) -- they use in-process COM interop
-            # with dismhost.exe and can corrupt the process if dismhost was previously killed.
-            Write-DATLogEntry -Value "[$OEM] Running dism.exe /Cleanup-Wim to clear stale mounts..." -Severity 1
-            try {
-                $dismCleanup = Start-Process -FilePath "$env:SystemRoot\System32\dism.exe" `
-                    -ArgumentList '/Cleanup-Wim' -WindowStyle Hidden -PassThru
-                $dismCleanup.WaitForExit(15000)
-                if (-not $dismCleanup.HasExited) {
-                    Write-DATLogEntry -Value "[$OEM] dism.exe /Cleanup-Wim timed out -- force-killing" -Severity 2
-                    try { $dismCleanup.Kill() } catch {}
-                } else {
-                    Write-DATLogEntry -Value "[$OEM] dism.exe /Cleanup-Wim completed (exit code $($dismCleanup.ExitCode))" -Severity 1
-                }
-            } catch {
-                Write-DATLogEntry -Value "[$OEM] Could not run dism.exe /Cleanup-Wim -- $($_.Exception.Message)" -Severity 2
-            }
-
             # Also clean up any DAT temp files from previous crashed runs
             Get-ChildItem -Path $localWorkDir -Filter 'DAT_DISM_*' -ErrorAction SilentlyContinue |
                 Remove-Item -Force -ErrorAction SilentlyContinue
@@ -2949,8 +3220,38 @@ function Invoke-DATDriverFilePackaging {
 
                 $dismProcess = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c `"$dismBatchFile`"" `
                     -WindowStyle Hidden -PassThru
+                $null = Get-DATRetainedProcessStartTicks -Process $dismProcess
                 Set-DATRegistryValue -Name "RunningProcess" -Type String -Value "dism"
                 Set-DATRegistryValue -Name "RunningProcessID" -Type String -Value "$($dismProcess.Id)"
+
+                $dismHostLookupWarned = $false
+                $getOwnedDismhostRunning = {
+                    param([int]$RootProcessId)
+                    try {
+                        $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+                    } catch {
+                        # Unknown worker state is not treated as progress; only output growth counts.
+                        if (-not $dismHostLookupWarned) {
+                            Write-DATLogEntry -Value "[$OEM] Unable to query DISM worker processes started by this build -- $($_.Exception.Message)" -Severity 2
+                            Set-Variable -Name dismHostLookupWarned -Value $true -Scope 1
+                        }
+                        return $false
+                    }
+                    $ownedIds = [Collections.Generic.HashSet[int]]::new()
+                    [void]$ownedIds.Add($RootProcessId)
+                    do {
+                        $added = $false
+                        foreach ($process in $processes) {
+                            if ($ownedIds.Contains([int]$process.ParentProcessId) -and
+                                $ownedIds.Add([int]$process.ProcessId)) {
+                                $added = $true
+                            }
+                        }
+                    } while ($added)
+                    [bool]($processes | Where-Object {
+                        $ownedIds.Contains([int]$_.ProcessId) -and $_.Name -ieq 'dismhost.exe'
+                    })
+                }
 
                 # Wait for completion. Poll every 2s so we can: (a) honour a user abort; (b) detect
                 # the known "DISM finished the WIM but the process never exits" hang; (c) detect an
@@ -2962,12 +3263,11 @@ function Invoke-DATDriverFilePackaging {
                 $killDismTree = {
                     param($proc)
                     if ($null -eq $proc) { return }
-                    # taskkill /T kills the whole tree (cmd -> dism.exe -> dismhost.exe) without
-                    # touching unrelated DISM instances on the machine.
-                    try { & "$env:SystemRoot\System32\taskkill.exe" '/PID' "$($proc.Id)" '/T' '/F' 2>&1 | Out-Null } catch { }
-                    try { if (-not $proc.HasExited) { $proc.Kill() } } catch { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-                    Get-Process -Name 'dismhost' -ErrorAction SilentlyContinue | ForEach-Object {
-                        try { $_.Kill() } catch { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+                    $result = Stop-DATCustomDismProcess -Process $proc -BatchFile $dismBatchFile
+                    if ($null -eq $result -or
+                        (-not $result.RootStopped -and -not $result.RootExited) -or
+                        $result.FailedCount -gt 0) {
+                        throw 'Unable to verify complete cancellation of the owned DISM process tree.'
                     }
                 }
 
@@ -2998,7 +3298,7 @@ function Invoke-DATDriverFilePackaging {
                         try { $curLen = (Get-Item $dismStdoutFile -ErrorAction Stop).Length } catch { $curLen = 0 }
                         $stdoutSoFar = Get-Content $dismStdoutFile -Raw -ErrorAction SilentlyContinue
                     }
-                    $dismHostRunning = [bool](Get-Process -Name 'dismhost' -ErrorAction SilentlyContinue)
+                    $dismHostRunning = & $getOwnedDismhostRunning $dismProcess.Id
 
                     # (b) DISM reported success but is not exiting -- force-kill, treat as success.
                     if ($stdoutSoFar -match 'The operation completed successfully') {
@@ -3038,19 +3338,8 @@ function Invoke-DATDriverFilePackaging {
                     $effectiveExitCode = if ($dismProcess.HasExited) { $dismProcess.ExitCode } else { 1 }
                 }
 
-                # Wait for dismhost.exe to release file locks
+                # Let the owned DISM process tree release its file handles naturally.
                 Start-Sleep -Seconds 3
-                Get-Process -Name 'dismhost' -ErrorAction SilentlyContinue | ForEach-Object {
-                    Write-DATLogEntry -Value "[$OEM] Killing lingering dismhost.exe (PID: $($_.Id))" -Severity 2
-                    try { $_.Kill() } catch { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-                }
-
-                # Clean stale DISM mount registry entries
-                $dismMountKey = 'HKLM:\SOFTWARE\Microsoft\WIMMount\Mounted Images'
-                if (Test-Path $dismMountKey) {
-                    Get-ChildItem $dismMountKey -ErrorAction SilentlyContinue |
-                        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-                }
 
                 # Log DISM stdout
                 if (Test-Path $dismStdoutFile) {
@@ -5540,10 +5829,16 @@ function Invoke-DATDismExternal {
     Write-DATLogEntry -Value "[$Label] dism.exe $Arguments" -Severity 1
 
     $proc = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c `"$batchFile`"" -WindowStyle Hidden -PassThru
+    $null = Get-DATRetainedProcessStartTicks -Process $proc
     $exitCode = $null
     if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
         Write-DATLogEntry -Value "[$Label] dism.exe did not finish within $TimeoutSec seconds -- killing it" -Severity 3
-        try { & "$env:SystemRoot\System32\taskkill.exe" '/PID' "$($proc.Id)" '/T' '/F' 2>&1 | Out-Null } catch { }
+        $result = Stop-DATCustomDismProcess -Process $proc -BatchFile $batchFile
+        if ($null -eq $result -or
+            (-not $result.RootStopped -and -not $result.RootExited) -or
+            $result.FailedCount -gt 0) {
+            Write-DATLogEntry -Value "[$Label] Unable to verify complete cancellation of the owned DISM process tree; timeout remains a failure" -Severity 3
+        }
         $exitCode = 1460   # ERROR_TIMEOUT
     } else {
         $exitCode = $proc.ExitCode
@@ -5669,8 +5964,8 @@ function Add-DATCustomDriversToConfigMgrPackage {
             Set-DATRegistryValue -Name "RunningMessage" -Value "Copying WIM for $PackageID..." -Type String
             Copy-Item -LiteralPath $sourceWim -Destination $localWim -Force -ErrorAction Stop
 
-            # Clear stale mounts left by an earlier crash; they block new mounts.
-            [void](Invoke-DATDismExternal -Arguments '/Cleanup-Wim' -WorkDir $workDir -Label $label -TimeoutSec 120)
+            # This operation uses a fresh, uniquely named mount directory. Avoid the
+            # machine-wide /Cleanup-Wim command so other servicing sessions are untouched.
 
             Set-DATRegistryValue -Name "RunningMessage" -Value "Mounting WIM for $PackageID..." -Type String
             $rc = Invoke-DATDismExternal -Arguments "/Mount-Wim /WimFile:`"$localWim`" /Index:1 /MountDir:`"$mountDir`"" -WorkDir $workDir -Label $label
@@ -14846,25 +15141,32 @@ function Invoke-DATPackageRetention {
             $allApps = if ($null -ne $IntuneApps) { $IntuneApps } else { Get-DATIntuneWin32Apps }
             if ($PackageType -eq 'BIOS') {
                 $baseSearch = "$displayPrefix - $OEM $Model"
-                Write-DATLogEntry -Value "[Retention][Intune] Querying Win32 apps matching: $baseSearch*" -Severity 1
-                $matching = @($allApps | Where-Object { $_.displayName -like "$baseSearch*" })
+                $namePattern = '^{0}(?:\s+-\s+.*)?$' -f [regex]::Escape($baseSearch)
+                Write-DATLogEntry -Value "[Retention][Intune] Querying Win32 apps for exact model line: $baseSearch" -Severity 1
+                $matching = @($allApps | Where-Object { $_.displayName -match $namePattern })
             } else {
                 # Driver app names embed the OS label, which for non-Dell OEMs includes the
                 # Windows build (e.g. "Windows 11 24H2") while the caller only supplies the
                 # base OS ("Windows 11"). Anchor on the OS prefix and require the architecture
                 # so the build segment is tolerated -- "$baseSearch*" alone would miss these.
                 $namePrefix = "$displayPrefix - $OEM $Model - $OS"
-                Write-DATLogEntry -Value "[Retention][Intune] Querying Win32 apps matching: $namePrefix* $Architecture" -Severity 1
-                $matching = @($allApps | Where-Object { $_.displayName -like "$namePrefix*$Architecture*" })
+                $namePattern = '^{0}(?:\s+.*?)?\s+{1}(?:\s+-\s+.*)?$' -f [regex]::Escape($namePrefix), [regex]::Escape($Architecture)
+                Write-DATLogEntry -Value "[Retention][Intune] Querying Win32 apps for exact model/OS line: $namePrefix ... $Architecture" -Severity 1
+                $matching = @($allApps | Where-Object { $_.displayName -match $namePattern })
             }
             Write-DATLogEntry -Value "[Retention][Intune] Found $($matching.Count) app(s)" -Severity 1
+            # A base-OS query can intentionally match several package lines (for example 23H2
+            # and 24H2). Apply retention independently to each exact display name so one line's
+            # versions can never age out another line's versions.
+            foreach ($nameGroup in ($matching | Group-Object -Property displayName)) {
             # Order newest-first by the authoritative creation timestamp (falling back to last
             # modified) rather than the displayVersion string, which -- like ConfigMgr -- uses
             # date-style and OEM catalog versions that do not sort chronologically and would
             # otherwise leave stale apps behind (#821). displayVersion is only a tiebreaker.
-            $sorted   = $matching | Sort-Object -Property `
+            $sorted   = @($nameGroup.Group | Sort-Object -Property `
                 @{ Expression = { ConvertTo-DATPackageDate $(if ($_.createdDateTime) { $_.createdDateTime } else { $_.lastModifiedDateTime }) }; Descending = $true }, `
                 @{ Expression = { Get-DATVersionSortKey $_.displayVersion }; Descending = $true }
+            )
             $toDelete = if ($sorted.Count -gt ($RetainCount + 1)) { $sorted | Select-Object -Skip ($RetainCount + 1) } else { @() }
 
             foreach ($app in $toDelete) {
@@ -14908,6 +15210,7 @@ function Invoke-DATPackageRetention {
                 } else {
                     Write-DATLogEntry -Value "[Retention][Intune] Current version has no assignments -- skipping unassign of retained older versions (no conflict)" -Severity 1
                 }
+            }
             }
         } catch {
             Write-DATLogEntry -Value "[Retention][Intune] Query error: $($_.Exception.Message)" -Severity 3

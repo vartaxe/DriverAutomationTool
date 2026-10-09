@@ -2,7 +2,7 @@
   <img src="Content/Screenshots/Dat_Logo.png" alt="Driver Automation Tool" width="150" />
 </p>
 
-<h1 align="center">Driver Automation Tool</h1>
+# Driver Automation Tool
 
 > **Fork notice:** This repository is a maintained fork of
 > [Maurice Daly's Driver Automation Tool](https://github.com/maurice-daly/DriverAutomationTool).
@@ -20,8 +20,14 @@
 
 ---
 
-## Important
-**August 17th 2026** - Due to a number of functional changes, it is recommended that anyone running DAT builds 10.1.9.0 and lower upgrade immediately. The API will no longer serve requests for older versions.
+## Version notice
+
+**Upstream notice, August 17, 2026:** Builds 10.1.9.0 and earlier are no longer
+served by the API. Upgrade before using catalog-dependent workflows.
+
+[Getting started](#getting-started) · [Requirements](#platform-requirements) ·
+[Platform configuration](#platform-configuration) · [Troubleshooting](#troubleshooting) ·
+[Contributing](#contributing)
 
 ## Overview
 
@@ -125,11 +131,19 @@ legacy MDT task-sequence steps supported.
 
 ### 1. Download
 
-Download the latest source from the
-[official upstream repository](https://github.com/maurice-daly/DriverAutomationTool/archive/refs/heads/master.zip)
-or follow the [official project website](https://www.driverautomationtool.com). The tool is a
-portable PowerShell application with no installer required. This maintenance fork does not publish
-independent GitHub Releases.
+For this maintenance fork, open the
+[repository](https://github.com/vartaxe/DriverAutomationTool) and choose **Code >
+Download ZIP**, or clone it:
+
+```powershell
+git clone https://github.com/vartaxe/DriverAutomationTool.git C:\DriverAutomationTool
+```
+
+For the original product, use the
+[official upstream repository](https://github.com/maurice-daly/DriverAutomationTool)
+or [project website](https://www.driverautomationtool.com). Do not mix files from
+different versions or checkouts. The application is portable; no installer is
+required. This maintenance fork does not publish independent GitHub Releases.
 
 <p align="center">
   <img src="Content/Screenshots/GitHubDownload.png" alt="GitHub Download" width="700" />
@@ -137,27 +151,37 @@ independent GitHub Releases.
 
 ### 2. Extract
 
-Extract the downloaded ZIP to a permanent location on your local machine:
+If you downloaded a ZIP, extract it to a permanent location. A clone already
+contains the extracted repository. The application files are in the
+`Driver Automation Tool` subdirectory, not the repository root:
 
-```
-C:\DriverAutomationTool
+```text
+C:\DriverAutomationTool\
+  README.md
+  Driver Automation Tool\
+    Start-DriverAutomationTool.ps1
 ```
 
-> **Important:** Ensure the extracted folder is not blocked by Windows. Right-click the ZIP file before extracting, go to Properties, and check "Unblock" if present.
+Only unblock a downloaded ZIP after verifying its source and following your
+organization's security policy. Do not bypass antivirus or operating-system
+warnings to run an untrusted copy.
 
 ### 3. Launch
 
-Open PowerShell as Administrator and run:
+Open **Windows PowerShell** as Administrator and run from the application folder
+(adjust the path to your extraction location):
 
 ```powershell
-cd C:\DriverAutomationTool
+Set-Location -LiteralPath 'C:\DriverAutomationTool\Driver Automation Tool'
 .\Start-DriverAutomationTool.ps1
 
 # Or launch with dark theme
 .\Start-DriverAutomationTool.ps1 -Theme Dark
 ```
 
-If you see an execution policy error:
+If execution policy blocks the script, first follow your organization's approved
+policy. Where permitted, this override applies only to the current PowerShell
+process and does not override Group Policy:
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
@@ -319,6 +343,11 @@ Three engines are supported for WIM creation:
 
 Create custom driver packages from the drivers installed on the current system (via PNPUtil) or from a local folder of INF files — ideal for devices not covered by OEM catalogs.
 
+Aborting a **Custom Driver Pack** build stops only the DISM process tree started for that build
+after its process creation time, executable, and command line have been verified. DAT does not
+terminate machine-wide DISM processes or clear unrelated Windows image-mount state. If a process
+identity cannot be verified, nothing is stopped and a warning is logged.
+
 <p align="center">
   <img src="Content/Screenshots/CustomDriverPack.png" alt="Custom Driver Pack" width="700" />
   <br /><em>Custom Driver Pack creation interface</em>
@@ -366,6 +395,66 @@ The tool supports both light and dark themes with instant runtime switching.
 - **PowerShell:** Windows PowerShell 5.1+
 - **Privileges:** Administrator (for registry access and DISM operations)
 
+These are application requirements, not certification of a particular deployment
+target. Review [Windows deployment compatibility](#windows-deployment-compatibility)
+and validate packages in a lab before production rollout.
+
+## Troubleshooting
+
+| Symptom | First check |
+|---------|-------------|
+| Launcher is not found | Run from `Driver Automation Tool`, not the repository root. |
+| Catalog requests fail | Check the [version notice](#version-notice), connectivity, and proxy configuration. |
+| Package creation or upload fails | Review the [CMTrace log](#logging), platform credentials, and storage paths. |
+| DISM cancellation cannot verify process ownership | Review the logged warning; do not manually terminate unrelated servicing processes. |
+
+Do not treat antivirus detections as confirmed false positives. Have your security
+team review the source and the reported detection before running the application.
+
+## Contributing
+
+Keep pull requests focused and preserve upstream attribution. Describe the issue,
+the affected workflow, and the checks performed. Avoid including credentials,
+tenant secrets, or sensitive logs.
+
+The [cleanup notes](CLEANUP.md) describe recent maintainability changes. The
+[payload manifest](Driver%20Automation%20Tool/FileHashes.md) records shipped file
+hashes; update it when changing covered application files.
+
+Offline regression checks use Windows PowerShell and Pester 6.2.0. From the
+repository root:
+
+```powershell
+Import-Module Pester -RequiredVersion '6.2.0'
+Invoke-Pester -Path .\Tests\DismCancellation.Tests.ps1 -Output Detailed
+.\Tests\Test-ReviewedFixes.ps1
+.\Tests\Test-StaleBIOSMarkers.ps1
+```
+
+These checks use extracted code and test doubles. Passing results do not replace
+live UI, hardware, firmware, ConfigMgr, or Intune validation.
+
+### Servicing cancellation fix
+
+Regular WIM capture and external DISM timeouts now use the same identity-verified
+cancellation as custom builds. PID-only process-tree termination could select an
+unrelated orphan whose parent PID was later reused by DAT. Cancellation pins
+the launched wrapper's handle and checks creation times and identities before
+stopping descendants. Unreadable descendants and process-enumeration failures
+remain incomplete cancellation even if the verified wrapper is stopped.
+Unverified cancellation is reported as failure, never
+successful packaging; native exit codes and timeout code 1460 are retained.
+
+[Cancellation regression tests](Tests/DismCancellation.Tests.ps1) cover the
+capture and timeout callers with test doubles. When reviewing similar code, a
+parent PID alone is not proof of ownership, and an unused process-handle read can
+still be required.
+
+## Security
+
+Follow [SECURITY.md](SECURITY.md) for supported versions and private vulnerability
+reporting. Do not disclose unpatched vulnerabilities in public issues.
+
 ## Links
 
 - 🌐 [Driver Automation Tool Website](https://www.driverautomationtool.com)
@@ -380,7 +469,3 @@ This tool is provided **as-is**, without warranty of any kind. Use is entirely a
 ## Sponsor
 
 If you find this tool useful and would like to support its continued development, please use the **Sponsor** button at the top of this page.
-
-## Virus Warning
-
-Due to the nature of how the PowerShell script downloads EXEs and extracts / interacts with them, the code can be picked up as a false positive on some AV solutions. The code is all available for clear text review with your security team in this instance. 
