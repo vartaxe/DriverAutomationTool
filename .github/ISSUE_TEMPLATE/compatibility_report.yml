@@ -1,0 +1,39 @@
+name: Compatibility report
+description: Report a tested platform or an explicit compatibility problem
+title: "[Compatibility]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, internal names, certificates, or raw logs. Use [private vulnerability reporting](https://github.com/vartaxe/DriverAutomationTool/security/advisories/new) for security issues. If unavailable, contact [vartaxe@outlook.com](mailto:vartaxe@outlook.com) to arrange a private exchange.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Driver Automation Tool version, OS / driver package context, Windows version, PowerShell version, and the relevant deployment phase.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Full Windows
+        - WinPE / OSD
+        - Intune / modern management
+    validations:
+      required: true
+  - type: textarea
+    id: policy
+    attributes:
+      label: Prerequisites and policy
+      description: Describe boot-state compatibility, driver package expectations, and any pre-requisites or blockers. Keep this sanitized and generic.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Results and sanitized evidence
+      description: Distinguish static checks, test automation, and live validation. Include the expected outcome, actual behavior, and the relevant exit or status code.
+    validations:
+      required: true
