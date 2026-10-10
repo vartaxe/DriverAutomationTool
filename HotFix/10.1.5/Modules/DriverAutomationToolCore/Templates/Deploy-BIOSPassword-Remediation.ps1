@@ -28,6 +28,9 @@
         - The DPAPI blob in the registry is useless if copied to another machine.
 #>
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingConvertToSecureStringWithPlainText", "", Justification = "The supplied BIOS password is immediately converted to a machine-scoped DPAPI blob before registry persistence.")]
+param ()
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION -- Set your BIOS password here
 # ═══════════════════════════════════════════════════════════════════════════════

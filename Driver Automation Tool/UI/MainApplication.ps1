@@ -4,6 +4,7 @@
     Author: Maurice Daly
 #>
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingConvertToSecureStringWithPlainText", "", Justification = "UI-entered proxy and Intune secrets are converted to SecureString only for immediate DPAPI encryption before registry persistence.")]
 param (
     [ValidateSet('Dark', 'Light')]
     [string]$Theme = 'Dark'
