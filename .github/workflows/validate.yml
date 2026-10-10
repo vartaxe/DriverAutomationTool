@@ -93,6 +93,7 @@ jobs:
             (Join-Path $testRoot 'CustomDismCancellation.Tests.ps1'),
             (Join-Path $testRoot 'DismCancellation.Tests.ps1'),
             (Join-Path $testRoot 'CustomCaptureGuards.Tests.ps1'),
+            (Join-Path $testRoot 'LifecycleSafety.Tests.ps1'),
             (Join-Path $testRoot 'DriverInstallResults.Tests.ps1')
           ) -Output Detailed -PassThru
           if ($null -eq $result -or $result.Result -ne 'Passed' -or $result.TotalCount -eq 0 -or

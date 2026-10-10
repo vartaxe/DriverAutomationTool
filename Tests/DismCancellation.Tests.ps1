@@ -22,6 +22,8 @@ BeforeAll {
     function Write-DATLogEntry { param($Value, $Severity) }
     function Get-DATRetainedProcessStartTicks { param($Process) throw 'Unmocked handle check' }
     function Stop-DATCustomDismProcess { param($Process, $BatchFile) throw 'Unmocked cancellation' }
+    function New-DATDismRuntimeDirectory { throw 'Unmocked runtime directory creation' }
+    function New-DATDismBatchFile { param($Path, $Command) throw 'Unmocked batch creation' }
 
 }
 
@@ -38,6 +40,8 @@ Describe 'External DISM cancellation ownership' {
         }
 
         Mock Set-Content {}
+        Mock New-DATDismRuntimeDirectory { 'C:\mock' }
+        Mock New-DATDismBatchFile {}
         Mock Write-DATLogEntry {}
         Mock Start-Process { $Script:Events += 'launch'; $Script:Process }
         Mock Get-DATRetainedProcessStartTicks { $Script:Events += 'pin'; 1L }

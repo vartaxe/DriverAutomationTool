@@ -238,7 +238,7 @@ Reset-DATTestState
 $script:RegValues['CustomBuildAbortRequested'] = 1
 $preLaunchAborted = $false
 try { $null = Start-DATCustomDismProcess -BatchFile $batchFile } catch { $preLaunchAborted = $_.Exception.Message -match 'before DISM started' }
-Assert-DAT ($preLaunchAborted -and $script:StartProcessCalls -eq 0 -and $script:RegValues['CustomDismProcessID'] -eq -1) 'abort before launch throws without starting DISM and leaves the runspace-owned sentinel'
+Assert-DAT ($preLaunchAborted -and $script:StartProcessCalls -eq 0 -and $script:RegValues['CustomDismProcessID'] -eq 0) 'abort before launch throws without starting DISM and clears the no-process sentinel'
 
 Reset-DATTestState
 $script:RegValues['CustomBuildAbortRequested'] = 0
@@ -334,7 +334,7 @@ $script:RegValues['CustomDismProcessExecutable'] = 'C:\Windows\System32\cmd.exe'
 $script:RegValues['CustomDismProcessCommandLine'] = $rootCommandLine
 $script:TreeMode = 'Fail'
 $deferred = Invoke-DATCustomBuildAbortCleanup
-Assert-DAT ($deferred -and $script:StopCalls -eq 0 -and @($script:Logs | Where-Object { $_ -match '^Warn\|.*No process was stopped' -and $_ -notmatch [regex]::Escape($rootCommandLine) }).Count -eq 1) 'UI abort identity retrieval failure warns, stops nothing and defers'
+Assert-DAT ($deferred -and $script:TreeCalls -eq 0 -and $script:StopCalls -eq 0) 'UI abort delegates identity retrieval to the worker and stops nothing'
 
 Reset-DATAbortState
 $script:RegValues['CustomDismProcessID'] = 700
@@ -351,7 +351,7 @@ $script:RegValues['CustomDismProcessCreationTime'] = 'not-a-time'
 $script:RegValues['CustomDismProcessExecutable'] = 'C:\Windows\System32\cmd.exe'
 $script:RegValues['CustomDismProcessCommandLine'] = $rootCommandLine
 $deferred = Invoke-DATCustomBuildAbortCleanup
-Assert-DAT ($deferred -and $script:TreeCalls -eq 0 -and @($script:Logs | Where-Object { $_ -match '^Warn\|.*incomplete' }).Count -eq 1) 'incomplete persisted identity fails closed with a warning'
+Assert-DAT ($deferred -and $script:TreeCalls -eq 0 -and $script:StopCalls -eq 0) 'incomplete persisted identity defers to the retained worker handle'
 
 Reset-DATAbortState
 $script:RegValues['CustomDismProcessID'] = 700
@@ -360,7 +360,8 @@ $script:RegValues['CustomDismProcessExecutable'] = 'C:\Windows\System32\cmd.exe'
 $script:RegValues['CustomDismProcessCommandLine'] = $rootCommandLine
 $deferred = Invoke-DATCustomBuildAbortCleanup
 Complete-DATCustomBuildAbort -DeferStop $deferred
-Assert-DAT (-not $deferred -and $script:StopCalls -eq 1) 'verified owned root is stopped by the UI abort'
+Assert-DAT ($deferred -and $script:StopCalls -eq 0 -and $global:DATTestLifecycle.Count -eq 0) 'even a verified root remains owned by the worker during UI abort'
+Complete-DATCustomBuildAbort -DeferStop $false
 Assert-DAT ((@($global:DATTestLifecycle) -join ',') -eq 'timer-stop,ps-stop,ps-dispose,runspace-dispose' -and $null -eq $script:CustomBuildPS -and $null -eq $script:CustomBuildRunspace -and $null -eq $script:CustomBuildAsyncResult -and $script:RegValues['CustomDismProcessID'] -eq 0 -and $script:RegValues['CustomDismProcessCommandLine'] -eq '') 'completed abort stops the runspace and clears persisted process identity'
 
 Reset-DATAbortState

@@ -426,7 +426,7 @@ repository root:
 
 ```powershell
 Import-Module Pester -RequiredVersion '6.2.0'
-Invoke-Pester -Path .\Tests\DismCancellation.Tests.ps1 -Output Detailed
+Invoke-Pester -Path .\Tests\*.Tests.ps1 -Output Detailed
 .\Tests\Test-ReviewedFixes.ps1
 .\Tests\Test-StaleBIOSMarkers.ps1
 ```
@@ -444,6 +444,18 @@ stopping descendants. Unreadable descendants and process-enumeration failures
 remain incomplete cancellation even if the verified wrapper is stopped.
 Unverified cancellation is reported as failure, never
 successful packaging; native exit codes and timeout code 1460 are retained.
+
+The GUI signals cancellation and lets the owning worker finish instead of
+interrupting it between process launch and handle registration. New builds remain
+disabled while the previous worker is stopping. Custom builds retain recovery
+identity when cancellation is incomplete. WIM cleanup preserves mount records and
+temporary storage if dismounting fails or mount state cannot be verified.
+
+DISM executable wrappers are created exclusively in protected per-operation
+directories under `Program Files\DriverAutomationTool-Runtime`, not configured
+shared temporary storage. Unsafe ownership, ACLs, reparse ancestry, or failed
+batch creation block launch. Failed operations retain their runtime files for
+diagnosis. See [the lifecycle audit notes](CLEANUP.md#final-lifecycle-audit).
 
 [Cancellation regression tests](Tests/DismCancellation.Tests.ps1) cover the
 capture and timeout callers with test doubles. When reviewing similar code, a
