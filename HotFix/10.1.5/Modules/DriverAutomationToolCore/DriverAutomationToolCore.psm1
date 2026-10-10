@@ -104,6 +104,7 @@ function Get-DATWebRequestProxy {
         Returns a hashtable suitable for splatting into Invoke-WebRequest / Invoke-RestMethod.
         Handles System, Manual, and None proxy modes.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingConvertToSecureStringWithPlainText", "", Justification = "The proxy password is decrypted from DPAPI-protected configuration and converted only in memory for the PSCredential required by web request authentication.")]
     [OutputType([hashtable])]
     param()
     $cfg = Get-DATProxySettings
@@ -10740,6 +10741,7 @@ function Set-DATBIOSPassword {
     .PARAMETER RegistryPath
         Registry path to store the encrypted password. Defaults to the DAT BIOS key.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingConvertToSecureStringWithPlainText", "", Justification = "The BIOS password is immediately converted to a DPAPI-protected blob before it is persisted in the registry.")]
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)][string]$Password,
