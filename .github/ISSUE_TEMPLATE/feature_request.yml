@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest a focused improvement for the Driver Automation Tool
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep examples generic and do not disclose credentials or internal deployment details. Use [private vulnerability reporting](https://github.com/vartaxe/DriverAutomationTool/security/advisories/new) for security issues. If unavailable, contact [vartaxe@outlook.com](mailto:vartaxe@outlook.com) to arrange a private exchange.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the driver or deployment problem and why the current behavior is insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Explain the expected behavior and how it preserves secure defaults and repo validation expectations.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and validation
+      description: Describe alternatives considered and how the change could be tested without implying live validation that has not occurred.
