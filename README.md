@@ -10,6 +10,8 @@
 > the upstream project. Fork-specific maintenance changes are recorded in this repository's pull
 > request history.
 
+**Fork maintenance: Claudio Mendes · [@vartaxe](https://github.com/vartaxe)**
+
 <p align="center">
   Enterprise-grade automation for downloading, extracting, and packaging OEM driver and BIOS update packages for ConfigMgr and Intune.
   <br /><br />
@@ -69,8 +71,8 @@ automated Getac catalog discovery, BIOS download, or firmware flashing.
 
 ## Consolidated ConfigMgr deployment scripts
 
-The maintained Modern Driver Management and Modern BIOS Management deployment
-scripts now live together under `Driver Automation Tool/Scripts`:
+The ConfigMgr driver and BIOS deployment scripts are consolidated under
+`Driver Automation Tool/Scripts`:
 
 - `Invoke-CMApplyDriverPackage.ps1`
 - `Invoke-CMDownloadBIOSPackage.ps1`
