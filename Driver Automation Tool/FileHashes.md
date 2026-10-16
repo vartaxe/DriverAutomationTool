@@ -11,7 +11,7 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 | | |
 |---|---|
 | Version | `10.3.2.0` |
-| Generated (UTC) | 2026-10-10 07:31:50 |
+| Generated (UTC) | 2026-10-16 12:43:51 |
 | Files | 20 |
 | Algorithm | SHA256 |
 
@@ -47,8 +47,8 @@ same bytes â€” and therefore the same SHA256 values â€” on every platf
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| Invoke-CMApplyDriverPackage.ps1 | `Scripts/Invoke-CMApplyDriverPackage.ps1` | 162.1 | `FB72664ACEF88D7CE2B58615C76DAA8B305B3A26818E12C9DE1EC24E6990A4E1` |
-| Invoke-CMDownloadBIOSPackage.ps1 | `Scripts/Invoke-CMDownloadBIOSPackage.ps1` | 104.9 | `4FEBFDFBC9B035FCE8C03972D0FD8AD7798A1440F9AC20B0C98C928EB027FDAF` |
+| Invoke-CMApplyDriverPackage.ps1 | `Scripts/Invoke-CMApplyDriverPackage.ps1` | 162.6 | `84AEE26A3CE97CEB9CC10AF0FEF1B383C7EDB129A7E30CCE9ACB4BB4E12C5DF6` |
+| Invoke-CMDownloadBIOSPackage.ps1 | `Scripts/Invoke-CMDownloadBIOSPackage.ps1` | 105.2 | `D6064FD9834D75B7DE8185D852F3872B97AA4487819CFCCB462B4EF926F1CCF7` |
 | Invoke-DellBIOSUpdate.ps1 | `Scripts/Invoke-DellBIOSUpdate.ps1` | 20.9 | `3601FF8D76D2BEBD695C54AC533EA232B16DF9C8A6A33BC270317836F989E62B` |
 | Invoke-HPBIOSUpdate.ps1 | `Scripts/Invoke-HPBIOSUpdate.ps1` | 16.1 | `6BC4A441BDC949D0846D101DE430B4E5706ED8ADC1371751D8122E53279A8340` |
 | Invoke-LenovoBIOSUpdate.ps1 | `Scripts/Invoke-LenovoBIOSUpdate.ps1` | 17.2 | `F58CBEB46260958712F35043D5E96865B51873F927533208CA9A5770AB3506A0` |

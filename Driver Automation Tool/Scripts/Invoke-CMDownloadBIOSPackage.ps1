@@ -33,7 +33,8 @@
 
 .PARAMETER SiteCode
 	Limit AdminService package results to packages created at this ConfigMgr
-	site. When omitted, MDMSiteCode is used if present.
+	site and XML package entries to PackageIDs with this site's prefix. When
+	omitted, MDMSiteCode is used if present.
 
 .PARAMETER UserName
 	Specify the service account user name used for authenticating against the AdminService endpoint.
@@ -119,6 +120,7 @@
 	3.1.0 - (2026-10-09) - Consolidated maintenance into Driver Automation Tool:
 					 - Added ConfigMgr hierarchy scoping through -SiteCode or the MDMSiteCode task-sequence variable.
 					 - Preserved DAT's scoped certificate-pin compatibility while retaining the standalone firmware-safety fixes.
+	3.1.1 - (2026-10-16) - Applied hierarchy scoping to XML package entries as well as AdminService results.
 
 #>
 [CmdletBinding(DefaultParameterSetName = "BareMetal")]
@@ -147,6 +149,7 @@ param (
 	[parameter(Mandatory = $false, ParameterSetName = "BIOSUpdate")]
 	[parameter(Mandatory = $false, ParameterSetName = "BareMetal")]
 	[parameter(Mandatory = $false, ParameterSetName = "Debug")]
+	[parameter(Mandatory = $false, ParameterSetName = "XMLPackage")]
 	[ValidatePattern("^[A-Za-z0-9]{3}$")]
 	[string]$SiteCode,
 
@@ -1138,11 +1141,6 @@ public class DATPinnedCertificateValidation
 	}
 
 	function Resolve-SiteCode {
-		if ($Script:PSCmdlet.ParameterSetName -like "XMLPackage") {
-			$Script:SiteCode = $null
-			return
-		}
-
 		if ([string]::IsNullOrWhiteSpace($Script:SiteCode) -and $Script:PSCmdlet.ParameterSetName -notlike "Debug") {
 			$Script:SiteCode = $TSEnvironment.Value("MDMSiteCode")
 		}
@@ -1173,7 +1171,8 @@ public class DATPinnedCertificateValidation
 					if ($Script:PSCmdlet.ParameterSetName -like "XMLPackage") {
 						Write-CMLogEntry -Value " - Reading XML content logic file BIOS package entries" -Severity 1
 						$Packages = (([xml]$(Get-Content -Path $XMLPackageLogicFile -Raw)).ArrayOfCMPackage).CMPackage | Where-Object {
-							$_.Name -notmatch "Pilot" -and $_.Name -notmatch "Legacy" -and $_.Name -match $Filter
+							$_.Name -notmatch "Pilot" -and $_.Name -notmatch "Legacy" -and $_.Name -match $Filter -and
+								($null -eq $Script:SiteCode -or $_.PackageID -like "$($Script:SiteCode)*")
 						}
 					} else {
 						Write-CMLogEntry -Value " - Querying AdminService for BIOS package instances" -Severity 1
@@ -1187,7 +1186,8 @@ public class DATPinnedCertificateValidation
 					if ($Script:PSCmdlet.ParameterSetName -like "XMLPackage") {
 						Write-CMLogEntry -Value " - Reading XML content logic file BIOS package entries" -Severity 1
 						$Packages = (([xml]$(Get-Content -Path $XMLPackageLogicFile -Raw)).ArrayOfCMPackage).CMPackage | Where-Object {
-							$_.Name -match "Pilot" -and $_.Name -match $Filter
+							$_.Name -match "Pilot" -and $_.Name -match $Filter -and
+								($null -eq $Script:SiteCode -or $_.PackageID -like "$($Script:SiteCode)*")
 						}
 					} else {
 						Write-CMLogEntry -Value " - Querying AdminService for BIOS package instances" -Severity 1

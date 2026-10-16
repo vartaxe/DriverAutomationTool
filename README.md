@@ -78,8 +78,10 @@ The two package selectors retain AdminService and XML package modes, virtual
 platform safeguards, certificate validation controls, and the maintained
 matching fixes. In ConfigMgr hierarchies, pass `-SiteCode ABC` or set the
 `MDMSiteCode` task-sequence variable to restrict package selection to objects
-whose `SMS_Package.SourceSite` is `ABC`. If neither is set, package selection
-continues to consider every site as before.
+whose `SMS_Package.SourceSite` is `ABC` when using AdminService, and to XML
+package entries whose `PackageID` begins with `ABC` when using XMLPackage mode.
+The selected site also scopes fallback driver packages. If neither is set,
+package selection continues to consider every site as before.
 
 The Microsoft apply script is retained for existing administrator-created
 ConfigMgr BIOS package workflows; it does not imply automated Microsoft Surface

@@ -12,12 +12,14 @@ preserves the maintained standalone forks at these reviewed heads:
 The package selectors include the standalone maintenance fixes plus DAT's
 certificate-pinning compatibility and ConfigMgr hierarchy scoping. `-SiteCode`
 or the `MDMSiteCode` task-sequence variable limits AdminService results using
-the ConfigMgr `SMS_Package.SourceSite` property. Omitting it preserves the
-previous all-sites behavior.
+the ConfigMgr `SMS_Package.SourceSite` property and XML package entries by the
+`PackageID` site-code prefix. Driver fallback queries use the same site scope.
+Omitting a site code preserves the previous all-sites behavior.
 
 `Tests/Test-BundledScriptParity.ps1` protects the shared XML/AdminService
-surface, scoped certificate-pinning boundary, hierarchy filter, vendor-script
-presence, and Getac manufacturer normalization for administrator-created or
+surface, scoped certificate-pinning boundary, AdminService and XML hierarchy
+filters, fallback-driver site scoping, and vendor-script presence. It also
+documents Getac manufacturer normalization for administrator-created or
 imported matching driver packages.
 Getac recognition does not represent automated catalog acquisition or BIOS
 firmware support. Any future port must update this contract and preserve those

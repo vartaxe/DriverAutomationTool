@@ -35,8 +35,12 @@ foreach ($script in @(@($driver, 'driver'), @($bios, 'BIOS'))) {
     Assert-Parity ($script[0] -match 'errors != SslPolicyErrors\.RemoteCertificateChainErrors') "$($script[1]) pinning never overrides host-name or missing-certificate errors"
     Assert-Parity ($script[0] -match 'MDMSiteCode') "$($script[1]) script reads the hierarchy site-code task-sequence variable"
     Assert-Parity ($script[0].Contains("SourceSite eq '`$(`$Script:SiteCode)'")) "$($script[1]) script scopes AdminService package queries by source site"
+    Assert-Parity ($script[0].Contains('[parameter(Mandatory = $false, ParameterSetName = "XMLPackage")]')) "$($script[1]) script accepts an explicit site code for XML package mode"
+    Assert-Parity ($script[0].Contains('$null -eq $Script:SiteCode -or $_.PackageID -like "$($Script:SiteCode)*"')) "$($script[1]) script scopes XML package entries by PackageID prefix only when a site code is set"
 }
 
+Assert-Parity ($driver -match '\$FallbackPackageFilter \+= " and SourceSite eq') 'fallback driver package queries use the selected source site'
+Assert-Parity ($driver -match 'Get-AdminServiceItem -Resource "/SMS_Package\?`\$filter=\$\(\$FallbackPackageFilter\)"') 'fallback driver query uses the site-scoped filter'
 Assert-Parity ($driver -match 'Enable-AdminServiceCertificatePinning') 'driver script retains scoped certificate pinning'
 Assert-Parity ($driver -match 'Disable-AdminServiceCertificatePinning') 'driver script restores its certificate callback'
 Assert-Parity ($driver -match 'function Expand-ArchiveSafely') 'driver script retains Zip Slip-safe archive extraction'

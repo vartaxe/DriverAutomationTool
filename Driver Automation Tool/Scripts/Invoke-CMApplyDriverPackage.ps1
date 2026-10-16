@@ -39,8 +39,9 @@
 	Specify the service account password used for authenticating against the AdminService endpoint.
 
 .PARAMETER SiteCode
-	Limit AdminService package results to packages created at this ConfigMgr site.
-	When omitted, the MDMSiteCode task sequence variable is used if present.
+	Limit AdminService package results to packages created at this ConfigMgr site
+	and XML package entries to PackageIDs with this site's prefix. When omitted,
+	the MDMSiteCode task sequence variable is used if present.
 
 .PARAMETER Filter
 	Define a filter used when calling ConfigMgr WebService to only return objects matching the filter.
@@ -270,6 +271,7 @@
 						 - Added ConfigMgr hierarchy scoping through -SiteCode or the MDMSiteCode task-sequence variable.
 						 - Package queries filter SMS_Package.SourceSite only when a site code is supplied; omitting it preserves all-sites behavior.
 						 - Preserved scoped AdminService certificate pinning and Zip Slip-safe archive extraction.
+	4.4.1 - (2026-10-16) - Applied hierarchy scoping consistently to XML package entries and fallback driver packages.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingPlainTextForPassword", "", Justification = "Configuration Manager exposes task-sequence variables as strings; the value is converted immediately for Windows authentication and cleared after external token acquisition.")]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingConvertToSecureStringWithPlainText", "", Justification = "Configuration Manager exposes task-sequence variables as strings; conversion to PSCredential is required for Invoke-RestMethod on Windows PowerShell 5.1.")]
@@ -322,6 +324,7 @@ param(
 	[parameter(Mandatory = $false, ParameterSetName = "OSUpgrade")]
 	[parameter(Mandatory = $false, ParameterSetName = "PreCache")]
 	[parameter(Mandatory = $false, ParameterSetName = "Debug")]
+	[parameter(Mandatory = $false, ParameterSetName = "XMLPackage")]
 	[ValidatePattern("^[A-Za-z0-9]{3}$")]
 	[string]$SiteCode,
 
@@ -1629,11 +1632,6 @@ public static class AdminServiceCertificateValidation
 	}
 
 	function Resolve-SiteCode {
-		if ($Script:PSCmdlet.ParameterSetName -like "XMLPackage") {
-			$Script:SiteCode = $null
-			return
-		}
-
 		if ([string]::IsNullOrWhiteSpace($Script:SiteCode) -and $Script:PSCmdlet.ParameterSetName -notlike "Debug") {
 			$Script:SiteCode = $TSEnvironment.Value("MDMSiteCode")
 		}
@@ -1665,7 +1663,8 @@ public static class AdminServiceCertificateValidation
 						Write-CMLogEntry -Value " - Reading XML content logic file driver package entries" -Severity 1
 						$PackageLogic = Read-DriverPackageLogicFile -Path $XMLPackageLogicFile
 						$Packages = $PackageLogic.ArrayOfCMPackage.CMPackage | Where-Object {
-							$_.Name -notmatch "Pilot" -and $_.Name -notmatch "Legacy" -and $_.Name -match $Filter
+							$_.Name -notmatch "Pilot" -and $_.Name -notmatch "Legacy" -and $_.Name -match $Filter -and
+								($null -eq $Script:SiteCode -or $_.PackageID -like "$($Script:SiteCode)*")
 						}
 					}
 					else {
@@ -1681,7 +1680,8 @@ public static class AdminServiceCertificateValidation
 						Write-CMLogEntry -Value " - Reading XML content logic file driver package entries" -Severity 1
 						$PackageLogic = Read-DriverPackageLogicFile -Path $XMLPackageLogicFile
 						$Packages = $PackageLogic.ArrayOfCMPackage.CMPackage | Where-Object {
-							$_.Name -match "Pilot" -and $_.Name -match $Filter
+							$_.Name -match "Pilot" -and $_.Name -match $Filter -and
+								($null -eq $Script:SiteCode -or $_.PackageID -like "$($Script:SiteCode)*")
 						}
 					}
 					else {
@@ -2311,7 +2311,11 @@ public static class AdminServiceCertificateValidation
 
 			try {
 				# Attempt to retrieve fallback driver packages from ConfigMgr WebService
-				$FallbackDriverPackages = Get-AdminServiceItem -Resource "/SMS_Package?`$filter=contains(Name,'Driver Fallback Package')" | Where-Object {
+				$FallbackPackageFilter = "contains(Name,'Driver Fallback Package')"
+				if ($null -ne $Script:SiteCode) {
+					$FallbackPackageFilter += " and SourceSite eq '$($Script:SiteCode)'"
+				}
+				$FallbackDriverPackages = Get-AdminServiceItem -Resource "/SMS_Package?`$filter=$($FallbackPackageFilter)" | Where-Object {
 					$_.Name -notmatch "Pilot" -and $_.Name -notmatch "Retired"
 				}
 
