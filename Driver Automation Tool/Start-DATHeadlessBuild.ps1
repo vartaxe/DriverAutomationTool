@@ -1,0 +1,724 @@
+<#
+.SYNOPSIS
+    Headless CLI runner for Driver Automation Tool scheduled/unattended builds.
+.DESCRIPTION
+    Loads a BuildConfig.json file, imports the DriverAutomationToolCore module,
+    and processes all configured models without launching the UI.
+.PARAMETER ConfigPath
+    Path to a BuildConfig.json file. Defaults to Settings\BuildConfig.json.
+#>
+[CmdletBinding()]
+param (
+    [string]$ConfigPath
+)
+
+$ErrorActionPreference = 'Stop'
+$scriptRoot = $PSScriptRoot
+
+# Default config path
+if ([string]::IsNullOrEmpty($ConfigPath)) {
+    $ConfigPath = Join-Path $scriptRoot 'Settings\BuildConfig.json'
+}
+
+# Import core module
+$modulePath = Join-Path $scriptRoot 'Modules\DriverAutomationToolCore\DriverAutomationToolCore.psd1'
+if (-not (Test-Path $modulePath)) {
+    Write-Error "Core module not found: $modulePath"
+    exit 1
+}
+Import-Module $modulePath -Force
+
+# Override execution mode -- module default uses [Environment]::UserInteractive which
+# is $true in a console session. Headless builds are always 'Scheduled Task'.
+$global:ExecutionMode = 'Scheduled Task'
+
+# Load and validate config
+try {
+    $config = Import-DATBuildConfig -ConfigPath $ConfigPath
+    Write-Host "[Headless] Loaded config: $($config.Models.Count) model(s), Platform=$($config.Platform), PackageType=$($config.PackageType)"
+} catch {
+    Write-Error "Failed to load build config: $_"
+    exit 1
+}
+
+# The pre-flight exits below happen before Start-DATModelProcessing is called, so its
+# notification never runs. Nothing has been attempted yet, so every model is unreached
+# rather than failed. Wrapped so a webhook problem cannot change the exit code.
+function Send-DATHeadlessPreflightFailure {
+    param (
+        [Parameter(Mandatory)][string]$Reason
+    )
+    if (-not $config.TeamsNotificationsEnabled -or [string]::IsNullOrEmpty($config.TeamsWebhookUrl)) { return }
+    try {
+        $preflightModels = @($config.Models)
+        Send-DATTeamsNotification -WebhookUrl $config.TeamsWebhookUrl `
+            -TotalModels $preflightModels.Count -SuccessCount 0 -FailedCount 0 `
+            -NotProcessedCount $preflightModels.Count `
+            -CustomText ([string]$config.TeamsCustomText) `
+            -Platform $config.Platform -PackageType $config.PackageType -Models $preflightModels -Outcome 'Failed'
+        Write-DATLogEntry -Value "[Teams] Pre-flight failure notification sent -- $Reason" -Severity 1
+    } catch {
+        Write-DATLogEntry -Value "[Teams] Failed to send pre-flight failure notification: $($_.Exception.Message)" -Severity 2
+    }
+}
+
+# Resolve paths (use config overrides if specified, otherwise default to script-relative)
+$packagePath  = if ($config.PackagePath) { $config.PackagePath } else { Join-Path $scriptRoot 'Packages' }
+$storagePath  = if ($config.TempPath)    { $config.TempPath }    else { Join-Path $scriptRoot 'Temp' }
+
+# Ensure paths exist
+foreach ($dir in @($packagePath, $storagePath)) {
+    if (-not (Test-Path $dir)) {
+        New-Item -Path $dir -ItemType Directory -Force | Out-Null
+        Write-Host "[Headless] Created directory: $dir"
+    }
+}
+
+# Align the module temp directory with the configured storage path BEFORE the pre-fetch
+# below. Catalog helpers (Get-DATBiosCatalog / Get-DATOEMModelInfo) cache to
+# $global:TempDirectory; without this the pre-fetch would read/write the module default
+# (<scriptRoot>\Temp) while Start-DATModelProcessing later uses $storagePath, causing the
+# pre-fetch to consult a stale/empty cache and resolve no version (#817). Setting it here
+# keeps both phases consistent. Start-DATModelProcessing sets the same value again.
+$global:TempDirectory = $storagePath
+
+# Log the resolved paths and cleanup setting up front so scheduled-run logs make it obvious
+# where downloads/extraction land, where finished packages go, and whether the temp folder
+# will be cleared on exit (#816 diagnostics).
+Write-Host "[Headless] Temp/storage path : $storagePath"
+Write-Host "[Headless] Package path      : $packagePath"
+Write-Host "[Headless] CleanTempOnExit    : $($config.CleanTempOnExit)"
+Write-DATLogEntry -Value "[Headless] Temp/storage path: $storagePath" -Severity 1
+Write-DATLogEntry -Value "[Headless] Package path: $packagePath" -Severity 1
+Write-DATLogEntry -Value "[Headless] CleanTempOnExit: $($config.CleanTempOnExit)" -Severity 1
+
+# Write WIM engine and compression settings to $global:RegPath so the core module picks them up.
+# The UI saves these under HKLM:\SOFTWARE\DriverAutomationTool; headless must do the same
+# when the BuildConfig overrides them, otherwise the module defaults to DISM.
+if (-not [string]::IsNullOrEmpty($config.WimEngine)) {
+    $validEngines = @('dism', 'wimlib', '7zip')
+    if ($config.WimEngine -in $validEngines) {
+        Set-DATRegistryValue -Name 'WimEngine' -Value $config.WimEngine -Type String
+        Write-Host "[Headless] WIM engine set to: $($config.WimEngine)"
+    } else {
+        Write-Host "[Headless] Warning: Invalid WimEngine '$($config.WimEngine)' -- valid values: $($validEngines -join ', ')"
+    }
+}
+if (-not [string]::IsNullOrEmpty($config.CompressionLevel)) {
+    $validLevels = @('none', 'fast', 'max')
+    if ($config.CompressionLevel -in $validLevels) {
+        Set-DATRegistryValue -Name 'DismCompression' -Value $config.CompressionLevel -Type String
+        Write-Host "[Headless] Compression level set to: $($config.CompressionLevel)"
+    } else {
+        Write-Host "[Headless] Warning: Invalid CompressionLevel '$($config.CompressionLevel)' -- valid values: $($validLevels -join ', ')"
+    }
+}
+
+# Guard: Microsoft models do not support standalone BIOS packages
+$headlessModels = $config.Models
+if ($config.PackageType -eq 'BIOS') {
+    $msModels = @($headlessModels | Where-Object { $_.OEM -eq 'Microsoft' })
+    if ($msModels.Count -gt 0 -and $msModels.Count -eq @($headlessModels).Count) {
+        Send-DATHeadlessPreflightFailure -Reason 'All selected models are Microsoft -- BIOS packages not supported'
+        Write-Error "[Headless] All selected models are Microsoft. BIOS packages are not supported for Microsoft Surface devices (firmware is delivered via driver updates). Use PackageType 'Drivers' or 'All'."
+        exit 1
+    }
+    if ($msModels.Count -gt 0) {
+        $msNames = ($msModels | ForEach-Object { $_.Model }) -join ', '
+        Write-Host "[Headless] Excluding $($msModels.Count) Microsoft model(s) from BIOS build (firmware delivered via driver updates): $msNames"
+        $headlessModels = @($headlessModels | Where-Object { $_.OEM -ne 'Microsoft' })
+    }
+}
+
+# Resolve catalog versions for the skip-if-current guard (#807).
+# BuildConfig models carry no catalog Version/BIOSVersion, so in scheduled/headless mode the
+# skip-if-current check in Start-DATModelProcessing was always disabled -- causing packages
+# already at the current version to be fully downloaded, extracted and (re)packaged before
+# being skipped at the ConfigMgr/Intune stage. Resolve them up front, exactly as the UI does
+# during model enumeration, so unchanged packages are skipped before any heavy work.
+if ($config.Platform -in @('Configuration Manager', 'Intune') -and @($headlessModels).Count -gt 0) {
+    # Driver versions -- enumerate the OEM catalogs once per distinct OS, match by OEM + Model.
+    if ($config.PackageType -in @('Drivers', 'All')) {
+        try {
+            $driverModels = @($headlessModels | Where-Object { $_.OEM -ne 'Microsoft' })
+            foreach ($osGroup in ($driverModels | Group-Object -Property OS)) {
+                $osValue = $osGroup.Name
+                if ([string]::IsNullOrEmpty($osValue)) { continue }
+                $groupOEMs = @($osGroup.Group | ForEach-Object { $_.OEM } | Sort-Object -Unique)
+                Write-Host "[Headless] Resolving driver catalog versions for '$osValue' ($($groupOEMs -join ', '))..."
+                $catalogModels = @(Get-DATOEMModelInfo -RequiredOEMs $groupOEMs -OS $osValue -Architecture $config.Architecture)
+                foreach ($m in $osGroup.Group) {
+                    # Exact model-name match first.
+                    $match = $catalogModels | Where-Object { $_.OEM -eq $m.OEM -and $_.Model -eq $m.Model } | Select-Object -First 1
+                    # Fallback: match on overlapping baseboard/SystemSKU values. The BuildConfig
+                    # model name (the UI display name) frequently differs from the OEM catalog
+                    # SystemName (e.g. HP "Elite x360 1040 14 inch G11 2-in-1" vs catalog
+                    # "EliteBook 1040 14 inch G11"), so an exact-name match alone leaves the
+                    # version empty and disables skip-if-current, forcing a full download (#817).
+                    if (-not $match -and -not [string]::IsNullOrEmpty($m.Baseboards)) {
+                        $modelBoards = @("$($m.Baseboards)" -split '[,;\s]+' | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ })
+                        if ($modelBoards.Count -gt 0) {
+                            $match = $catalogModels | Where-Object {
+                                $_.OEM -eq $m.OEM -and -not [string]::IsNullOrEmpty($_.Baseboards) -and
+                                @("$($_.Baseboards)" -split '[,;\s]+' | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ -in $modelBoards }).Count -gt 0
+                            } | Select-Object -First 1
+                            if ($match) {
+                                Write-Host "[Headless] Matched '$($m.Model)' to catalog model '$($match.Model)' via baseboard ($($m.Baseboards))"
+                            }
+                        }
+                    }
+                    if ($match -and -not [string]::IsNullOrEmpty($match.Version)) { $m.Version = $match.Version }
+                }
+            }
+        } catch {
+            Write-Host "[Headless] Warning: Driver catalog version resolution failed -- skip-if-current may be bypassed: $($_.Exception.Message)"
+        }
+    }
+    # BIOS versions -- lightweight JSON catalog lookup by baseboard.
+    if ($config.PackageType -in @('BIOS', 'All')) {
+        try {
+            $headlessBiosCatalog = Get-DATBiosCatalog
+            foreach ($m in $headlessModels) {
+                if ($m.OEM -eq 'Microsoft') { continue }
+                $bb = if ($m.Baseboards -is [array]) { $m.Baseboards -join ',' } else { [string]$m.Baseboards }
+                if ([string]::IsNullOrEmpty($bb)) { continue }
+                $biosMatch = Find-DATBiosPackage -OEM $m.OEM -Baseboards $bb -Catalog $headlessBiosCatalog
+                if ($biosMatch -and -not [string]::IsNullOrEmpty($biosMatch.Version)) { $m.BIOSVersion = $biosMatch.Version }
+            }
+        } catch {
+            Write-Host "[Headless] Warning: BIOS catalog version resolution failed -- skip-if-current may be bypassed: $($_.Exception.Message)"
+        }
+    }
+}
+
+# Build splat for Start-DATModelProcessing (matches function signature)
+$processingParams = @{
+    ScriptDirectory = $scriptRoot
+    RegPath         = $global:RegPath
+    SelectedModels  = $headlessModels
+    RunningMode     = $config.Platform
+    PackageType     = $config.PackageType
+    PackagePath     = $packagePath
+    StoragePath     = $storagePath
+}
+if ($config.DisableToast) { $processingParams['DisableToast'] = $true }
+if ($config.DisableRestart) { $processingParams['DisableRestart'] = $true }
+if ($config.AlarmMode) {
+    $processingParams['AlarmMode'] = $true
+    # Audible alarm sound defaults ON when critical notification is enabled, unless AlarmSound is explicitly set to false
+    if ($null -eq $config.AlarmSound -or $config.AlarmSound) { $processingParams['AlarmSound'] = $true }
+}
+if ($config.CreateIntuneWinOnly) { $processingParams['CreateIntuneWinOnly'] = $true }
+if ($config.ShowBrandingBannerAllToasts) { $processingParams['ShowBrandingBannerAllToasts'] = $true }
+if (-not [string]::IsNullOrWhiteSpace($config.ToastThemeJson)) { $processingParams['ToastThemeJson'] = $config.ToastThemeJson }
+if ($config.ShowInstallProgress) { $processingParams['ShowInstallProgress'] = $true }
+# On by default (Import-DATBuildConfig fills it in for configs written before the option existed)
+if ($null -ne $config.SilentDuringAutopilot) { $processingParams['SilentDuringAutopilot'] = [bool]$config.SilentDuringAutopilot }
+if ($config.CreateConfigMgrApplication -and $config.Platform -in @('ConfigMgr', 'Configuration Manager')) {
+    $processingParams['CreateConfigMgrApplication'] = $true
+    if ($config.ConfigMgrReminderIntervalHours -ge 1 -and $config.ConfigMgrReminderIntervalHours -le 24) {
+        $processingParams['ConfigMgrReminderIntervalHours'] = [int]$config.ConfigMgrReminderIntervalHours
+    }
+}
+if ($null -ne $config.DownloadOnlyExtractContent -and -not $config.DownloadOnlyExtractContent) { $processingParams['ExtractDownloadOnlyContent'] = $false }
+if ($config.ToastTimeoutAction -ne 'RemindMeLater') { $processingParams['ToastTimeoutAction'] = $config.ToastTimeoutAction }
+if ($config.MaxDeferrals -gt 0) { $processingParams['MaxDeferrals'] = $config.MaxDeferrals }
+if ($config.BIOSRestartDelayMinutes -gt 0) { $processingParams['RestartDelaySeconds'] = $config.BIOSRestartDelayMinutes * 60 }
+
+# Maintenance window -- serialize the configured schedule to JSON for the requirement scripts
+if ($config.MaintenanceWindowEnabled -and $config.MaintenanceWindows -and @($config.MaintenanceWindows).Count -gt 0) {
+    $mwJson = ConvertTo-Json @($config.MaintenanceWindows) -Compress
+    $processingParams['MaintenanceWindowsJson'] = $mwJson
+    Write-Host "[Headless] Maintenance window enabled ($($config.MaintenanceWindowMode)) -- $(@($config.MaintenanceWindows).Count) window(s)"
+}
+
+# Teams notifications
+if ($config.TeamsNotificationsEnabled -and -not [string]::IsNullOrEmpty($config.TeamsWebhookUrl)) {
+    $processingParams['TeamsNotificationsEnabled'] = $true
+    $processingParams['TeamsWebhookUrl'] = $config.TeamsWebhookUrl
+    if (-not [string]::IsNullOrEmpty($config.TeamsCustomText)) { $processingParams['TeamsCustomText'] = $config.TeamsCustomText }
+}
+
+# Normalise platform name -- BuildConfig accepts 'ConfigMgr' or 'Configuration Manager'
+if ($config.Platform -in @('ConfigMgr', 'Configuration Manager')) {
+    $processingParams['RunningMode'] = 'Configuration Manager'
+}
+
+# Platform-specific settings
+switch ($config.Platform) {
+    'Intune' {
+        if ($config.Intune) {
+            $tenantEnvironment = if ($config.Intune.TenantEnvironment) { $config.Intune.TenantEnvironment } else { '' }
+            $tenantId = $config.Intune.TenantId
+            $appId    = $config.Intune.AppId
+            $appSecret = $config.Intune.AppSecret
+
+            # If no credentials in config, try reading from registry (UI-saved DPAPI-encrypted
+            # secret). The UI persists these through Set-DATRegistryValue, which targets
+            # $global:RegPath (HKLM) -- this read was pointed at HKCU, a key DAT never writes for
+            # any user, so the fallback could never succeed (#947, same defect as the retention
+            # block below).
+            if ([string]::IsNullOrEmpty($tenantId) -or [string]::IsNullOrEmpty($appId) -or [string]::IsNullOrEmpty($appSecret)) {
+                $uiReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
+                if ($uiReg) {
+                    if ([string]::IsNullOrEmpty($tenantEnvironment) -and $uiReg.IntuneTenantEnvironment) { $tenantEnvironment = $uiReg.IntuneTenantEnvironment }
+                    if ([string]::IsNullOrEmpty($tenantId) -and $uiReg.IntuneTenantId) { $tenantId = $uiReg.IntuneTenantId }
+                    if ([string]::IsNullOrEmpty($appId) -and $uiReg.IntuneAppId) { $appId = $uiReg.IntuneAppId }
+                    if ([string]::IsNullOrEmpty($appSecret) -and $uiReg.IntuneClientSecret) {
+                        try {
+                            $secString = ConvertTo-SecureString -String $uiReg.IntuneClientSecret -ErrorAction Stop
+                            $appSecret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                                [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secString))
+                            Write-Host "[Headless] Intune credentials loaded from registry (DPAPI)"
+                        } catch {
+                            # DPAPI ties the stored secret to the account that encrypted it, so a
+                            # secret saved by the operator cannot be read back by a task running as
+                            # SYSTEM. Name that here rather than leaving a bare decryption error.
+                            Write-Host "[Headless] Warning: Could not decrypt saved client secret: $($_.Exception.Message)"
+                            Write-DATLogEntry -Value "[Headless] Could not decrypt the saved Intune client secret. DPAPI binds it to the account that saved it, so a secret saved in the UI cannot be read by the scheduled task's account -- put AppSecret in the build config instead. Error: $($_.Exception.Message)" -Severity 2
+                        }
+                    }
+                }
+            }
+            if ([string]::IsNullOrEmpty($tenantEnvironment)) { $tenantEnvironment = 'Commercial' }
+
+            if ([string]::IsNullOrEmpty($tenantId) -or [string]::IsNullOrEmpty($appId) -or [string]::IsNullOrEmpty($appSecret)) {
+                Send-DATHeadlessPreflightFailure -Reason 'Intune credentials missing from BuildConfig and registry'
+                Write-Error "[Headless] Intune mode requires TenantId, AppId, and AppSecret in BuildConfig.json or saved in the UI registry."
+                exit 1
+            }
+
+            Write-Host "[Headless] Authenticating to Intune (environment: $tenantEnvironment, tenant: $tenantId, app: $appId)..."
+            $authResult = Connect-DATIntuneGraphClientCredential -TenantId $tenantId -AppId $appId -ClientSecret $appSecret -TenantEnvironment $tenantEnvironment
+            if (-not $authResult.Success) {
+                Send-DATHeadlessPreflightFailure -Reason "Intune authentication failed: $($authResult.Error)"
+                Write-Error "[Headless] Intune authentication failed: $($authResult.Error)"
+                exit 1
+            }
+            Write-Host "[Headless] Intune authentication successful (expires: $($authResult.ExpiresOn))"
+
+            # Apply the optional RBAC scope tag selection from the config. The build pipeline reads
+            # these from the registry ($global:RegPath), so persist them before processing. Only
+            # written when the config specifies them, leaving a UI-configured machine untouched.
+            $cfgScopeEnabled = $config.Intune.ScopeTagsEnabled
+            $cfgScopeIds     = $config.Intune.ScopeTagIds
+            if ($null -ne $cfgScopeIds -or $null -ne $cfgScopeEnabled) {
+                $idsList = @()
+                if ($cfgScopeIds -is [array]) {
+                    $idsList = @($cfgScopeIds)
+                } elseif (-not [string]::IsNullOrWhiteSpace([string]$cfgScopeIds)) {
+                    $idsList = @(([string]$cfgScopeIds).Split(','))
+                }
+                $idsList = @($idsList | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+                $scopeOn = ($cfgScopeEnabled -eq $true) -or ($cfgScopeEnabled -eq 1) -or ($idsList.Count -gt 0)
+                if ($scopeOn -and $idsList.Count -gt 0) {
+                    Set-DATRegistryValue -Name 'IntuneScopeTagsEnabled' -Value 1 -Type DWord
+                    Set-DATRegistryValue -Name 'IntuneScopeTagIds' -Value ($idsList -join ',') -Type String
+                    Write-Host "[Headless] RBAC scope tag(s) applied from config: $($idsList -join ', ')"
+                } else {
+                    Set-DATRegistryValue -Name 'IntuneScopeTagsEnabled' -Value 0 -Type DWord
+                    Write-Host "[Headless] RBAC scope tags disabled by config -- Default tag (0) will be used"
+                }
+            }
+
+            # Pass the live auth context to the processing function.
+            $processingParams['IntuneAuthContext'] = Get-DATIntuneAuthContext -NoRefresh
+        }
+    }
+    { $_ -in @('ConfigMgr', 'Configuration Manager') } {
+        if ($config.ConfigMgr) {
+            if ($config.ConfigMgr.SiteServer) { $processingParams['SiteServer'] = $config.ConfigMgr.SiteServer }
+            if ($config.ConfigMgr.SiteCode) { $processingParams['SiteCode'] = $config.ConfigMgr.SiteCode }
+            if ($config.ConfigMgr.DistributionPointGroups -and $config.ConfigMgr.DistributionPointGroups.Count -gt 0) {
+                $processingParams['DistributionPointGroups'] = $config.ConfigMgr.DistributionPointGroups
+            }
+            if ($config.ConfigMgr.DistributionPoints -and $config.ConfigMgr.DistributionPoints.Count -gt 0) {
+                $processingParams['DistributionPoints'] = $config.ConfigMgr.DistributionPoints
+            }
+            if ($config.ConfigMgr.DistributionPriority) { $processingParams['DistributionPriority'] = $config.ConfigMgr.DistributionPriority }
+            if ($config.ConfigMgr.EnableBinaryDeltaReplication -eq $true) { $processingParams['EnableBinaryDeltaReplication'] = $true }
+            if ($null -ne $config.ConfigMgr.ConsoleFolderID -and $config.ConfigMgr.ConsoleFolderID -ge 0) {
+                $processingParams['ConsoleFolderID'] = [int]$config.ConfigMgr.ConsoleFolderID
+            }
+        }
+    }
+}
+
+Write-Host "[Headless] Starting build at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Host "[Headless] Processing $($config.Models.Count) model(s)..."
+
+# -- Scheduled-run deadline and interrupted-run reporting (#950) --------------------------------
+# When a task exceeds its execution time limit, Task Scheduler terminates the process: no finally
+# block runs, so the build cannot log, notify or submit telemetry on the way out and the log just
+# stops mid-line. Two things make that visible -- publish the deadline so the run warns before it
+# is killed, and leave a marker the NEXT run reads to report that this one never finished.
+$datRunDeadline = $null
+try {
+    $schedTask = Get-ScheduledTask -TaskPath '\Driver Automation Tool\' -TaskName 'Scheduled Package Build' -ErrorAction SilentlyContinue
+    if ($schedTask -and $schedTask.Settings) {
+        $limitIso = [string]$schedTask.Settings.ExecutionTimeLimit
+        if (-not [string]::IsNullOrWhiteSpace($limitIso) -and $limitIso -ne 'PT0S') {
+            $limitSpan = [System.Xml.XmlConvert]::ToTimeSpan($limitIso)
+            $datRunDeadline = (Get-Date).Add($limitSpan)
+            Write-DATLogEntry -Value "[Headless] Scheduled task execution time limit: $([int]$limitSpan.TotalHours)h $($limitSpan.Minutes)m -- this build must finish by $($datRunDeadline.ToString('yyyy-MM-dd HH:mm:ss')) or Task Scheduler terminates it" -Severity 1
+            Write-Host "[Headless] Task execution time limit: $([int]$limitSpan.TotalHours)h $($limitSpan.Minutes)m (deadline $($datRunDeadline.ToString('HH:mm:ss')))"
+        } else {
+            Write-DATLogEntry -Value "[Headless] Scheduled task has no execution time limit -- this build will not be stopped by the scheduler" -Severity 1
+        }
+    }
+} catch {
+    Write-DATLogEntry -Value "[Headless] Could not read the scheduled task's execution time limit: $($_.Exception.Message)" -Severity 2
+}
+$global:DATRunStarted  = Get-Date
+$global:DATRunDeadline = $datRunDeadline
+
+# A 'Running' marker left behind means the previous build never reached its exit path.
+try {
+    $interruptedRun = Get-DATInterruptedRunReport
+    if ($null -ne $interruptedRun) {
+        Write-DATLogEntry -Value "[Headless] PREVIOUS RUN DID NOT COMPLETE -- started $($interruptedRun.StartTime), ran for $($interruptedRun.ElapsedText), $($interruptedRun.ModelCount) model(s) configured. $($interruptedRun.Detail)" -Severity 3
+        Write-Host "[Headless] WARNING: the previous build did not complete ($($interruptedRun.Cause)). $($interruptedRun.Detail)"
+    }
+} catch {
+    Write-DATLogEntry -Value "[Headless] Interrupted-run check failed: $($_.Exception.Message)" -Severity 2
+}
+
+$datDeadlineText = if ($null -ne $datRunDeadline) { $datRunDeadline.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+Set-DATRunState -State 'Running' -ModelCount @($config.Models).Count -Deadline $datDeadlineText -LogFile (Join-Path $global:LogDirectory "$global:ProductName.log")
+
+$buildExitCode = 0
+
+try {
+    Start-DATModelProcessing @processingParams
+
+    # Per-model failures and aborts are recorded in the registry without throwing.
+    # Do not remove older packages or report success unless processing actually completed.
+    $buildState = Get-ItemProperty -Path $global:RegPath -ErrorAction Stop
+    if ($buildState.RunningState -notin @('Completed', 'CompletedNoMatch')) {
+        throw "Model processing did not complete successfully (state: '$($buildState.RunningState)'). $($buildState.RunningMessage)"
+    }
+
+    # Package retention -- remove superseded packages after a successful build. This mirrors the
+    # UI post-build cleanup, which previously ran ONLY in the WPF event handler, so scheduled and
+    # headless runs never cleaned up old packages even with auto-cleanup enabled (#849). Settings
+    # come from the BuildConfig 'PackageRetention' section, falling back to the UI-saved registry
+    # values so an operator who toggled retention in the UI gets the same behaviour when scheduled.
+    if ($config.Platform -in @('ConfigMgr', 'Configuration Manager', 'Intune')) {
+        try {
+            $retEnabled      = $false
+            $retCount        = 0
+            $retDeleteSource = $false
+            $retSource       = ''
+            if ($config.PackageRetention) {
+                $retEnabled = [bool]$config.PackageRetention.Enabled
+                if ($null -ne $config.PackageRetention.RetainCount) {
+                    [int]::TryParse([string]$config.PackageRetention.RetainCount, [ref]$retCount) | Out-Null
+                }
+                $retDeleteSource = [bool]$config.PackageRetention.DeleteSourceFolderOnRemoval
+                $retSource = "build config '$ConfigPath'"
+            } else {
+                # Fallback: honour the values the UI persists. The UI writes every setting through
+                # Set-DATRegistryValue, which targets $global:RegPath (HKLM) -- this previously read
+                # HKCU, a key DAT never writes for any user, so the fallback could not succeed even
+                # when run interactively, let alone under a task running as SYSTEM (#947).
+                $uiReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
+                if ($uiReg) {
+                    if ($null -ne $uiReg.PackageRetentionEnabled -and $uiReg.PackageRetentionEnabled -eq 1) { $retEnabled = $true }
+                    if ($null -ne $uiReg.PackageRetentionCount) {
+                        [int]::TryParse([string]$uiReg.PackageRetentionCount, [ref]$retCount) | Out-Null
+                    }
+                    if ($null -ne $uiReg.DeleteSourceFolderOnRemoval -and $uiReg.DeleteSourceFolderOnRemoval -eq 1) { $retDeleteSource = $true }
+                }
+                $retSource = "registry $($global:RegPath) (build config carried no PackageRetention block)"
+            }
+
+            if (-not $retEnabled) {
+                # Say so. Retention failing silently is what let superseded packages accumulate
+                # unnoticed for weeks -- a disabled feature must still account for itself (#947).
+                Write-Host "[Headless] Package retention disabled -- superseded packages will be left in place (source: $retSource)"
+                Write-DATLogEntry -Value "[Headless] Package retention disabled -- no superseded packages will be removed. Source: $retSource" -Severity 1
+            }
+
+            if ($retEnabled) {
+                Write-Host "[Headless] Package retention enabled -- cleaning superseded packages (keep $retCount previous, delete source folder: $retDeleteSource)"
+                Write-DATLogEntry -Value "[Headless] Package retention enabled (RetainCount=$retCount, DeleteSourceFolder=$retDeleteSource, source: $retSource)" -Severity 1
+                Write-DATLogEntry -Value "[Headless] Package retention enabled (RetainCount=$retCount, DeleteSourceFolder=$retDeleteSource)" -Severity 1
+
+                $isIntunePlatform = $config.Platform -eq 'Intune'
+                $isCMPlatform     = $config.Platform -in @('ConfigMgr', 'Configuration Manager')
+
+                # Which package types to clean is driven by the build's PackageType.
+                $retPkgTypes = switch ($config.PackageType) {
+                    'All'  { @('Drivers', 'BIOS') }
+                    'BIOS' { @('BIOS') }
+                    default { @('Drivers') }
+                }
+
+                foreach ($m in $headlessModels) {
+                    # Resolve the OS list for this model (per-model OS wins; else the global config OS,
+                    # which may be an array or a semicolon-separated string).
+                    $modelOSList = if (-not [string]::IsNullOrEmpty($m.OS)) {
+                        @($m.OS)
+                    } elseif ($config.OS -is [array]) {
+                        @($config.OS)
+                    } else {
+                        @([string]$config.OS -split ';' | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() })
+                    }
+                    $modelArch = if (-not [string]::IsNullOrEmpty($m.Architecture)) { $m.Architecture } else { $config.Architecture }
+
+                    foreach ($osValue in $modelOSList) {
+                        # Retention matches names with an anchored LIKE that tolerates the build
+                        # segment (e.g. "24H2"), so pass the base OS label without the build.
+                        $baseOS = ([string]$osValue -replace '\s*\d{2}H\d.*$', '').Trim()
+                        if ([string]::IsNullOrEmpty($baseOS)) { continue }
+
+                        foreach ($pt in $retPkgTypes) {
+                            if ($pt -eq 'BIOS' -and $m.OEM -eq 'Microsoft') { continue }
+                            $retParams = @{
+                                OEM          = $m.OEM
+                                Model        = $m.Model
+                                OS           = $baseOS
+                                Architecture = $modelArch
+                                PackageType  = $pt
+                                RetainCount  = $retCount
+                            }
+                            if ($retDeleteSource) { $retParams['DeleteSourceFolder'] = $true }
+                            if ($isCMPlatform -and $config.ConfigMgr) {
+                                if ($config.ConfigMgr.SiteServer) { $retParams['SiteServer'] = $config.ConfigMgr.SiteServer }
+                                if ($config.ConfigMgr.SiteCode)   { $retParams['SiteCode']   = $config.ConfigMgr.SiteCode }
+                            }
+                            if ($isIntunePlatform) { $retParams['Intune'] = $true }
+
+                            try {
+                                $retResults = Invoke-DATPackageRetention @retParams
+                                foreach ($rr in $retResults) {
+                                    Write-Host "[Headless]   [$($rr.Platform)] $($rr.Action): $($rr.Name) v$($rr.Version)$(if ($rr.Error) { " -- $($rr.Error)" })"
+                                }
+                            } catch {
+                                Write-DATLogEntry -Value "[Headless] Package retention error for $($m.OEM) $($m.Model) [$pt/$baseOS]: $($_.Exception.Message)" -Severity 3
+                            }
+                        }
+                    }
+                }
+                Write-DATLogEntry -Value "[Headless] Package retention completed" -Severity 1
+            }
+        } catch {
+            Write-DATLogEntry -Value "[Headless] Package retention block failed: $($_.Exception.Message)" -Severity 2
+            Write-Host "[Headless] Package retention failed: $($_.Exception.Message)"
+        }
+    }
+
+    # Optionally generate the ConfigMgr XML Logic Package after a successful build (ConfigMgr only)
+    if ($config.Platform -in @('ConfigMgr', 'Configuration Manager') -and $config.ConfigMgr -and
+        ($config.ConfigMgr.GenerateXmlLogicPackage -eq $true)) {
+        try {
+            Write-Host "[Headless] Generating ConfigMgr XML Logic Package..."
+            Write-DATLogEntry -Value "[Headless] Generating ConfigMgr XML Logic Package" -Severity 1
+            $xmlLogicParams = @{
+                SiteServer  = $config.ConfigMgr.SiteServer
+                SiteCode    = $config.ConfigMgr.SiteCode
+                PackagePath = $packagePath
+                PackageScope = 'All'
+            }
+            if ($config.ConfigMgr.DistributionPriority) { $xmlLogicParams['Priority'] = $config.ConfigMgr.DistributionPriority }
+            if ($config.ConfigMgr.CreateXmlLogicPackage -eq $true) {
+                $xmlLogicParams['CreatePackage'] = $true
+                if ($config.ConfigMgr.DistributionPointGroups -and $config.ConfigMgr.DistributionPointGroups.Count -gt 0) {
+                    $xmlLogicParams['DistributionPointGroups'] = $config.ConfigMgr.DistributionPointGroups
+                }
+                if ($config.ConfigMgr.DistributionPoints -and $config.ConfigMgr.DistributionPoints.Count -gt 0) {
+                    $xmlLogicParams['DistributionPoints'] = $config.ConfigMgr.DistributionPoints
+                }
+                if ($config.ConfigMgr.EnableBinaryDeltaReplication -eq $true) { $xmlLogicParams['EnableBinaryDeltaReplication'] = $true }
+            }
+            $xmlLogicResult = New-DATXmlLogicPackage @xmlLogicParams
+            Write-Host "[Headless] XML Logic Package: $($xmlLogicResult.PackageCount) package(s), status '$($xmlLogicResult.Status)'$(if ($xmlLogicResult.PackageID) { " (package $($xmlLogicResult.PackageID))" })"
+            Write-DATLogEntry -Value "[Headless] XML Logic Package generated: $($xmlLogicResult.PackageCount) package(s), status '$($xmlLogicResult.Status)', XmlPath '$($xmlLogicResult.XmlPath)'" -Severity 1
+        } catch {
+            Write-DATLogEntry -Value "[Headless] XML Logic Package generation failed: $($_.Exception.Message)" -Severity 3
+            Write-Host "[Headless] XML Logic Package generation failed: $($_.Exception.Message)"
+        }
+    }
+
+    # Submit telemetry summary (per-model reports are sent inside Start-DATModelProcessing)
+    try {
+        $finalReg = Get-ItemProperty -Path $global:RegPath -ErrorAction SilentlyContinue
+        $fDriverPkgs = 0; $fBiosPkgs = 0
+        if ($finalReg.CompletedDriverPackages) { [int]::TryParse($finalReg.CompletedDriverPackages, [ref]$fDriverPkgs) | Out-Null }
+        if ($finalReg.CompletedBiosPackages) { [int]::TryParse($finalReg.CompletedBiosPackages, [ref]$fBiosPkgs) | Out-Null }
+        Write-DATLogEntry -Value "[Headless] Submitting telemetry summary (drivers: $fDriverPkgs, BIOS: $fBiosPkgs, models: $($config.Models.Count), platform: $($config.Platform))" -Severity 1
+        Send-DATSummaryReport -DriverPackagesCreated $fDriverPkgs `
+            -BiosPackagesCreated $fBiosPkgs `
+            -ModelsProcessed $config.Models.Count `
+            -Platform $config.Platform `
+            -ExecutionMode 'Scheduled Task'
+        Write-DATLogEntry -Value "[Headless] Telemetry summary submitted successfully" -Severity 1
+        Write-Host "[Headless] Telemetry summary submitted (drivers: $fDriverPkgs, BIOS: $fBiosPkgs)"
+    } catch {
+        Write-DATLogEntry -Value "[Headless] Telemetry summary failed: $($_.Exception.Message)" -Severity 3
+        Write-Host "[Headless] Telemetry summary failed: $($_.Exception.Message)"
+    }
+
+    Write-DATLogEntry -Value "[Headless] Build completed successfully at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -Severity 1
+} catch {
+    $buildExitCode = 1
+    # If the failure is the API version gate (HTTP 426), surface the upgrade instruction clearly and
+    # exit with a distinct code (2) so schedulers/monitoring can tell it apart from a build error.
+    $upgState = $null
+    try { $upgState = Get-DATUpgradeRequiredState } catch { }
+    if ($null -ne $upgState -or "$_" -match 'DATUpgradeRequired') {
+        $buildExitCode = 2
+        $upgMsg = if ($upgState -and $upgState.Message)     { $upgState.Message }     else { 'This version of the Driver Automation Tool is no longer supported. Please upgrade to continue.' }
+        $upgUrl = if ($upgState -and $upgState.DownloadUrl) { $upgState.DownloadUrl } else { 'https://github.com/maurice-daly/DriverAutomationTool/releases' }
+        Write-Error "[Headless] Upgrade required (HTTP 426): $upgMsg Download: $upgUrl" -ErrorAction Continue
+        try { Write-DATLogEntry -Value "[Headless] Upgrade required (HTTP 426): $upgMsg -- $upgUrl" -Severity 3 } catch { }
+        try { Clear-DATUpgradeRequiredState } catch { }
+    } else {
+        Write-Error "[Headless] Build failed: $_" -ErrorAction Continue
+        try { Write-DATLogEntry -Value "[Headless] Build failed: $($_.Exception.Message)" -Severity 3 } catch { }
+    }
+} finally {
+    # Close the run marker first so it reflects the build itself, not the cleanup that follows.
+    # On a hard terminate -- execution time limit, host restart, crash -- this never runs, and the
+    # marker left at 'Running' is exactly what the next run reports on (#950).
+    try {
+        Set-DATRunState -State $(if ($buildExitCode -eq 0) { 'Completed' } else { 'Failed' }) -Detail "Exit code $buildExitCode"
+    } catch { }
+
+    # Clean temporary storage in a finally block so it ALWAYS runs -- on success AND when the
+    # build throws part-way through (#816). Previously this lived on the success path inside the
+    # try, so any terminating error (made more likely by $ErrorActionPreference = 'Stop') jumped
+    # straight to the catch and left the temp folder full. Honours the "Clean temporary storage
+    # on exit" setting; defaults to enabled when the config omits the field.
+    $cleanEnabled  = [bool]$config.CleanTempOnExit
+    $storageHasPath = -not [string]::IsNullOrWhiteSpace($storagePath)
+    $storageExists  = $storageHasPath -and (Test-Path $storagePath)
+    Write-DATLogEntry -Value "[Headless] Cleanup check -- CleanTempOnExit=$cleanEnabled, StoragePath='$storagePath', Exists=$storageExists" -Severity 1
+    Write-Host "[Headless] Cleanup check -- CleanTempOnExit=$cleanEnabled, StoragePath='$storagePath', Exists=$storageExists"
+
+    if ($cleanEnabled -and $storageHasPath -and $storageExists) {
+        Write-Host "[Headless] Cleaning temporary storage: $storagePath"
+        Write-DATLogEntry -Value "[Headless] Cleaning temporary storage: $storagePath" -Severity 1
+
+        # Log exactly what is present in the temp folder before we start removing it, so the
+        # log shows which paths are being targeted (and what is left behind afterwards).
+        $preItems = @(Get-ChildItem -Path $storagePath -Force -ErrorAction SilentlyContinue)
+        Write-DATLogEntry -Value "[Headless] Cleanup: $($preItems.Count) item(s) found under '$storagePath'" -Severity 1
+        Write-Host "[Headless] Cleanup: $($preItems.Count) item(s) found under '$storagePath'"
+        foreach ($pi in $preItems) {
+            Write-DATLogEntry -Value "[Headless] Cleanup target: $($pi.FullName)" -Severity 1
+            Write-Host "[Headless] Cleanup target: $($pi.FullName)"
+        }
+
+        # Release file locks before deletion -- this is the step the headless path was missing
+        # (#816). Driver/BIOS packaging leaves DISM/dismhost holding handles (and sometimes a
+        # WIM still mounted) inside the temp folder; Remove-Item then fails on those folders and
+        # only the unlocked top-level catalog files are removed, leaving the bulk on disk. The
+        # UI shutdown handler already does this, which is why the GUI cleaned up correctly.
+
+        # 0. Release in-process .NET file handles. Headless runs WIM capture and hash streams in
+        #    THIS process (the UI cleans at app exit, long after its build runspace is disposed),
+        #    so force a GC + finalizer pass to close any lingering handles before deletion.
+        [System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers(); [System.GC]::Collect()
+
+        $safeStorageRoot = $null
+        try {
+            $safeStorageRoot = Test-DATSafeContentRoot -Path $storagePath
+        } catch {
+            Write-DATLogEntry -Value "[Headless] Cleanup skipped: $($_.Exception.Message)" -Severity 3
+        }
+
+        # 1. Dismount and remove only WIM records whose mount path is inside this DAT temp root.
+        # Never use process-name cleanup or DISM /Cleanup-Wim here: both are machine-global and
+        # can disrupt an unrelated servicing operation running at the same time.
+        $mountCleanupComplete = -not [string]::IsNullOrEmpty($safeStorageRoot) -and
+            (Dismount-DATOwnedImages -StorageRoot $safeStorageRoot)
+
+        # 2. Remove the temp content over several passes. Released
+        #    handles can take a moment to settle, so retry locked items with a GC + short pause
+        #    between passes rather than giving up after a single retry.
+        # The root comes from BuildConfig.json and this runs as SYSTEM, so it is canonicalised and
+        # checked against the drive root and the well-known system directories before anything is
+        # deleted. A bad TempPath now aborts the cleanup instead of emptying what it names.
+        $removeTempContent = {
+            if (-not $mountCleanupComplete) { return @() }
+            $remaining = @(Get-ChildItem -LiteralPath $safeStorageRoot -Force -ErrorAction SilentlyContinue)
+            $failed = @()
+            foreach ($item in $remaining) {
+                # Preserve the Configuration Manager (Offline) export -- it is a deliverable.
+                if ($item.PSIsContainer -and $item.Name -eq 'ConfigMgr Offline') {
+                    Write-DATLogEntry -Value "[Headless] Cleanup: Preserved offline export folder - $($item.FullName)" -Severity 1
+                    continue
+                }
+                try {
+                    # Never follows a junction or symlink planted in the temp root -- see
+                    # Remove-DATContentItem. The link is unlinked, its target is left alone.
+                    $action = Remove-DATContentItem -Item $item
+                    if ($action -eq 'ReparsePoint') {
+                        Write-DATLogEntry -Value "[Headless] Cleanup: Removed reparse point without following it - $($item.FullName)" -Severity 2
+                    } else {
+                        Write-DATLogEntry -Value "[Headless] Cleanup: Removed $($item.FullName)" -Severity 1
+                    }
+                } catch {
+                    $failed += $item
+                    Write-DATLogEntry -Value "[Headless] Warning: Cleanup failed for $($item.FullName): $($_.Exception.Message)" -Severity 2
+                }
+            }
+            return $failed
+        }
+
+        $stillFailed = @()
+        for ($pass = 1; $pass -le 4; $pass++) {
+            $stillFailed = @(& $removeTempContent)
+            if ($stillFailed.Count -eq 0) { break }
+            if ($pass -lt 4) {
+                Write-DATLogEntry -Value "[Headless] Cleanup: $($stillFailed.Count) item(s) still locked after pass $pass -- retrying" -Severity 2
+                [System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers()
+                Start-Sleep -Milliseconds 750
+            }
+        }
+
+        if (-not $mountCleanupComplete) {
+            Write-DATLogEntry -Value "[Headless] Temporary storage preserved because mount cleanup was incomplete or unverified: $storagePath" -Severity 3
+            Write-Host "[Headless] Temporary storage preserved; review WIM cleanup errors."
+        } elseif ($stillFailed.Count -gt 0) {
+            Write-DATLogEntry -Value "[Headless] Warning: Temporary storage cleanup incomplete -- $($stillFailed.Count) item(s) could not be removed (still in use): $storagePath" -Severity 3
+            Write-Host "[Headless] Warning: $($stillFailed.Count) temp item(s) could not be removed (still in use)."
+            foreach ($sf in $stillFailed) {
+                Write-DATLogEntry -Value "[Headless] Cleanup remaining: $($sf.FullName)" -Severity 3
+                Write-Host "[Headless] Cleanup remaining: $($sf.FullName)"
+            }
+        } else {
+            Write-DATLogEntry -Value "[Headless] Temporary storage cleanup finished: $storagePath" -Severity 1
+            Write-Host "[Headless] Temporary storage cleanup finished: $storagePath"
+        }
+    } else {
+        $skipReason = if (-not $cleanEnabled) {
+            'CleanTempOnExit is disabled'
+        } elseif (-not $storageHasPath) {
+            'storage path is empty'
+        } elseif (-not $storageExists) {
+            "storage path does not exist ('$storagePath')"
+        } else {
+            'unknown reason'
+        }
+        Write-DATLogEntry -Value "[Headless] Temporary storage retained -- $skipReason" -Severity 2
+        Write-Host "[Headless] Temporary storage retained -- $skipReason"
+    }
+
+    # Self-cleanup: remove the scheduled task if it was a once-off run
+    try {
+        $task = Get-ScheduledTask -TaskPath '\Driver Automation Tool\' -TaskName 'Scheduled Package Build' -ErrorAction SilentlyContinue
+        if ($task -and $task.Triggers.Count -gt 0) {
+            $isOnce = $task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' }
+            if ($isOnce) {
+                Unregister-ScheduledTask -TaskPath '\Driver Automation Tool\' -TaskName 'Scheduled Package Build' -Confirm:$false
+                Write-Host "[Headless] Once-off scheduled task removed after completion."
+            }
+        }
+    } catch {
+        Write-Host "[Headless] Warning: Could not clean up scheduled task: $($_.Exception.Message)"
+    }
+}
+
+exit $buildExitCode

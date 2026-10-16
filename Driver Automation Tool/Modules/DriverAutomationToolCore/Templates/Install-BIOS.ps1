@@ -1,0 +1,1705 @@
+<#
+    Driver Automation Tool - BIOS Install Script
+    Author: Maurice Daly
+    Organization: MSEndpointMgr
+    Copyright: (c) Maurice Daly. All rights reserved.
+    OEM: {{OEM}}
+    Model: {{Model}}
+    OS: {{OS}}
+    Version: {{Version}}
+    Generated: {{Generated}}
+
+    Prerequisites:
+    - The packaging pipeline must pre-extract HP SoftPaqs and Lenovo self-extracting
+      archives before WIM capture so the internal flash utilities (HPFirmwareUpdRec64.exe,
+      winuptp.exe, etc.) are discoverable after WIM extraction.
+    - Dell BIOS executables are self-contained updaters run directly with /s /l /p switches.
+      Flash64W.exe is NOT used (it is a WinPE-only wrapper).
+#>
+param (
+    [switch]$WhatIf,
+    # Run as the Intune / ConfigMgr uninstall command. A flashed BIOS cannot be rolled back by
+    # this script, so this logs and exits 0 without changing anything.
+    [switch]$Uninstall,
+    # Safe preflight used by packaging validation and regression tests. It exercises the generated
+    # installer's manufacturer gate without extracting content or touching firmware.
+    [switch]$ValidateManufacturerOnly
+)
+
+# --- 64-bit Relaunch Guard ---
+# The Intune Management Extension may launch PowerShell as a 32-bit process.
+# Registry writes from WOW64 land in HKLM\SOFTWARE\WOW6432Node and PNPUtil may
+# not work correctly. Relaunch under native 64-bit PowerShell if needed.
+if (-not [Environment]::Is64BitProcess -and [Environment]::Is64BitOperatingSystem) {
+    Write-Warning "32-bit PowerShell detected -- relaunching under 64-bit PowerShell..."
+
+    $earlyLog = Join-Path $env:ProgramData 'Microsoft\IntuneManagementExtension\Logs\DriverAutomationTool-BIOS.log'
+
+    # Guard: script must have been invoked with -File so the path is resolvable
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if ([string]::IsNullOrEmpty($scriptPath)) {
+        Write-Warning "ERROR: Cannot determine script path -- MyInvocation.MyCommand.Path is empty. Use 'powershell.exe -File <script>' rather than dot-sourcing or &."
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] 64-bit relaunch failed: script path is empty (run with -File parameter)" | Out-File -FilePath $earlyLog -Encoding UTF8 -Append
+        exit 1
+    }
+
+    # IMPORTANT: Do NOT fall back to System32 -- from a 32-bit process, System32 is
+    # WOW64-redirected to SysWOW64, which would just relaunch another 32-bit session.
+    # SysNative is the WOW64 alias that resolves to the real (64-bit) System32.
+    $relaunchPath = "$env:SystemRoot\SysNative\WindowsPowerShell\v1.0\powershell.exe"
+    if (-not (Test-Path $relaunchPath)) {
+        Write-Warning "ERROR: 64-bit PowerShell not found at '$relaunchPath' -- cannot relaunch."
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] 64-bit relaunch failed: SysNative path not accessible" | Out-File -FilePath $earlyLog -Encoding UTF8 -Append
+        exit 1
+    }
+
+    $relaunchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$scriptPath`"")
+    if ($WhatIf) { $relaunchArgs += '-WhatIf' }
+    if ($Uninstall) { $relaunchArgs += '-Uninstall' }
+    if ($ValidateManufacturerOnly) { $relaunchArgs += '-ValidateManufacturerOnly' }
+    Write-Host "INFO: Launching 64-bit process: $relaunchPath $($relaunchArgs -join ' ')" -ForegroundColor Cyan
+    try {
+        $proc = Start-Process -FilePath $relaunchPath -ArgumentList $relaunchArgs -Wait -PassThru -NoNewWindow -ErrorAction Stop
+        Write-Host "INFO: 64-bit process exited with code $($proc.ExitCode)" -ForegroundColor Cyan
+        exit $proc.ExitCode
+    } catch {
+        Write-Warning "ERROR: 64-bit relaunch failed: $($_.Exception.Message)"
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] 64-bit relaunch failed: $($_.Exception.Message)" | Out-File -FilePath $earlyLog -Encoding UTF8 -Append
+        exit 1
+    }
+}
+
+$LogFile = Join-Path $env:ProgramData "Microsoft\IntuneManagementExtension\Logs\DriverAutomationTool-BIOS.log"
+
+function Write-CMTraceLog {
+    param (
+        [Parameter(Mandatory)][string]$Message,
+        [ValidateSet('1','2','3')][string]$Severity = '1',
+        [string]$Component = 'DriverAutomationTool-BIOS'
+    )
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
+    $Time = Get-Date -Format "HH:mm:ss.fff"
+    $Date = Get-Date -Format "MM-dd-yyyy"
+    $LogEntry = "<![LOG[$Timestamp $Message]LOG]!><time=""$Time+000"" date=""$Date"" component=""$Component"" context="""" type=""$Severity"" thread=""$PID"" file="""">"
+    $LogDir = Split-Path $LogFile -Parent
+    if (-not (Test-Path $LogDir)) { New-Item -Path $LogDir -ItemType Directory -Force | Out-Null }
+    Add-Content -Path $LogFile -Value $LogEntry -Encoding UTF8 -ErrorAction SilentlyContinue
+
+    # Console output with severity-appropriate formatting
+    switch ($Severity) {
+        '1' { Write-Host "[$Timestamp] [INFO] $Message" }
+        '2' { Write-Host "[$Timestamp] [WARN] $Message" -ForegroundColor Yellow }
+        '3' { Write-Host "[$Timestamp] [ERROR] $Message" -ForegroundColor Red }
+    }
+}
+
+function Set-DATInstallStatus {
+    <#
+        Records a machine-readable status record alongside the version marker so custom
+        reporting (registry scraping) can see the outcome of the LAST run -- including
+        failures, which otherwise leave no registry trace at all. Written on every real
+        (non-WhatIf) exit path, success or failure. Exit codes are stored as strings so
+        negative / large tool codes (e.g. -1, HRESULTs) survive intact.
+    #>
+    param (
+        [Parameter(Mandatory)][string]$RegPath,
+        [Parameter(Mandatory)][ValidateSet('Success','PendingReboot','AlreadyCurrent','NoContent','RetryScheduled','Failed')][string]$Result,
+        [int]$ToolExitCode = 0,
+        [int]$ScriptExitCode = 0,
+        [string]$Phase = '',
+        [string]$ErrorMessage = ''
+    )
+    try {
+        if (-not (Test-Path $RegPath)) { New-Item -Path $RegPath -Force | Out-Null }
+        $nowUtc = (Get-Date).ToUniversalTime().ToString('o')
+        Set-ItemProperty -Path $RegPath -Name 'LastResult'         -Value $Result                   -Force
+        Set-ItemProperty -Path $RegPath -Name 'LastRunUtc'         -Value $nowUtc                   -Force
+        Set-ItemProperty -Path $RegPath -Name 'LastToolExitCode'   -Value ([string]$ToolExitCode)   -Force
+        Set-ItemProperty -Path $RegPath -Name 'LastScriptExitCode' -Value ([string]$ScriptExitCode) -Force
+        Set-ItemProperty -Path $RegPath -Name 'LastErrorPhase'     -Value $Phase                    -Force
+        Set-ItemProperty -Path $RegPath -Name 'LastError'          -Value $ErrorMessage             -Force
+        # Whether this run installed silently during Autopilot provisioning (Test-DATAutopilotProvisioning)
+        $installContext = if ($script:DATAutopilot -and $script:DATAutopilot.InProvisioning) { "AutopilotProvisioning:$($script:DATAutopilot.Phase)" } else { 'Standard' }
+        Set-ItemProperty -Path $RegPath -Name 'LastInstallContext' -Value $installContext           -Force
+
+        # Running attempt counter -- lets reporting spot devices stuck retrying/failing
+        $priorAttempts = 0
+        try { $priorAttempts = [int](Get-ItemProperty -Path $RegPath -Name 'AttemptCount' -ErrorAction SilentlyContinue).AttemptCount } catch { $priorAttempts = 0 }
+        Set-ItemProperty -Path $RegPath -Name 'AttemptCount' -Value ($priorAttempts + 1) -Type DWord -Force
+
+        if ($Result -in @('Success','PendingReboot','AlreadyCurrent')) {
+            Set-ItemProperty -Path $RegPath -Name 'LastSuccessUtc' -Value $nowUtc -Force
+            # Successful (or no-op) run -- clear any prior deferral/failure reason so custom
+            # reporting reflects the current healthy state rather than a stale cause.
+            Remove-ItemProperty -Path $RegPath -Name 'Reason' -Force -ErrorAction SilentlyContinue
+
+            # Clear the toast deferral/snooze counters now the update has been applied, prestaged
+            # or confirmed current. Only the "max deferrals reached" path cleared these before, so
+            # after a normal "Update Now" / auto-install / already-current completion the old
+            # DeferralCount lingered -- polluting custom reporting AND bleeding into the NEXT BIOS
+            # version's deferral budget (a device that hit the limit once would force-install the
+            # next update on the very first prompt). The counter is scoped per update type
+            # (Toast\BIOS); the legacy shared 'Toast' values are also cleared so devices upgraded
+            # from the pre-scoping build don't leave stale data behind at the old path.
+            foreach ($toastStateKey in @('HKLM:\SOFTWARE\DriverAutomationTool\Toast\BIOS', 'HKLM:\SOFTWARE\DriverAutomationTool\Toast')) {
+                if (-not (Test-Path $toastStateKey)) { continue }
+                $hadDeferralState = ($null -ne (Get-ItemProperty -Path $toastStateKey -Name 'DeferralCount' -ErrorAction SilentlyContinue).DeferralCount) -or `
+                                    ($null -ne (Get-ItemProperty -Path $toastStateKey -Name 'SnoozeUntil'   -ErrorAction SilentlyContinue).SnoozeUntil)
+                Remove-ItemProperty -Path $toastStateKey -Name 'DeferralCount' -Force -ErrorAction SilentlyContinue
+                Remove-ItemProperty -Path $toastStateKey -Name 'SnoozeUntil'   -Force -ErrorAction SilentlyContinue
+                if ($hadDeferralState) {
+                    Write-CMTraceLog "Cleared toast deferral state (DeferralCount/SnoozeUntil) under '$toastStateKey' after '$Result' -- reset for the next update cycle"
+                }
+            }
+        } else {
+            # Deferral (RetryScheduled) or failure (Failed/NoContent) -- surface a single
+            # human-readable reason for reporting. Prefer the supplied message, falling back
+            # to the phase, then the raw result label.
+            $reasonText = if (-not [string]::IsNullOrEmpty($ErrorMessage)) {
+                $ErrorMessage
+            } elseif (-not [string]::IsNullOrEmpty($Phase)) {
+                "$Result ($Phase)"
+            } else {
+                $Result
+            }
+            Set-ItemProperty -Path $RegPath -Name 'Reason' -Value $reasonText -Force
+        }
+    } catch {
+        Write-CMTraceLog "WARNING: Failed to write install status to registry -- $($_.Exception.Message)" -Severity 2
+    }
+}
+
+function Get-BIOSPasswordFromRegistry {
+    <#
+    .SYNOPSIS
+        Retrieves and decrypts a BIOS password from the registry.
+        The password is stored as a DPAPI-encrypted SecureString blob (machine-scope),
+        set by Set-DATBIOSPassword or the Intune proactive remediation script.
+        Decryption only succeeds when running as SYSTEM on the same machine that encrypted it.
+    #>
+    $regPath = 'HKLM:\SOFTWARE\DriverAutomationTool\BIOS'
+    try {
+        $encryptedBlob = (Get-ItemProperty -Path $regPath -Name 'Password' -ErrorAction SilentlyContinue).Password
+        if ([string]::IsNullOrEmpty($encryptedBlob)) {
+            Write-CMTraceLog "No BIOS password configured in registry -- proceeding without password"
+            return $null
+        }
+
+        $secureString = ConvertTo-SecureString -String $encryptedBlob -ErrorAction Stop
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureString)
+        try {
+            $plaintext = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+        } finally {
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+
+        Write-CMTraceLog "BIOS password decrypted successfully from registry"
+        return $plaintext
+    } catch {
+        Write-CMTraceLog "WARNING: Failed to decrypt BIOS password -- $($_.Exception.Message). Proceeding without password." -Severity 2
+        return $null
+    }
+}
+
+function Invoke-BIOSFlashUtility {
+    <#
+    .SYNOPSIS
+        Executes a BIOS flash utility and captures output for logging.
+    .DESCRIPTION
+        Every manufacturer's flash runs through here, so BitLocker protection is confirmed off
+        immediately before the tool starts. If it cannot be, the flash is not attempted.
+    #>
+    param (
+        [Parameter(Mandatory)][string]$FilePath,
+        [string]$Arguments,
+        [int]$TimeoutSeconds = 600
+    )
+
+    if (-not (Confirm-DATBitLockerSuspended -Stage 'Flash')) {
+        $script:installPhase = 'BitLocker'
+        throw "BitLocker protection on $($env:SystemDrive) is on and could not be suspended, so the firmware was not flashed (flashing would trigger BitLocker recovery at the next restart). It will be retried on the next run."
+    }
+
+    Write-CMTraceLog "Executing: $FilePath $Arguments"
+
+    $stdOut = Join-Path $env:TEMP "bios_stdout.txt"
+    $stdErr = Join-Path $env:TEMP "bios_stderr.txt"
+
+    $processParams = @{
+        FilePath               = $FilePath
+        NoNewWindow            = $true
+        Wait                   = $true
+        PassThru               = $true
+        RedirectStandardOutput = $stdOut
+        RedirectStandardError  = $stdErr
+    }
+    if (-not [string]::IsNullOrEmpty($Arguments)) {
+        $processParams['ArgumentList'] = $Arguments
+    }
+
+    try {
+        $process = Start-Process @processParams -ErrorAction Stop
+    } catch {
+        Write-CMTraceLog "ERROR: Failed to launch BIOS flash utility '$FilePath' -- $($_.Exception.Message)" -Severity 3
+        return -1
+    }
+
+    if (Test-Path $stdOut) {
+        $output = Get-Content $stdOut -ErrorAction SilentlyContinue
+        foreach ($line in $output) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { Write-CMTraceLog "BIOS Flash: $line" }
+        }
+        Remove-Item $stdOut -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $stdErr) {
+        $errOutput = Get-Content $stdErr -ErrorAction SilentlyContinue
+        foreach ($line in $errOutput) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { Write-CMTraceLog "BIOS Flash Error: $line" -Severity 2 }
+        }
+        Remove-Item $stdErr -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-CMTraceLog "BIOS flash utility exit code: $($process.ExitCode)"
+    return $process.ExitCode
+}
+
+function Get-DATBitLockerProtection {
+    <#
+    .SYNOPSIS
+        Reads BitLocker protection on the OS drive.
+    .DESCRIPTION
+        Reads Win32_EncryptableVolume directly rather than through Get-BitLockerVolume, so a
+        missing BitLocker module or a failed query reports Unknown instead of looking like
+        "BitLocker is not enabled". State is one of:
+          On           -- protectors are active: a firmware change would trigger recovery
+          Off          -- not protecting (suspended, or the drive is not encrypted)
+          NotAvailable -- BitLocker is not part of this edition of Windows
+          Unknown      -- the state could not be read (Detail says why)
+        Volume is the WMI instance, for suspending when the state is On.
+    #>
+    try {
+        $vol = Get-CimInstance -Namespace 'root\cimv2\Security\MicrosoftVolumeEncryption' -ClassName 'Win32_EncryptableVolume' `
+            -Filter "DriveLetter='$($env:SystemDrive)'" -ErrorAction Stop
+    } catch {
+        if ("$($_.Exception.NativeErrorCode)" -in @('InvalidNamespace', 'InvalidClass')) {
+            return [pscustomobject]@{ State = 'NotAvailable'; Volume = $null; Detail = 'BitLocker is not available on this edition of Windows' }
+        }
+        return [pscustomobject]@{ State = 'Unknown'; Volume = $null; Detail = "query failed: $($_.Exception.Message)" }
+    }
+    if ($null -eq $vol) {
+        return [pscustomobject]@{ State = 'Unknown'; Volume = $null; Detail = "$($env:SystemDrive) is not listed as an encryptable volume" }
+    }
+    try {
+        $status = Invoke-CimMethod -InputObject $vol -MethodName 'GetProtectionStatus' -ErrorAction Stop
+        if ($status.ReturnValue -ne 0) {
+            return [pscustomobject]@{ State = 'Unknown'; Volume = $vol; Detail = ('GetProtectionStatus returned 0x{0:X8}' -f [uint32]$status.ReturnValue) }
+        }
+        switch ([int]$status.ProtectionStatus) {
+            0       { return [pscustomobject]@{ State = 'Off'; Volume = $vol; Detail = '' } }
+            1       { return [pscustomobject]@{ State = 'On';  Volume = $vol; Detail = '' } }
+            default { return [pscustomobject]@{ State = 'Unknown'; Volume = $vol; Detail = "protection status $($status.ProtectionStatus) (volume locked?)" } }
+        }
+    } catch {
+        return [pscustomobject]@{ State = 'Unknown'; Volume = $vol; Detail = "GetProtectionStatus failed: $($_.Exception.Message)" }
+    }
+}
+
+function Confirm-DATBitLockerSuspended {
+    <#
+    .SYNOPSIS
+        Makes sure BitLocker protection on the OS drive is off before a firmware change.
+    .DESCRIPTION
+        Firmware changes the TPM measurements, so if protection is on when new firmware runs, the
+        key is not released and the device boots to the BitLocker recovery screen. Called
+        immediately before the flash tool runs and immediately before the restart: anything
+        that runs in between (an Intune BitLocker policy, a compliance or remediation script, an
+        OEM agent, the user) can turn protection back on.
+
+        Reads the state, suspends for one restart when it is On, and reads it back. A state
+        that cannot be read is retried. Returns $true only when protection is confirmed off,
+        or BitLocker is not part of this edition of Windows; the caller must not flash or
+        restart otherwise.
+    #>
+    param(
+        [Parameter(Mandatory)][ValidateSet('Flash', 'Restart')][string]$Stage,
+        [int]$Attempts = 3
+    )
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $state = Get-DATBitLockerProtection
+        $detail = if ($state.Detail) { " -- $($state.Detail)" } else { '' }
+        switch ($state.State) {
+            'NotAvailable' {
+                Write-CMTraceLog "[BitLocker] Before the $($Stage.ToLower()): BitLocker is not available on this edition of Windows -- nothing to suspend"
+                return $true
+            }
+            'Off' {
+                $how = if ($script:BitLockerSuspended) { 'suspended by this run' } else { 'already off (suspended, or the drive is not encrypted)' }
+                Write-CMTraceLog "[BitLocker] Before the $($Stage.ToLower()): protection on $($env:SystemDrive) is OFF -- $how"
+                return $true
+            }
+            'On' {
+                Write-CMTraceLog "[BitLocker] Before the $($Stage.ToLower()): protection on $($env:SystemDrive) is ON -- suspending for 1 restart (attempt $attempt of $Attempts)"
+                try {
+                    $suspend = Invoke-CimMethod -InputObject $state.Volume -MethodName 'DisableKeyProtectors' -Arguments @{ DisableCount = [uint32]1 } -ErrorAction Stop
+                    if ($suspend.ReturnValue -eq 0) {
+                        $script:BitLockerSuspended = $true
+                        Write-CMTraceLog "[BitLocker] Suspend accepted -- reading the state back to confirm"
+                    } else {
+                        Write-CMTraceLog ("[BitLocker] Suspend was refused: DisableKeyProtectors returned 0x{0:X8}" -f [uint32]$suspend.ReturnValue) -Severity 2
+                    }
+                } catch {
+                    Write-CMTraceLog "[BitLocker] Suspend failed: $($_.Exception.Message)" -Severity 2
+                }
+                # The next read (next attempt, or the final read below) confirms it took effect
+            }
+            default {
+                Write-CMTraceLog "[BitLocker] Before the $($Stage.ToLower()): protection state could not be read (attempt $attempt of $Attempts)$detail" -Severity 2
+                if ($attempt -lt $Attempts) { Start-Sleep -Seconds 3 }
+            }
+        }
+    }
+    # Final read: a suspend made on the last attempt is confirmed here
+    $final = Get-DATBitLockerProtection
+    if ($final.State -in @('Off', 'NotAvailable')) {
+        Write-CMTraceLog "[BitLocker] Before the $($Stage.ToLower()): protection on $($env:SystemDrive) is confirmed $($final.State.ToUpper())"
+        return $true
+    }
+    $finalDetail = if ($final.Detail) { " ($($final.Detail))" } else { '' }
+    Write-CMTraceLog "[BitLocker] Before the $($Stage.ToLower()): protection on $($env:SystemDrive) is $($final.State.ToUpper())$finalDetail and could not be confirmed as suspended" -Severity 3
+    return $false
+}
+
+function Test-DATEarlierFirmwareStaged {
+    <#
+    .SYNOPSIS
+        True when an earlier run staged firmware that is still waiting for a restart.
+    .DESCRIPTION
+        The marker records the boot the firmware was staged in; if the device has not restarted
+        since, that firmware applies at the next restart, so BitLocker must stay suspended for it
+        even if this run's own flash did not go ahead.
+    #>
+    try {
+        $marker = Get-ItemProperty -Path $VersionRegPath -ErrorAction Stop
+        if ($marker.PendingReboot -ne 1 -or -not $marker.PendingRebootBootTime) { return $false }
+        $stagedBoot  = [datetime]::Parse($marker.PendingRebootBootTime, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        $currentBoot = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+        return ([math]::Abs(($currentBoot - $stagedBoot).TotalMinutes) -le 1)
+    } catch {
+        return $false
+    }
+}
+
+function Resume-BitLockerProtection {
+    <#
+    .SYNOPSIS
+        Turns BitLocker protection back on after this run suspended it but did not flash, so the
+        drive is not left unprotected. Not used while earlier staged firmware is still waiting
+        for a restart: resuming then would trigger recovery when that firmware applies.
+    #>
+    if (Test-DATEarlierFirmwareStaged) {
+        Write-CMTraceLog "[BitLocker] Leaving protection suspended: firmware staged by an earlier run is still waiting for a restart, and resuming now would trigger recovery when it applies" -Severity 2
+        return
+    }
+    $state = Get-DATBitLockerProtection
+    if ($state.State -ne 'Off') { return }
+    try {
+        $resume = Invoke-CimMethod -InputObject $state.Volume -MethodName 'EnableKeyProtectors' -ErrorAction Stop
+        if ($resume.ReturnValue -eq 0) {
+            Write-CMTraceLog "[BitLocker] Protection re-enabled -- the firmware was not flashed"
+        } else {
+            Write-CMTraceLog ("[BitLocker] WARNING: re-enabling protection returned 0x{0:X8}" -f [uint32]$resume.ReturnValue) -Severity 2
+        }
+    } catch {
+        Write-CMTraceLog "[BitLocker] WARNING: Failed to re-enable protection: $($_.Exception.Message)" -Severity 2
+    }
+}
+
+function Test-LenovoFlashNotRequired {
+    <#
+    .SYNOPSIS
+        True when WinUPTP's own log says this run found the BIOS already installed.
+    .DESCRIPTION
+        WinUPTP exits -1 when it declines an update it considers unnecessary -- the same code it
+        uses for real failures -- but its log is explicit:
+          ThinkPad System Firmware update is not required, BIOS: N4MET30W -> N4MET30W, ...
+        Treating that as a failure looped forever (#966). Only a log written during this run
+        counts, and only when the BIOS it names is unchanged and is the BIOS the device is running,
+        so a genuine failure is never read as success.
+    #>
+    param (
+        [Parameter(Mandatory)][string]$LogDirectory,
+        [Parameter(Mandatory)][datetime]$Since,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$CurrentBiosId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CurrentBiosId)) { return $false }
+    $logs = @(Get-ChildItem -Path $LogDirectory -Filter 'winuptp*.log' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $Since })
+    foreach ($log in $logs) {
+        foreach ($line in @(Get-Content -LiteralPath $log.FullName -ErrorAction SilentlyContinue)) {
+            if ($line -match 'update is not required.*?\bBIOS:\s*([A-Za-z0-9]+)\s*->\s*([A-Za-z0-9]+)') {
+                if ($Matches[1] -eq $Matches[2] -and $Matches[1] -eq $CurrentBiosId) {
+                    Write-CMTraceLog "WinUPTP log ($($log.Name)): $($line.Trim())"
+                    return $true
+                }
+            }
+        }
+    }
+    return $false
+}
+
+function Compare-BIOSVersion {
+    <#
+    .SYNOPSIS
+        Compares the current installed BIOS version against the available version.
+        Returns $true if the available version is newer (update needed).
+    #>
+    param (
+        [Parameter(Mandatory)][string]$AvailableBIOSVersion,
+        [Parameter(Mandatory)][string]$Manufacturer,
+        [string]$AvailableReleaseDate
+    )
+
+    $currentBIOS = $null
+    try {
+        $currentBIOS = Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop
+    } catch {
+        Write-CMTraceLog "ERROR: Failed to query Win32_BIOS via WMI -- $($_.Exception.Message)" -Severity 3
+        return $true  # Proceed with update if we cannot determine current version
+    }
+    $currentVersion = $currentBIOS.SMBIOSBIOSVersion.Trim()
+
+    Write-CMTraceLog "Current BIOS version: $currentVersion"
+    Write-CMTraceLog "Available BIOS version: $AvailableBIOSVersion"
+
+    switch -Wildcard ($Manufacturer) {
+        '*Dell*' {
+            try {
+                # Validate that both versions are in x.y.z format before comparing
+                $availableIsVersion = $AvailableBIOSVersion -match '^\d+(\.\d+){1,3}$'
+                $currentIsVersion = $currentVersion -like '*.*.*'
+
+                if ($currentIsVersion -and $availableIsVersion) {
+                    # x.y.z format -- use System.Version comparison
+                    if ([System.Version]$AvailableBIOSVersion -gt [System.Version]$currentVersion) {
+                        Write-CMTraceLog "Dell: Newer BIOS available ($AvailableBIOSVersion > $currentVersion)"
+                        return $true
+                    }
+                } elseif ($currentVersion -like 'A*') {
+                    # Legacy Axx format
+                    if ($availableIsVersion) {
+                        # Moving from Axx to x.y.z -- treat as upgrade
+                        Write-CMTraceLog "Dell: Format change detected (A-series to versioned) -- update available"
+                        return $true
+                    } elseif ($AvailableBIOSVersion -gt $currentVersion) {
+                        Write-CMTraceLog "Dell: Newer BIOS available ($AvailableBIOSVersion > $currentVersion)"
+                        return $true
+                    }
+                } else {
+                    # Available version is a DAT package date stamp (ddMMyyyy) -- cannot compare
+                    Write-CMTraceLog "Dell: Package version '$AvailableBIOSVersion' is not a BIOS version -- skipping comparison, proceeding with update" -Severity 2
+                    return $true
+                }
+            } catch {
+                Write-CMTraceLog "WARNING: Dell BIOS version comparison failed -- $($_.Exception.Message). Proceeding with update." -Severity 2
+                return $true
+            }
+        }
+        '*Lenovo*' {
+            try {
+                # Lenovo ships BIOS updates as two different package types, and the catalog stores
+                # whichever version string the package declared:
+                #   BIOS_* packages -- the version IS the UEFI BIOS version the device reports in
+                #                      SMBIOSBIOSVersion, e.g. "N4BET77W (1.47 )" -> 1.47.
+                #   FWU_*  packages -- the version is the System Firmware (UEFI capsule) version,
+                #                      which runs on a completely separate counter. n4buj30w, for
+                #                      example, is System Firmware 1.29 and contains UEFI BIOS 1.47.
+                # The two scales are not interchangeable, so read both versions off the device and
+                # only decide when they agree. Release dates cannot settle this on their own:
+                # Win32_BIOS.ReleaseDate is the firmware BUILD date while the catalog carries the
+                # PUBLICATION date, so a device running exactly the BIOS inside the package still
+                # looks weeks out of date -- which is what prompted users to flash a BIOS they
+                # already had, every single Intune cycle.
+                $currentUefiVersion     = ConvertTo-BIOSVersionObject -Value (Get-LenovoUefiBiosVersion -BIOS $currentBIOS)
+                $currentFirmwareVersion = ConvertTo-BIOSVersionObject -Value (Get-LenovoSystemFirmwareVersion)
+                $availableVersion       = ConvertTo-BIOSVersionObject -Value $AvailableBIOSVersion
+                $deviceVersions         = @(@($currentUefiVersion, $currentFirmwareVersion) | Where-Object { $null -ne $_ })
+
+                if ($null -ne $availableVersion -and $deviceVersions.Count -gt 0) {
+                    $versionDetail = @()
+                    if ($null -ne $currentUefiVersion)     { $versionDetail += "UEFI BIOS $currentUefiVersion" }
+                    if ($null -ne $currentFirmwareVersion) { $versionDetail += "System Firmware $currentFirmwareVersion" }
+                    $versionSummary = $versionDetail -join ' / '
+                    Write-CMTraceLog "Lenovo: Device reports $versionSummary | package version $AvailableBIOSVersion"
+
+                    if ($deviceVersions -contains $availableVersion) {
+                        Write-CMTraceLog "Lenovo: Package version $AvailableBIOSVersion is already installed ($versionSummary) -- no update required"
+                        return $false
+                    }
+                    if (-not ($deviceVersions | Where-Object { $_ -ge $availableVersion })) {
+                        Write-CMTraceLog "Lenovo: Newer BIOS available (package $AvailableBIOSVersion is ahead of $versionSummary)"
+                        return $true
+                    }
+                    if (-not ($deviceVersions | Where-Object { $_ -le $availableVersion })) {
+                        Write-CMTraceLog "Lenovo: Device firmware ($versionSummary) is ahead of package $AvailableBIOSVersion -- no update required"
+                        return $false
+                    }
+                    Write-CMTraceLog "Lenovo: Package version $AvailableBIOSVersion falls between the device's own versions ($versionSummary) -- cannot tell which scale it is on, falling back to release date" -Severity 2
+                }
+
+                # Guard a null/absent BIOS release date, and require a strict 8-digit yyyyMMdd on
+                # BOTH sides before comparing. The compare is ordinal (culture-independent).
+                $currentReleaseDate = if ($null -ne $currentBIOS.ReleaseDate) {
+                    ([datetime]$currentBIOS.ReleaseDate).ToString('yyyyMMdd')
+                } else { '' }
+                Write-CMTraceLog "Lenovo: Current BIOS release date: $currentReleaseDate"
+                Write-CMTraceLog "Lenovo: Available BIOS version: $AvailableBIOSVersion"
+
+                # Use release date comparison only when both dates are valid 8-digit stamps
+                # (version strings like M43KT32A are not reliably sortable). This is a last
+                # resort: the catalog date is a publication date and the device date is a build
+                # date, so it is biased towards reporting an update.
+                $datesComparable = ($AvailableReleaseDate -match '^\d{8}$') -and ($currentReleaseDate -match '^\d{8}$')
+                if ($datesComparable) {
+                    Write-CMTraceLog "Lenovo: Available BIOS release date: $AvailableReleaseDate"
+                    if ([string]::CompareOrdinal($AvailableReleaseDate, $currentReleaseDate) -gt 0) {
+                        Write-CMTraceLog "Lenovo: Newer BIOS available (release date $AvailableReleaseDate > $currentReleaseDate)"
+                        return $true
+                    }
+                } else {
+                    Write-CMTraceLog "Lenovo: No usable release date -- falling back to version string comparison" -Severity 2
+                    if ($AvailableBIOSVersion -gt $currentVersion) {
+                        Write-CMTraceLog "Lenovo: Newer BIOS available (version $AvailableBIOSVersion > $currentVersion)"
+                        return $true
+                    }
+                }
+            } catch {
+                Write-CMTraceLog "WARNING: Lenovo BIOS version comparison failed -- $($_.Exception.Message). Proceeding with update." -Severity 2
+                return $true
+            }
+        }
+        '*HP*' {
+            try {
+                $AvailableBIOSVersion = $AvailableBIOSVersion.TrimEnd('.').Split(' ')[0]
+
+                switch -Wildcard ($currentVersion) {
+                    '*ver*' {
+                        # Older HP format: "68xxx Ver. F.xx"
+                        if ($currentVersion -match '\.F\.\d+$') {
+                            $parsedCurrent = ($currentVersion -split 'Ver\.')[1].Trim()
+                            if ([int]($AvailableBIOSVersion.TrimStart('F.')) -gt [int]($parsedCurrent.TrimStart('F.'))) {
+                                Write-CMTraceLog "HP: Newer BIOS available (F-series format)"
+                                return $true
+                            }
+                        } else {
+                            $parsedCurrent = [System.Version](($currentVersion).TrimStart($currentVersion.Split('.')[0]).TrimStart('.').Trim().Split(' ')[0])
+                            if ([System.Version]$AvailableBIOSVersion -gt $parsedCurrent) {
+                                Write-CMTraceLog "HP: Newer BIOS available (versioned format)"
+                                return $true
+                            }
+                        }
+                    }
+                    default {
+                        # Newer HP format: Major.Minor from SystemBiosMajorVersion/SystemBiosMinorVersion
+                        $currentFormatted = "$($currentBIOS.SystemBiosMajorVersion).$($currentBIOS.SystemBiosMinorVersion)"
+                        if ([System.Version]$AvailableBIOSVersion -gt [System.Version]$currentFormatted) {
+                            Write-CMTraceLog "HP: Newer BIOS available ($AvailableBIOSVersion > $currentFormatted)"
+                            return $true
+                        }
+                    }
+                }
+            } catch {
+                Write-CMTraceLog "WARNING: HP BIOS version comparison failed -- $($_.Exception.Message). Proceeding with update." -Severity 2
+                return $true
+            }
+        }
+        '*Microsoft*' {
+            try {
+                # Surface firmware -- version comparison
+                if ([System.Version]$AvailableBIOSVersion -gt [System.Version]$currentVersion) {
+                    Write-CMTraceLog "Microsoft: Newer firmware available ($AvailableBIOSVersion > $currentVersion)"
+                    return $true
+                }
+            } catch {
+                Write-CMTraceLog "WARNING: Microsoft BIOS version comparison failed -- $($_.Exception.Message). Proceeding with update." -Severity 2
+                return $true
+            }
+        }
+        '*Acer*' {
+            try {
+                # Acer BIOS versions are clean dotted values (e.g. 1.05, 1.27) -- use System.Version.
+                # Fall back to release-date comparison (yyyyMMdd, ordinal) when either side is not
+                # a parseable version.
+                $availableIsVersion = $AvailableBIOSVersion -match '^\d+(\.\d+){1,3}$'
+                $currentIsVersion   = $currentVersion -match '^\d+(\.\d+){1,3}$'
+                if ($availableIsVersion -and $currentIsVersion) {
+                    if ([System.Version]$AvailableBIOSVersion -gt [System.Version]$currentVersion) {
+                        Write-CMTraceLog "Acer: Newer BIOS available ($AvailableBIOSVersion > $currentVersion)"
+                        return $true
+                    }
+                } else {
+                    $currentReleaseDate = if ($null -ne $currentBIOS.ReleaseDate) {
+                        ([datetime]$currentBIOS.ReleaseDate).ToString('yyyyMMdd')
+                    } else { '' }
+                    $datesComparable = ($AvailableReleaseDate -match '^\d{8}$') -and ($currentReleaseDate -match '^\d{8}$')
+                    if ($datesComparable) {
+                        if ([string]::CompareOrdinal($AvailableReleaseDate, $currentReleaseDate) -gt 0) {
+                            Write-CMTraceLog "Acer: Newer BIOS available (release date $AvailableReleaseDate > $currentReleaseDate)"
+                            return $true
+                        }
+                    } else {
+                        Write-CMTraceLog "Acer: Version/date not comparable -- proceeding with update" -Severity 2
+                        return $true
+                    }
+                }
+            } catch {
+                Write-CMTraceLog "WARNING: Acer BIOS version comparison failed -- $($_.Exception.Message). Proceeding with update." -Severity 2
+                return $true
+            }
+        }
+        default {
+            Write-CMTraceLog "Unknown manufacturer '$Manufacturer' -- skipping version comparison, proceeding with update" -Severity 2
+            return $true
+        }
+    }
+
+    Write-CMTraceLog "BIOS is already up to date -- no update required"
+    return $false
+}
+
+function ConvertTo-BIOSVersionObject {
+    <#
+    .SYNOPSIS
+        Parses a plain dotted numeric version ("1.29", "1.47", "1.24.0") into [System.Version].
+    .DESCRIPTION
+        Returns $null for anything that is not a plain dotted number -- Lenovo dual-BIOS catalog
+        entries ("1.68_1.57"), BIOS ID strings and DAT date stamps included -- so callers treat an
+        unparseable value as "no usable version" rather than guessing at one.
+    #>
+    param ([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $trimmed = $Value.Trim()
+    if ($trimmed -notmatch '^\d+(\.\d+){1,3}$') { return $null }
+    $parsed = $null
+    if ([System.Version]::TryParse($trimmed, [ref]$parsed)) { return $parsed }
+    return $null
+}
+
+function Get-LenovoUefiBiosVersion {
+    <#
+    .SYNOPSIS
+        Returns the UEFI BIOS version a Lenovo device reports, as a dotted string ("1.47").
+    .DESCRIPTION
+        Lenovo formats SMBIOSBIOSVersion as "<BIOS ID> (<version> )" -- e.g. "N4BET77W (1.47 )" --
+        and it is the bracketed value that Lenovo publishes as "UEFI BIOS" in its package readmes.
+        When the string is not in that form, fall back to the SMBIOS major/minor pair, which
+        carries the same number (1 and 47 for the example above).
+    #>
+    param ($BIOS)
+
+    if ($null -eq $BIOS) { return '' }
+    $raw = [string]$BIOS.SMBIOSBIOSVersion
+    if ($raw -match '\(\s*(\d+(?:\.\d+){1,3})\s*\)') { return $Matches[1] }
+    if ($null -ne $BIOS.SystemBiosMajorVersion -and $null -ne $BIOS.SystemBiosMinorVersion) {
+        return "$($BIOS.SystemBiosMajorVersion).$($BIOS.SystemBiosMinorVersion)"
+    }
+    return ''
+}
+
+function Get-LenovoSystemFirmwareVersion {
+    <#
+    .SYNOPSIS
+        Returns the Lenovo System Firmware (UEFI capsule) version from the device's ESRT, as "1.29".
+    .DESCRIPTION
+        Lenovo's FWU_* packages gate themselves on the EFI System Resource Table rather than on the
+        BIOS string: n4buj30w (ThinkPad X1 Carbon Gen 13) declares
+        <Version hex2dec="True">1001D^</Version> for its UEFI\RES_{...} resource, and 0x1001D
+        decodes as major 1 / minor 0x1D -- "System Firmware 1.29", exactly the version its readme
+        lists and the version the DAT catalog stores for that package. Windows exposes the same
+        DWORD under HKLM:\SYSTEM\CurrentControlSet\Control\FirmwareResources\{GUID}\Version.
+
+        The high-word/low-word split is Lenovo's convention (other OEMs pack the same DWORD
+        differently), so this is only ever called from the Lenovo comparison. The system-firmware
+        compatible ID is locale-independent; friendly names such as "System Firmware" are localized,
+        and a lone ESRT resource can instead represent device firmware such as TrackPoint firmware.
+        Returns an empty string unless exactly one system-firmware device and a valid Lenovo version
+        can be identified, leaving the caller to fall back rather than compare another component.
+    #>
+
+    try {
+        $systemFirmwareDevices = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPClass='Firmware'" -ErrorAction Stop |
+            Where-Object {
+                @($_.CompatibleID) | Where-Object { $_ -ieq 'UEFI\CC_00010001' }
+            })
+        if ($systemFirmwareDevices.Count -ne 1) { return '' }
+
+        $systemFirmwareDevice = $systemFirmwareDevices[0]
+        [Nullable[uint32]]$rawVersion = $null
+        foreach ($hardwareId in @($systemFirmwareDevice.HardwareID)) {
+            if ([string]$hardwareId -match '(?i)&REV_([0-9A-F]{1,8})$') {
+                $rawVersion = [Convert]::ToUInt32($Matches[1], 16)
+                break
+            }
+        }
+
+        if ($null -eq $rawVersion -and [string]$systemFirmwareDevice.DeviceID -match '(?i)^UEFI\\RES_(\{[0-9A-F-]{36}\})\\') {
+            $resourcePath = Join-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FirmwareResources' $Matches[1]
+            if (Test-Path $resourcePath) {
+                $rawVersion = [uint32](Get-ItemProperty -Path $resourcePath -Name 'Version' -ErrorAction Stop).Version
+            }
+        }
+
+        if ($null -eq $rawVersion) { return '' }
+        $major = [int]([uint32]$rawVersion -shr 16)
+        $minor = [int]([uint32]$rawVersion -band 0xFFFF)
+        if ($major -lt 1 -or $minor -gt 0xFF) { return '' }
+        return "$major.$minor"
+    } catch {
+        return ''
+    }
+}
+
+function Test-DATBiosConfirmedCurrent {
+    <#
+    .SYNOPSIS
+        True when the OEM flash tool confirmed on an earlier run that this package's BIOS is
+        already installed, and the device still runs the exact BIOS it confirmed.
+    .DESCRIPTION
+        A safety net for when Compare-BIOSVersion misjudges a device: the installer then runs the
+        flash tool, the tool refuses because there is nothing to do, and without this the
+        requirement, install and detection steps keep agreeing that an update is needed -- an
+        endless Intune retry loop of toasts, BitLocker suspensions and failed flashes (#966).
+
+        Written only by the installer, and only from the flash tool's own explicit report. Tied to
+        both the package version and the full SMBIOS BIOS string, so it stops counting the moment
+        either changes: a later flash, a rollback or a new package all invalidate it. Unlike the
+        plain Version marker, it can therefore be trusted while the live BIOS is readable.
+    #>
+    param (
+        [Parameter(Mandatory)][string]$RegPath,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Version
+    )
+
+    try {
+        $marker = Get-ItemProperty -Path $RegPath -ErrorAction SilentlyContinue
+        if ($null -eq $marker) { return $false }
+        $confirmedBios = [string]$marker.ConfirmedCurrentBiosId
+        if ([string]::IsNullOrWhiteSpace($confirmedBios) -or [string]$marker.ConfirmedCurrentVersion -ne $Version) { return $false }
+        $liveBios = ([string](Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SMBIOSBIOSVersion).Trim()
+        return ($liveBios -eq $confirmedBios)
+    } catch {
+        return $false
+    }
+}
+{{TOAST_FUNCTIONS}}
+{{PROGRESS_FUNCTIONS}}
+{{PROVISIONING_FUNCTIONS}}
+
+# Fail before payload discovery or extraction if no validated flash implementation exists.
+# The build pipeline enforces the same boundary, but the generated installer must remain safe if
+# it is copied, retained, or invoked independently of that pipeline.
+$DATSupportedBIOSManufacturers = @('Dell', 'HP', 'Lenovo')
+$DATTemplateManufacturer = '{{OEM}}'
+if ($DATTemplateManufacturer -notin $DATSupportedBIOSManufacturers) {
+    Write-Error "Standalone BIOS installation is not supported for '$DATTemplateManufacturer'. Validated flash installers are available only for Dell, HP, and Lenovo."
+    exit 1
+}
+if ($ValidateManufacturerOnly) {
+    Write-Host "Validated standalone BIOS installer path for $DATTemplateManufacturer."
+    exit 0
+}
+
+# Uninstall command. Older builds pointed the Intune uninstall command at this script without a
+# switch, so an uninstall assignment re-ran the flash. A BIOS cannot be rolled back from here
+# (most OEMs block downgrades), so record the request and leave the firmware alone.
+if ($Uninstall) {
+    Write-CMTraceLog "=========================================="
+    Write-CMTraceLog "Driver Automation Tool - BIOS Uninstall Requested"
+    Write-CMTraceLog "OEM: {{OEM}} | Model: {{Model}} | Package Version: {{Version}}"
+    Write-CMTraceLog "BIOS updates cannot be rolled back by the Driver Automation Tool -- nothing was changed. Use the OEM's own tooling if a downgrade is required and permitted." -Severity 2
+    Write-CMTraceLog "=========================================="
+    exit 0
+}
+
+try {
+    Write-CMTraceLog "=========================================="
+    if ($WhatIf) { Write-CMTraceLog "*** WHATIF MODE -- no BIOS changes will be applied ***" -Severity 2 }
+    Write-CMTraceLog "Driver Automation Tool - BIOS Install Starting"
+    Write-CMTraceLog "OEM: {{OEM}} | Model: {{Model}}"
+    Write-CMTraceLog "OS: {{OS}} | Package Version: {{Version}}"
+    Write-CMTraceLog "Script Generated: {{Generated}}"
+    Write-CMTraceLog "=========================================="
+
+    # -- Verbose device / environment context (aids Intune and custom log troubleshooting) --
+    # The current BIOS version and release date are logged explicitly because the requirement
+    # rule now gates applicability on the BIOS release date -- this makes the comparison auditable.
+    try {
+        $ctxCs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $ctxOs = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        $ctxBios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop
+        $ctxBiosDate = if ($ctxBios.ReleaseDate) { ([datetime]$ctxBios.ReleaseDate).ToString('yyyy-MM-dd') } else { 'unknown' }
+        Write-CMTraceLog "Device: $($ctxCs.Manufacturer) | Model: $($ctxCs.Model) | SKU: $($ctxCs.SystemSKUNumber)"
+        Write-CMTraceLog "OS: $($ctxOs.Caption) ($($ctxOs.Version)) | Build: $($ctxOs.BuildNumber)"
+        Write-CMTraceLog "Current BIOS: version '$($ctxBios.SMBIOSBIOSVersion)' | release date $ctxBiosDate"
+        Write-CMTraceLog "Package BIOS: version '{{Version}}' | release date '{{ReleaseDate}}'"
+        Write-CMTraceLog "PowerShell: $($PSVersionTable.PSVersion) | 64-bit process: $([Environment]::Is64BitProcess)"
+    } catch {
+        Write-CMTraceLog "WARNING: Could not gather full device context -- $($_.Exception.Message)" -Severity 2
+    }
+
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $WimFile = Join-Path $ScriptDir "DriverPackage.wim"
+    $ExtractPath = Join-Path $env:ProgramData "DriverAutomationTool\Extract"
+    $VersionRegPath = 'HKLM:\SOFTWARE\DriverAutomationTool\BIOS\{{OEM}}\{{ModelKey}}'
+    $Manufacturer = '{{OEM}}'
+    $installPhase = 'Init'
+    $flashExitCode = $null
+    # Overwritten by Show-DATStatusToast; this default stands only when the package was built
+    # with toast notifications disabled (so the function never runs).
+    $script:DATLastStatusToastOutcome = 'NotShown: toast notifications disabled for this package'
+
+    Write-CMTraceLog "Script directory: $ScriptDir"
+    Write-CMTraceLog "WIM file path: $WimFile"
+    Write-CMTraceLog "Extract target: $ExtractPath"
+    Write-CMTraceLog "Version registry path: $VersionRegPath"
+    Write-CMTraceLog "Manufacturer: $Manufacturer"
+
+    # Intune packages carry the BIOS payload as DriverPackage.wim. A ConfigMgr Application shares
+    # its source folder with the legacy BIOS package, which holds the payload as loose files
+    # because the task sequence BIOS script reads them directly -- so loose files are accepted
+    # when there is no WIM. The DAT scripts and the HP password file are never payload.
+    $datContentFiles = @('Install-BIOS.ps1', 'Show-ToastNotification.ps1', 'Show-ProgressToast.ps1', 'HPPasswordFile.bin')
+    $looseContent = @()
+    if (Test-Path $WimFile) {
+        $wimSize = [math]::Round((Get-Item $WimFile).Length / 1MB, 2)
+        Write-CMTraceLog "WIM file size: $wimSize MB"
+    } else {
+        $looseContent = @(Get-ChildItem -Path $ScriptDir -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notin $datContentFiles -and $_.Name -notlike 'Show-StatusToast-*.ps1' })
+        if ($looseContent.Count -eq 0) {
+            Write-CMTraceLog "ERROR: No WIM file at $WimFile and no BIOS payload files in $ScriptDir" -Severity 3
+            throw "WIM file not found at $WimFile"
+        }
+        Write-CMTraceLog "No WIM file -- using $($looseContent.Count) loose payload item(s) from $ScriptDir"
+    }
+
+    # -- BIOS Version Check ------------------------------------------------------
+    # Compare versions BEFORE prompting the user -- no point showing a toast if
+    # the BIOS is already current.
+    Write-CMTraceLog "Performing BIOS version comparison..."
+    $installPhase = 'VersionCheck'
+    $updateNeeded = Compare-BIOSVersion -AvailableBIOSVersion '{{Version}}' -Manufacturer $Manufacturer -AvailableReleaseDate '{{ReleaseDate}}'
+    if ($updateNeeded -and (Test-DATBiosConfirmedCurrent -RegPath $VersionRegPath -Version '{{Version}}')) {
+        Write-CMTraceLog "The version comparison reports an update, but the flash tool confirmed on an earlier run that this package's BIOS is installed and the BIOS has not changed since -- treating as current" -Severity 2
+        $updateNeeded = $false
+    }
+
+    if (-not $updateNeeded) {
+        Write-CMTraceLog "BIOS is current -- no update will be applied"
+
+        # Write version marker to registry so detection script sees the package as installed
+        if (-not (Test-Path $VersionRegPath)) {
+            New-Item -Path $VersionRegPath -Force | Out-Null
+        }
+        Set-ItemProperty -Path $VersionRegPath -Name 'Version' -Value '{{Version}}' -Force
+        Set-ItemProperty -Path $VersionRegPath -Name 'InstalledDate' -Value (Get-Date -Format 'o') -Force
+        Set-ItemProperty -Path $VersionRegPath -Name 'OS' -Value '{{OS}}' -Force
+        # Real hardware confirms the BIOS is current -- clear any stale PendingReboot marker
+        # left over from a prior staged update whose reboot has since completed.
+        $hadPendingRestart = $null -ne (Get-ItemProperty -Path $VersionRegPath -Name 'PendingReboot' -ErrorAction SilentlyContinue).PendingReboot
+        foreach ($pendingValue in @('PendingReboot', 'PendingRebootBootTime', 'RestartScheduledUtc', 'RestartDueUtc', 'RestartScheduleResult', 'RestartNotice')) {
+            Remove-ItemProperty -Path $VersionRegPath -Name $pendingValue -ErrorAction SilentlyContinue
+        }
+        if ($hadPendingRestart) {
+            Write-CMTraceLog "[RestartAudit] A previously prestaged BIOS update has now been applied -- the pending restart completed"
+        }
+        Write-CMTraceLog "Version marker written to registry (already current): $VersionRegPath"
+
+        Set-DATInstallStatus -RegPath $VersionRegPath -Result 'AlreadyCurrent' -ScriptExitCode 0 -Phase 'VersionCheck'
+
+        Write-CMTraceLog "=========================================="
+        Write-CMTraceLog "BIOS update skipped -- already up to date"
+        Write-CMTraceLog "=========================================="
+        exit 0
+    }
+
+    # -- Previous restart audit ----------------------------------------------------
+    # An update is still needed. If an earlier run prestaged this BIOS, say what became of the
+    # restart it relied on: never happened (aborted with 'shutdown /a', suppressed, or the user
+    # has not restarted) versus happened but the firmware did not take. Diagnostic only -- the
+    # run carries on to prompt and flash as normal.
+    try {
+        $prevRestart = Get-ItemProperty -Path $VersionRegPath -ErrorAction SilentlyContinue
+        if ($prevRestart -and $prevRestart.PendingReboot -eq 1) {
+            Write-CMTraceLog "[RestartAudit] A previous run prestaged BIOS '$($prevRestart.Version)' and was waiting for a restart"
+            Write-CMTraceLog "[RestartAudit] Previous outcome: phase '$($prevRestart.LastErrorPhase)' | restart schedule: '$($prevRestart.RestartScheduleResult)' | due (UTC): '$($prevRestart.RestartDueUtc)' | user notice: '$($prevRestart.RestartNotice)'"
+            $currentBoot = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+            if ($prevRestart.PendingRebootBootTime) {
+                $stagedBoot = [datetime]::Parse($prevRestart.PendingRebootBootTime, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+                if ([math]::Abs(($currentBoot - $stagedBoot).TotalMinutes) -gt 1) {
+                    Write-CMTraceLog "[RestartAudit] The device HAS restarted since the prestage (booted $($currentBoot.ToString('yyyy-MM-dd HH:mm:ss'))) but the firmware still reports an older BIOS -- the prestaged update did not apply during that restart" -Severity 2
+                } elseif ($prevRestart.RestartDueUtc) {
+                    $prevDue = [datetime]::Parse($prevRestart.RestartDueUtc, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+                    if ((Get-Date).ToUniversalTime() -gt $prevDue.ToUniversalTime()) {
+                        Write-CMTraceLog "[RestartAudit] The restart scheduled for $($prevDue.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss')) never happened -- the device has not rebooted since the prestage (restart aborted, e.g. 'shutdown /a', or blocked)" -Severity 2
+                    } else {
+                        Write-CMTraceLog "[RestartAudit] The scheduled restart is still pending (due $($prevDue.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss')))"
+                    }
+                } else {
+                    Write-CMTraceLog "[RestartAudit] The device has not rebooted since the prestage, and no automatic restart was scheduled -- waiting on the user to restart" -Severity 2
+                }
+            }
+        }
+    } catch {
+        Write-CMTraceLog "[RestartAudit] Could not audit the previous restart: $($_.Exception.Message)" -Severity 2
+    }
+
+    # -- Autopilot provisioning -------------------------------------------------
+    # Decided once, before the toast gate. Nobody can answer a prompt while the Enrollment Status
+    # Page runs, so the gate (prompt, deferrals, snooze) is skipped, the progress notification and
+    # status toasts stay hidden, and the firmware is staged without a self-scheduled restart (see
+    # the restart decision below). Deferral state is left untouched.
+    $script:DATAutopilot = Test-DATAutopilotProvisioning
+
+    # -- Toast Notification Gate (only reached when an update IS needed) ----------
+    if ($script:DATAutopilot.InProvisioning) {
+        Write-CMTraceLog "[Autopilot] Installing without prompting during Autopilot provisioning ($($script:DATAutopilot.Phase))"
+    } else {
+{{TOAST_BLOCK}}
+    }
+
+    # Optional install progress notification (no-op unless enabled for this package)
+    Start-DATInstallProgress -ToastScript (Join-Path $ScriptDir 'Show-ProgressToast.ps1')
+
+    # -- Extract WIM -------------------------------------------------------------
+    if (Test-Path $ExtractPath) {
+        Write-CMTraceLog "Removing previous BIOS extraction at $ExtractPath"
+        Remove-Item -Path $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    New-Item -Path $ExtractPath -ItemType Directory -Force | Out-Null
+    Write-CMTraceLog "Created extraction directory: $ExtractPath"
+
+    # Extract WIM contents directly using Expand-WindowsImage (DISM /Apply-Image)
+    # This avoids mounting entirely, bypassing WOF overlay issues where
+    # WIM-mounted files have FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS causing
+    # both Copy-Item and robocopy to fail with error 4350 / 0x10FE
+    $installPhase = 'Extraction'
+    if ($looseContent.Count -gt 0) {
+        try {
+            Write-CMTraceLog "Copying loose BIOS payload to: $ExtractPath"
+            foreach ($item in $looseContent) {
+                Copy-Item -Path $item.FullName -Destination $ExtractPath -Recurse -Force -ErrorAction Stop
+            }
+            Write-CMTraceLog "Payload copy completed successfully"
+        } catch [System.Exception] {
+            Write-CMTraceLog "ERROR: Failed to copy BIOS payload. Error: $($_.Exception.Message)" -Severity 3
+            throw "Failed to copy BIOS payload: $($_.Exception.Message)"
+        }
+    } else {
+        try {
+            Write-CMTraceLog "Extracting BIOS package WIM directly to: $ExtractPath"
+            Set-DATInstallProgress -Step 1 -MeasurePath $ExtractPath -WimFile $WimFile
+            Expand-WindowsImage -ImagePath $WimFile -ApplyPath $ExtractPath -Index 1 -ErrorAction Stop
+            Write-CMTraceLog "WIM extraction completed successfully"
+        } catch [System.Exception] {
+            Write-CMTraceLog "ERROR: Failed to extract BIOS package WIM file. Error: $($_.Exception.Message)" -Severity 3
+            throw "Failed to extract BIOS package WIM file: $($_.Exception.Message)"
+        }
+    }
+
+    $extractedFiles = (Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction SilentlyContinue).Count
+    Write-CMTraceLog "WIM extraction complete. Files extracted: $extractedFiles"
+
+    $integrityManifest = Join-Path $ExtractPath 'DAT-BIOS-SHA256.txt'
+    if (-not (Test-Path -LiteralPath $integrityManifest -PathType Leaf)) {
+        throw "BIOS payload integrity manifest is missing"
+    }
+    $verifiedPayloadPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in Get-Content -LiteralPath $integrityManifest -ErrorAction Stop) {
+        if ($line -notmatch '^([0-9A-Fa-f]{64})\t(.+)$') {
+            throw "BIOS payload integrity manifest contains an invalid entry"
+        }
+        $expectedHash = $Matches[1]
+        $relativePath = $Matches[2]
+        if ([System.IO.Path]::IsPathRooted($relativePath) -or $relativePath -match '(^|[\\/])\.\.([\\/]|$)') {
+            throw "BIOS payload integrity manifest contains an unsafe path: $relativePath"
+        }
+        $payloadPath = [System.IO.Path]::GetFullPath((Join-Path $ExtractPath $relativePath))
+        $extractRoot = [System.IO.Path]::GetFullPath($ExtractPath).TrimEnd('\') + '\'
+        if (-not $payloadPath.StartsWith($extractRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "BIOS payload integrity manifest path escapes the extraction root: $relativePath"
+        }
+        if (-not (Test-Path -LiteralPath $payloadPath -PathType Leaf)) {
+            throw "BIOS payload member is missing: $relativePath"
+        }
+        $actualHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256 -ErrorAction Stop).Hash
+        if ($actualHash -ine $expectedHash) {
+            throw "BIOS payload hash mismatch: $relativePath"
+        }
+        [void]$verifiedPayloadPaths.Add($payloadPath)
+    }
+    $unexpectedPayload = @(Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction Stop |
+        Where-Object { $_.FullName -ne $integrityManifest -and -not $verifiedPayloadPaths.Contains($_.FullName) })
+    if ($unexpectedPayload.Count -gt 0) {
+        throw "BIOS payload contains unverified files: $($unexpectedPayload.Name -join ', ')"
+    }
+    if ($verifiedPayloadPaths.Count -eq 0) {
+        throw "BIOS payload integrity manifest contains no files"
+    }
+    Write-CMTraceLog "BIOS payload integrity verified: $($verifiedPayloadPaths.Count) file(s)"
+
+    # BitLocker is checked immediately before flashing and again before restart.
+    Set-DATInstallProgress -Step 2
+    $script:BitLockerSuspended = $false
+    $script:FlashSucceeded = $false
+    $flashExitCode = $null
+
+    if ($WhatIf) {
+        Write-CMTraceLog "WHATIF: Would confirm BitLocker protection is suspended immediately before the flash and again before the restart" -Severity 2
+    }
+
+    # -- Retrieve BIOS Password (if configured) ---------------------------------
+    $biosPassword = Get-BIOSPasswordFromRegistry
+
+    # -- Manufacturer-Specific BIOS Flash ----------------------------------------
+
+    $installPhase = 'Flash'
+    Set-DATInstallProgress -Step 3
+    switch -Wildcard ($Manufacturer) {
+
+        # -- Dell ----------------------------------------------------------------
+        # Dell BIOS downloads are self-contained executables (e.g. Latitude_5x40_1.25.0.exe).
+        # They are run directly -- Flash64W.exe is a WinPE-only wrapper and is NOT used here.
+        # Switches: /s = silent, /l=<log> = log file, /p=<pwd> = BIOS password
+        '*Dell*' {
+            Write-CMTraceLog "Dell BIOS update detected -- searching for BIOS executable"
+
+            # Dell BIOS packages contain a single self-contained updater executable
+            $allExes = @(Get-ChildItem -Path $ExtractPath -Recurse -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ne 'Flash64W.exe' })
+
+            if ($allExes.Count -eq 1) {
+                $biosExe = $allExes[0]
+            } elseif ($allExes.Count -gt 1) {
+                # Multiple exes -- pick the largest (the BIOS updater is typically the biggest file)
+                $biosExe = $allExes | Sort-Object Length -Descending | Select-Object -First 1
+                Write-CMTraceLog "Dell: Multiple executables found -- using largest as BIOS updater: $($biosExe.Name) ($([math]::Round($biosExe.Length / 1MB, 2)) MB)" -Severity 2
+            } else {
+                $biosExe = $null
+            }
+
+            if (-not $biosExe) {
+                Write-CMTraceLog "ERROR: No Dell BIOS executable found in extracted content" -Severity 3
+                throw "No Dell BIOS executable found in extracted content"
+            }
+
+            Write-CMTraceLog "Dell BIOS executable found: $($biosExe.FullName)"
+
+            # -- AC power check -- Dell BIOS updaters refuse to flash on battery (exit code 10) --
+            if (-not $WhatIf) {
+                try {
+                    $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($battery) {
+                        # BatteryStatus 2 = AC power connected
+                        if ($battery.BatteryStatus -ne 2) {
+                            Write-CMTraceLog "AC power adapter not detected (BatteryStatus=$($battery.BatteryStatus)). Dell BIOS updates require AC power -- will retry on next Intune cycle." -Severity 2
+                            Set-DATInstallStatus -RegPath $VersionRegPath -Result 'RetryScheduled' -Phase 'ACPower' -ScriptExitCode 1618 -ErrorMessage 'AC power adapter not connected -- deferred to next Intune cycle'
+{{STATUS_TOAST_ACPOWER_BLOCK}}
+                            exit 1618  # ERROR_INSTALL_ALREADY_RUNNING -- tells Intune to retry
+                        }
+                        Write-CMTraceLog "AC power confirmed (BatteryStatus=$($battery.BatteryStatus))"
+                    } else {
+                        Write-CMTraceLog "No battery detected -- assuming desktop, skipping AC power check"
+                    }
+                } catch {
+                    Write-CMTraceLog "WARNING: Could not check AC power status -- $($_.Exception.Message). Proceeding with flash." -Severity 2
+                }
+            }
+
+            # Build arguments: /s = silent, /l = log output
+            $dellLogFile = Join-Path $env:ProgramData 'Microsoft\IntuneManagementExtension\Logs\DellBIOSFlash.log'
+            $flashArgs = "/s /l=$dellLogFile"
+            if (-not [string]::IsNullOrEmpty($biosPassword)) {
+                $flashArgs += " /p=$biosPassword"
+                Write-CMTraceLog "BIOS password will be applied to flash command"
+            }
+
+            if ($WhatIf) {
+                Write-CMTraceLog "WHATIF: Would execute Dell BIOS update: $($biosExe.FullName) $flashArgs" -Severity 2
+                $flashExitCode = 0
+            } else {
+                $flashExitCode = Invoke-BIOSFlashUtility -FilePath $biosExe.FullName -Arguments $flashArgs
+            }
+
+            # Dell exit codes:
+            #   0 = success (no reboot needed)
+            #   1 = failure
+            #   2 = success (reboot required)
+            #   6 = updater has taken control of the power state
+            #  10 = unspecified failure, not a reliable AC-power diagnosis
+            if ($flashExitCode -in @(0, 2, 6)) {
+                Write-CMTraceLog "Dell BIOS update completed successfully (exit code: $flashExitCode)"
+            } else {
+                Write-CMTraceLog "ERROR: Dell BIOS update failed with exit code: $flashExitCode" -Severity 3
+                throw "Dell BIOS update failed with exit code: $flashExitCode"
+            }
+        }
+
+        # -- HP / Hewlett-Packard ------------------------------------------------
+        '*HP*' {
+            Write-CMTraceLog "HP BIOS update detected -- searching for flash utility"
+
+            # HP uses HPFirmwareUpdRec64.exe or HPBIOSUPDREC64.exe
+            $flashUtil = Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^(HPFirmwareUpdRec64|HPBIOSUPDREC64|HPQFlash64)\.exe$' } |
+                Select-Object -First 1
+
+            if (-not $flashUtil) {
+                # Fallback: locate any HP BIOS-related exe
+                $flashUtil = Get-ChildItem -Path $ExtractPath -Recurse -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match 'HP|BIOS|Firmware' } | Select-Object -First 1
+            }
+
+            if (-not $flashUtil) {
+                Write-CMTraceLog "ERROR: No HP BIOS flash utility found in extracted content" -Severity 3
+                throw "No HP BIOS flash utility found in extracted content"
+            }
+
+            Write-CMTraceLog "HP flash utility found: $($flashUtil.FullName)"
+
+            # -- AC power check -- HP BIOS updaters may refuse to flash on battery --
+            if (-not $WhatIf) {
+                try {
+                    $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($battery) {
+                        # BatteryStatus 2 = AC power connected
+                        if ($battery.BatteryStatus -ne 2) {
+                            Write-CMTraceLog "AC power adapter not detected (BatteryStatus=$($battery.BatteryStatus)). HP BIOS updates require AC power -- will retry on next Intune cycle." -Severity 2
+                            Set-DATInstallStatus -RegPath $VersionRegPath -Result 'RetryScheduled' -Phase 'ACPower' -ScriptExitCode 1618 -ErrorMessage 'AC power adapter not connected -- deferred to next Intune cycle'
+{{STATUS_TOAST_ACPOWER_BLOCK}}
+                            exit 1618  # ERROR_INSTALL_ALREADY_RUNNING -- tells Intune to retry
+                        }
+                        Write-CMTraceLog "AC power confirmed (BatteryStatus=$($battery.BatteryStatus))"
+                    } else {
+                        Write-CMTraceLog "No battery detected -- assuming desktop, skipping AC power check"
+                    }
+                } catch {
+                    Write-CMTraceLog "WARNING: Could not check AC power status -- $($_.Exception.Message). Proceeding with flash." -Severity 2
+                }
+            }
+
+            # Build arguments: -s = silent, -r = do not reboot, -b = suspend BitLocker if needed
+            # -f = folder containing firmware update files
+            $flashArgs = "-s -r -b -f`"$($flashUtil.DirectoryName)`""
+
+            # HP flash utilities require a BIN password file (not a plaintext password).
+            # If a pre-existing BIN file was bundled with the package, use it directly.
+            # Otherwise, generate one at runtime using Write-HPFirmwarePasswordFile from HP CMSL.
+            $hpPasswordBinFile = $null
+            $hpBundledBinFile = Join-Path $ScriptDir 'HPPasswordFile.bin'
+
+            if (Test-Path $hpBundledBinFile) {
+                # Pre-existing BIN file was provided by the admin and embedded in the package
+                $hpPasswordBinFile = $hpBundledBinFile
+                Write-CMTraceLog "Using bundled HP password BIN file: $hpPasswordBinFile"
+                $flashArgs += " -p`"$hpPasswordBinFile`""
+                Write-CMTraceLog "BIOS password BIN file will be applied to flash command"
+            } elseif (-not [string]::IsNullOrEmpty($biosPassword)) {
+                $hpPasswordBinFile = Join-Path $env:TEMP 'DAT_BIOSPassword.bin'
+                try {
+                    # Check for HP CMSL module availability
+                    if (-not (Get-Command -Name 'Write-HPFirmwarePasswordFile' -ErrorAction SilentlyContinue)) {
+                        Write-CMTraceLog "HP CMSL module not found -- attempting to install HPCMSL" -Severity 2
+                        # HPCMSL requires licence acceptance on PowerShellGet 2.x; 1.0.0.1 has no such parameter (#962).
+                        $licenseParam = @{}
+                        if ((Get-Command -Name Install-Module).Parameters.ContainsKey('AcceptLicense')) { $licenseParam.AcceptLicense = $true }
+                        Install-Module -Name 'HPCMSL' -Force -Scope AllUsers -ErrorAction Stop @licenseParam
+                        Import-Module -Name 'HPCMSL' -ErrorAction Stop
+                        Write-CMTraceLog "HPCMSL module installed and imported successfully"
+                    }
+
+                    Write-CMTraceLog "Generating HP firmware password BIN file"
+                    Write-HPFirmwarePasswordFile -Password $biosPassword -OutputFile $hpPasswordBinFile -ErrorAction Stop
+                    Write-CMTraceLog "HP password BIN file created at: $hpPasswordBinFile"
+
+                    $flashArgs += " -p`"$hpPasswordBinFile`""
+                    Write-CMTraceLog "BIOS password BIN file will be applied to flash command"
+                } catch {
+                    Write-CMTraceLog "ERROR: Failed to generate HP firmware password BIN file -- $($_.Exception.Message)" -Severity 3
+                    # Clean up partial file if it exists
+                    if (Test-Path $hpPasswordBinFile) { Remove-Item $hpPasswordBinFile -Force -ErrorAction SilentlyContinue }
+                    throw "Failed to generate HP firmware password BIN file: $($_.Exception.Message)"
+                }
+            }
+
+            if ($WhatIf) {
+                Write-CMTraceLog "WHATIF: Would execute HP BIOS flash: $($flashUtil.FullName) $flashArgs" -Severity 2
+                $flashExitCode = 0
+            } else {
+                $flashExitCode = Invoke-BIOSFlashUtility -FilePath $flashUtil.FullName -Arguments $flashArgs
+            }
+
+            # Clean up the password BIN file if it was generated at runtime (not the bundled one)
+            if ($hpPasswordBinFile -and $hpPasswordBinFile -ne $hpBundledBinFile -and (Test-Path $hpPasswordBinFile)) {
+                Remove-Item $hpPasswordBinFile -Force -ErrorAction SilentlyContinue
+                Write-CMTraceLog "HP password BIN file cleaned up"
+            }
+
+            # HP exit codes: 0 = success, 3010 = success (reboot required)
+            if ($flashExitCode -in @(0, 3010)) {
+                Write-CMTraceLog "HP BIOS flash completed successfully (exit code: $flashExitCode)"
+            } else {
+                Write-CMTraceLog "ERROR: HP BIOS flash failed with exit code: $flashExitCode" -Severity 3
+                throw "HP BIOS flash failed with exit code: $flashExitCode"
+            }
+        }
+
+        # -- Lenovo --------------------------------------------------------------
+        '*Lenovo*' {
+            Write-CMTraceLog "Lenovo BIOS update detected -- searching for flash utility"
+
+            # -- AC power check -- Lenovo BIOS updaters may refuse to flash on battery --
+            if (-not $WhatIf) {
+                try {
+                    $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($battery) {
+                        # BatteryStatus 2 = AC power connected
+                        if ($battery.BatteryStatus -ne 2) {
+                            Write-CMTraceLog "AC power adapter not detected (BatteryStatus=$($battery.BatteryStatus)). Lenovo BIOS updates require AC power -- will retry on next Intune cycle." -Severity 2
+                            Set-DATInstallStatus -RegPath $VersionRegPath -Result 'RetryScheduled' -Phase 'ACPower' -ScriptExitCode 1618 -ErrorMessage 'AC power adapter not connected -- deferred to next Intune cycle'
+{{STATUS_TOAST_ACPOWER_BLOCK}}
+                            exit 1618  # ERROR_INSTALL_ALREADY_RUNNING -- tells Intune to retry
+                        }
+                        Write-CMTraceLog "AC power confirmed (BatteryStatus=$($battery.BatteryStatus))"
+                    } else {
+                        Write-CMTraceLog "No battery detected -- assuming desktop, skipping AC power check"
+                    }
+                } catch {
+                    Write-CMTraceLog "WARNING: Could not check AC power status -- $($_.Exception.Message). Proceeding with flash." -Severity 2
+                }
+            }
+
+            # Lenovo ThinkPad uses WinUPTP64.exe (64-bit) or WinUPTP.exe (32-bit)
+            $flashUtil = $null
+            $flashType = $null
+
+            if ([Environment]::Is64BitOperatingSystem) {
+                $flashUtil = Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -eq 'WinUPTP64.exe' } | Select-Object -First 1
+            }
+            if (-not $flashUtil) {
+                $flashUtil = Get-ChildItem -Path $ExtractPath -Recurse -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -eq 'WinUPTP.exe' } | Select-Object -First 1
+            }
+            if ($flashUtil) { $flashType = 'WinUPTP' }
+
+            # Lenovo ThinkCentre/ThinkStation use Flash64.cmd (64-bit) or Flash.cmd
+            if (-not $flashUtil) {
+                $flashCmd = $null
+                if ([Environment]::Is64BitOperatingSystem) {
+                    $flashCmd = Get-ChildItem -Path $ExtractPath -Recurse -Filter "Flash64.cmd" -File -ErrorAction SilentlyContinue |
+                        Select-Object -First 1
+                }
+                if (-not $flashCmd) {
+                    $flashCmd = Get-ChildItem -Path $ExtractPath -Recurse -Filter "Flash.cmd" -File -ErrorAction SilentlyContinue |
+                        Select-Object -First 1
+                }
+
+                if ($flashCmd) {
+                    $flashType = 'FlashCmd'
+                    Write-CMTraceLog "Lenovo Flash.cmd found: $($flashCmd.FullName)"
+
+                    # Flash.cmd switches: /quiet = silent, /sccm = SCCM/Intune mode, /ign = ignore errors
+                    $cmdArgs = "/quiet /sccm /ign"
+                    if (-not [string]::IsNullOrEmpty($biosPassword)) {
+                        $cmdArgs += " /pass:$biosPassword"
+                        Write-CMTraceLog "BIOS password will be applied to Flash.cmd command"
+                    }
+
+                    if ($WhatIf) {
+                        Write-CMTraceLog "WHATIF: Would execute Lenovo Flash.cmd: $($flashCmd.FullName) $cmdArgs" -Severity 2
+                        $flashExitCode = 0
+                    } else {
+                        $flashExitCode = Invoke-BIOSFlashUtility -FilePath "cmd.exe" -Arguments "/c `"$($flashCmd.FullName)`" $cmdArgs"
+                    }
+
+                    if ($flashExitCode -in @(0, 1)) {
+                        Write-CMTraceLog "Lenovo BIOS flash (Flash.cmd) completed successfully (exit code: $flashExitCode)"
+                    } else {
+                        Write-CMTraceLog "ERROR: Lenovo BIOS flash (Flash.cmd) failed with exit code: $flashExitCode" -Severity 3
+                        throw "Lenovo BIOS flash (Flash.cmd) failed with exit code: $flashExitCode"
+                    }
+                    break
+                }
+
+                # Fallback: any BIOS-related exe
+                $flashUtil = Get-ChildItem -Path $ExtractPath -Recurse -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match 'Flash|BIOS|winuptp' } | Select-Object -First 1
+                if ($flashUtil) { $flashType = 'WinUPTP' }
+            }
+
+            if (-not $flashUtil) {
+                Write-CMTraceLog "ERROR: No Lenovo BIOS flash utility found in extracted content" -Severity 3
+                throw "No Lenovo BIOS flash utility found in extracted content"
+            }
+
+            Write-CMTraceLog "Lenovo flash utility found: $($flashUtil.FullName) (type: $flashType)"
+
+            # WinUPTP switches: /S = silent (capital S, forward slash per Lenovo documentation)
+            $flashArgs = '/S'
+            if (-not [string]::IsNullOrEmpty($biosPassword)) {
+                $flashArgs += " /pass:$biosPassword"
+                Write-CMTraceLog "BIOS password will be applied to flash command"
+            }
+
+            $flashStartTime = Get-Date
+            if ($WhatIf) {
+                Write-CMTraceLog "WHATIF: Would execute Lenovo BIOS flash: $($flashUtil.FullName) $flashArgs" -Severity 2
+                $flashExitCode = 0
+            } else {
+                $flashExitCode = Invoke-BIOSFlashUtility -FilePath $flashUtil.FullName -Arguments $flashArgs
+            }
+
+            # Lenovo exit codes: 0 = success, 1 = success (reboot required)
+            if ($flashExitCode -in @(0, 1)) {
+                Write-CMTraceLog "Lenovo BIOS flash completed successfully (exit code: $flashExitCode)"
+            } else {
+                # WinUPTP also exits non-zero when it declines a BIOS that is already installed.
+                # Recording that as a failure made every Intune cycle retry the same flash (#966).
+                $liveBiosFull = ''
+                try { $liveBiosFull = ([string](Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SMBIOSBIOSVersion).Trim() } catch { }
+                $liveBiosId = ($liveBiosFull -split '\s+')[0]
+                if (Test-LenovoFlashNotRequired -LogDirectory $flashUtil.DirectoryName -Since $flashStartTime -CurrentBiosId $liveBiosId) {
+                    Write-CMTraceLog "Lenovo: WinUPTP reports BIOS $liveBiosId is already installed (exit code $flashExitCode) -- recording this package as current; nothing was flashed and no restart is needed" -Severity 2
+                    if (-not (Test-Path $VersionRegPath)) { New-Item -Path $VersionRegPath -Force | Out-Null }
+                    Set-ItemProperty -Path $VersionRegPath -Name 'Version' -Value '{{Version}}' -Force
+                    Set-ItemProperty -Path $VersionRegPath -Name 'InstalledDate' -Value (Get-Date -Format 'o') -Force
+                    Set-ItemProperty -Path $VersionRegPath -Name 'OS' -Value '{{OS}}' -Force
+                    # Read by Test-DATBiosConfirmedCurrent in the installer and the detection rule.
+                    # Both values must still match for it to count.
+                    Set-ItemProperty -Path $VersionRegPath -Name 'ConfirmedCurrentVersion' -Value '{{Version}}' -Force
+                    Set-ItemProperty -Path $VersionRegPath -Name 'ConfirmedCurrentBiosId' -Value $liveBiosFull -Force
+                    foreach ($pendingValue in @('PendingReboot', 'PendingRebootBootTime', 'RestartScheduledUtc', 'RestartDueUtc', 'RestartScheduleResult', 'RestartNotice')) {
+                        Remove-ItemProperty -Path $VersionRegPath -Name $pendingValue -ErrorAction SilentlyContinue
+                    }
+                    Set-DATInstallStatus -RegPath $VersionRegPath -Result 'AlreadyCurrent' -ToolExitCode $flashExitCode -ScriptExitCode 0 -Phase 'FlashToolConfirmedCurrent'
+                    # BitLocker is resumed by the finally block: FlashSucceeded is still false.
+                    Write-CMTraceLog "=========================================="
+                    Write-CMTraceLog "BIOS update skipped -- the flash tool confirmed the BIOS is already installed"
+                    Write-CMTraceLog "=========================================="
+                    exit 0
+                }
+                Write-CMTraceLog "ERROR: Lenovo BIOS flash failed with exit code: $flashExitCode" -Severity 3
+                throw "Lenovo BIOS flash failed with exit code: $flashExitCode"
+            }
+        }
+
+        default {
+            Write-CMTraceLog "ERROR: Unsupported manufacturer '$Manufacturer' for BIOS update" -Severity 3
+            throw "Unsupported manufacturer '$Manufacturer' for BIOS update"
+        }
+    }
+
+    $script:FlashSucceeded = $true
+
+    # -- Write version marker to registry for detection --------------------------------------
+    # Dell exit codes 1/2, HP/MSI/Surface 3010, and Lenovo 1 all mean the BIOS was staged
+    # successfully but requires a reboot before it actually takes effect. Until that reboot
+    # happens, the physical BIOS chip still reports the OLD version -- so the marker below is
+    # tagged as "PendingReboot" and the detection script will not trust it as installed until it
+    # can confirm (via LastBootUpTime) that a reboot has actually occurred since it was staged.
+    # Without this, a device whose reboot never happens (Focus Assist, "Disable Automatic
+    # Restart" policy, or a user who never restarts) would report as Installed in Intune forever
+    # despite never actually running the new BIOS.
+    $rebootRequiredForMarker = $flashExitCode -in @(1, 2, 3010)
+    if ($WhatIf) {
+        Write-CMTraceLog "WHATIF: Would write version '{{Version}}' to registry at $VersionRegPath" -Severity 2
+    } else {
+        $installPhase = 'RegistryMarker'
+        if (-not (Test-Path $VersionRegPath)) {
+            New-Item -Path $VersionRegPath -Force | Out-Null
+        }
+        Set-ItemProperty -Path $VersionRegPath -Name 'Version' -Value '{{Version}}' -Force
+        Set-ItemProperty -Path $VersionRegPath -Name 'InstalledDate' -Value (Get-Date -Format 'o') -Force
+        Set-ItemProperty -Path $VersionRegPath -Name 'OS' -Value '{{OS}}' -Force
+        if ($rebootRequiredForMarker) {
+            try {
+                $bootTimeNow = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+                Set-ItemProperty -Path $VersionRegPath -Name 'PendingReboot' -Value 1 -Type DWord -Force
+                Set-ItemProperty -Path $VersionRegPath -Name 'PendingRebootBootTime' -Value $bootTimeNow.ToString('o') -Force
+                Write-CMTraceLog "Version marker written to registry: $VersionRegPath = {{Version}} (PendingReboot -- not yet applied)"
+            } catch {
+                Write-CMTraceLog "WARNING: Failed to record PendingReboot boot time -- $($_.Exception.Message)" -Severity 2
+                Write-CMTraceLog "Version marker written to registry: $VersionRegPath = {{Version}} (PendingReboot -- not yet applied)"
+            }
+        } else {
+            Remove-ItemProperty -Path $VersionRegPath -Name 'PendingReboot' -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $VersionRegPath -Name 'PendingRebootBootTime' -ErrorAction SilentlyContinue
+            Write-CMTraceLog "Version marker written to registry: $VersionRegPath = {{Version}}"
+        }
+    }
+
+    # -- Clean up extracted files ----------------------------------------------------
+    Write-CMTraceLog "BIOS update complete. Cleaning up extracted files..."
+    Remove-Item -Path $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+    Write-CMTraceLog "Cleanup complete."
+
+    Complete-DATInstallProgress -Outcome Success
+{{STATUS_TOAST_BLOCK}}
+    Write-CMTraceLog "=========================================="
+    if ($WhatIf) {
+        Write-CMTraceLog "WHATIF: BIOS update simulation completed -- no changes were made"
+    } else {
+        Write-CMTraceLog "BIOS firmware prestaged successfully"
+        if ($flashExitCode -in @(2, 1, 3010)) {
+            $DisableRestart = {{DISABLE_RESTART}}
+            $RestartDelaySeconds = {{RESTART_DELAY_SECONDS}}
+            $RestartDelayMinutes = [math]::Round($RestartDelaySeconds / 60, 0)
+
+            # -- What was the user told? --
+            # Recorded on every restart outcome below (and in the registry for reporting) so a
+            # device that restarted -- or never restarted -- can be traced back to whether the
+            # user actually saw DAT's prestaged/restart notice, and if not, why not.
+            $restartNotice = "$script:DATLastStatusToastOutcome"
+            $restartNoticeShown = $restartNotice -eq 'Shown'
+            Write-CMTraceLog "[RestartNotice] Prestaged/restart notice to user: $restartNotice" -Severity $(if ($restartNoticeShown) { 1 } else { 2 })
+            try { Set-ItemProperty -Path $VersionRegPath -Name 'RestartNotice' -Value $restartNotice -Force -ErrorAction Stop } catch { }
+            # Clear the previous cycle's schedule so the next-run audit never reads a stale time
+            foreach ($staleRestartValue in @('RestartScheduledUtc', 'RestartDueUtc', 'RestartScheduleResult')) {
+                Remove-ItemProperty -Path $VersionRegPath -Name $staleRestartValue -ErrorAction SilentlyContinue
+            }
+
+            # -- Autopilot provisioning: leave the restart to the Enrollment Status Page --
+            # A restart scheduled from here could land part-way through setup or BitLocker
+            # preparation. The firmware is staged and the PendingReboot marker written above, so it
+            # applies at the restart the ESP performs (exit 3010) or the next one after it.
+            if ($script:DATAutopilot -and $script:DATAutopilot.InProvisioning) {
+                Write-CMTraceLog "[Autopilot] Autopilot provisioning ($($script:DATAutopilot.Phase)) -- no restart scheduled. The BIOS update applies at the next restart."
+                Write-CMTraceLog "NOTE: BitLocker protection remains suspended until the device is restarted."
+                Set-DATInstallStatus -RegPath $VersionRegPath -Result 'PendingReboot' -ToolExitCode $flashExitCode -ScriptExitCode 3010 -Phase 'RestartDeferredAutopilot'
+                Write-CMTraceLog "=========================================="
+                exit 3010
+            }
+
+            # -- Admin-configured: Disable Automatic Restart --
+            # When enabled, the BIOS update is prestaged but no restart is initiated.
+            # BitLocker remains suspended until the user manually restarts.
+            if ($DisableRestart) {
+                Write-CMTraceLog "Automatic BIOS restart is DISABLED by admin policy. The update will apply on the next manual reboot."
+                Write-CMTraceLog "NOTE: BitLocker protection remains suspended until the device is restarted."
+                if (-not $restartNoticeShown) {
+                    Write-CMTraceLog "[RestartNotice] The user was NOT shown the 'restart to apply' notice -- the update will wait for a restart they have not been asked for" -Severity 2
+                }
+                Set-DATInstallStatus -RegPath $VersionRegPath -Result 'PendingReboot' -ToolExitCode $flashExitCode -ScriptExitCode 3010 -Phase 'RestartSuppressed'
+                Write-CMTraceLog "=========================================="
+                exit 3010
+            }
+
+            # -- Focus Assist / DND Check Before Restart --
+            # If the signed-in user genuinely has Focus Assist / Do Not Disturb engaged we do
+            # not restart, regardless of deferral count. The BIOS update is already prestaged
+            # and will apply on the next natural reboot.
+            #
+            # IMPORTANT: SHQueryUserNotificationState reports the notification state of the
+            # window station the CALLING process is attached to -- NOT the state of the console
+            # user's desktop. This script normally runs as SYSTEM in session 0 (Intune Win32
+            # default, and required for BIOS flashing), where it is attached to the
+            # non-interactive service window station with no shell to query, and the API
+            # reports QUNS_BUSY (2). That is an artefact of the calling context, not a user who
+            # has switched on Do Not Disturb. Acting on it suppressed the automatic restart on
+            # effectively every SYSTEM run, leaving the BIOS prestaged but never applied, while
+            # the toast -- running in the user's real session moments earlier -- correctly
+            # reported QUNS_ACCEPTS_NOTIFICATIONS (5) on the same machine.
+            #
+            # So the state is only ever acted on when it was measured inside a real user
+            # session: either because this script is itself running interactively, or via the
+            # reading the toast recorded for us in DAT_FocusState.txt.
+            $CriticalNotification = {{ALARM_MODE}}
+            $focusAssistBlocking = $false
+            # QUNS_NOT_PRESENT (1) and QUNS_ACCEPTS_NOTIFICATIONS (5) both permit the restart.
+            $focusBlockingStates = @(2, 3, 4, 6, 7)
+            $focusStateNames = @{
+                1 = 'QUNS_NOT_PRESENT'; 2 = 'QUNS_BUSY'; 3 = 'QUNS_RUNNING_D3D_FULL_SCREEN'
+                4 = 'QUNS_PRESENTATION_MODE'; 5 = 'QUNS_ACCEPTS_NOTIFICATIONS'
+                6 = 'QUNS_QUIET_TIME'; 7 = 'QUNS_APP'
+            }
+
+            if ($CriticalNotification) {
+                Write-CMTraceLog "[FocusAssist] Update is flagged as a critical notification (bypass Focus Assist) -- DND will not suppress the restart"
+            } else {
+                $focusState  = $null
+                $focusSource = ''
+                $sessionId   = 0
+                try { $sessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId } catch { }
+
+                if ($sessionId -ne 0) {
+                    # Running in an interactive session -- the API result describes the real desktop.
+                    try {
+                        $focusAssistCSharp = 'using System; using System.Runtime.InteropServices; public class DATFocusAssistRestart { [DllImport("shell32.dll")] public static extern int SHQueryUserNotificationState(out int state); }'
+                        Add-Type -TypeDefinition $focusAssistCSharp -ErrorAction SilentlyContinue
+                        $queriedState = 0
+                        [void][DATFocusAssistRestart]::SHQueryUserNotificationState([ref]$queriedState)
+                        $focusState  = $queriedState
+                        $focusSource = "queried directly in session $sessionId"
+                    } catch {
+                        Write-CMTraceLog "[FocusAssist] Check failed: $($_.Exception.Message) -- proceeding with restart" -Severity 2
+                    }
+                } else {
+                    # Session 0: querying here would always report QUNS_BUSY. Use the reading the
+                    # toast took in the user's session instead (written seconds ago, just before
+                    # this restart decision). Timestamp is round-trip 'o' format and parsed with
+                    # InvariantCulture so it is unaffected by the device's regional settings.
+                    Write-CMTraceLog "[FocusAssist] Running in session 0 (SYSTEM) -- a direct query here cannot see the user's desktop; using the state recorded by the toast"
+                    $focusStatePath = Join-Path $env:ProgramData 'DriverAutomationTool\DAT_FocusState.txt'
+                    if (Test-Path $focusStatePath) {
+                        try {
+                            $focusRaw   = ((Get-Content -Path $focusStatePath -TotalCount 1 -ErrorAction Stop) -join '').Trim()
+                            # <timestamp>|<state>[|<toast type>] -- the type field was added so this
+                            # log shows whether the reading came from the restart notice shown
+                            # moments ago (BIOSSuccess) or an older prompt earlier in the run.
+                            $focusParts = $focusRaw -split '\|'
+                            if ($focusParts.Count -in @(2, 3)) {
+                                $focusStamp = [datetime]::Parse($focusParts[0], [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+                                $focusAgeMinutes = ((Get-Date) - $focusStamp).TotalMinutes
+                                $focusToastType = if ($focusParts.Count -eq 3 -and $focusParts[2]) { "the $($focusParts[2]) toast" } else { 'the toast' }
+                                if ($focusAgeMinutes -ge 0 -and $focusAgeMinutes -le 15) {
+                                    $focusState  = [int]$focusParts[1]
+                                    $focusSource = "recorded by $focusToastType $([math]::Round($focusAgeMinutes, 1)) minute(s) ago"
+                                } else {
+                                    Write-CMTraceLog "[FocusAssist] Recorded user-session state is stale ($([math]::Round($focusAgeMinutes, 1)) minutes old) -- ignoring it and proceeding with restart" -Severity 2
+                                }
+                            } else {
+                                Write-CMTraceLog "[FocusAssist] Recorded user-session state is malformed -- ignoring it and proceeding with restart" -Severity 2
+                            }
+                        } catch {
+                            Write-CMTraceLog "[FocusAssist] Could not read recorded user-session state: $($_.Exception.Message) -- proceeding with restart" -Severity 2
+                        }
+                    } else {
+                        Write-CMTraceLog "[FocusAssist] No user-session state recorded (toast disabled or no user signed in) -- proceeding with restart"
+                    }
+                }
+
+                if ($null -ne $focusState) {
+                    $focusStateName = if ($focusStateNames.ContainsKey($focusState)) { $focusStateNames[$focusState] } else { "Unknown ($focusState)" }
+                    Write-CMTraceLog "[FocusAssist] User notification state: $focusState ($focusStateName) -- $focusSource"
+                    if ($focusBlockingStates -contains $focusState) {
+                        $focusAssistBlocking = $true
+                        Write-CMTraceLog "[FocusAssist] Focus Assist / DND is active ($focusStateName) -- suppressing automatic restart to avoid interrupting the user" -Severity 2
+                    } else {
+                        Write-CMTraceLog "[FocusAssist] State $focusStateName does not block restart -- proceeding with automatic restart"
+                    }
+                }
+            }
+
+            if ($focusAssistBlocking) {
+                Write-CMTraceLog "BIOS update prestaged but restart suppressed due to Focus Assist. The update will apply on the next manual reboot."
+                if (-not $restartNoticeShown) {
+                    Write-CMTraceLog "[RestartNotice] The user was NOT shown the 'restart to apply' notice either -- nothing on screen tells them a restart is pending" -Severity 2
+                }
+                Set-DATInstallStatus -RegPath $VersionRegPath -Result 'PendingReboot' -ToolExitCode $flashExitCode -ScriptExitCode 3010 -Phase 'RestartSuppressedFocusAssist'
+                Write-CMTraceLog "=========================================="
+                # Exit 3010 signals soft-reboot-needed to Intune without forcing a restart
+                exit 3010
+            }
+
+            Write-CMTraceLog "Scheduling system restart in $RestartDelayMinutes minute(s) ($RestartDelaySeconds seconds) to apply BIOS update"
+
+            # -- Re-evaluate BitLocker immediately before the restart command ---------------
+            # Between the flash and this restart a user action or an external management /
+            # compliance script may have re-enabled (resumed) BitLocker protection. If
+            # protection is active when the firmware applies during the reboot, the changed
+            # TPM PCR measurements prevent the key from being released and the device drops to
+            # the BitLocker recovery screen. Confirm it is off now, re-suspending if needed; if
+            # that cannot be confirmed, do not restart -- the firmware stays staged and the next
+            # run suspends and restarts once protection can be managed.
+            if (-not (Confirm-DATBitLockerSuspended -Stage 'Restart')) {
+                Write-CMTraceLog "NOT restarting: BitLocker protection could not be confirmed as suspended, and restarting with protection on would trigger BitLocker recovery when the staged firmware applies. Suspend BitLocker on this device before it next restarts." -Severity 3
+                try { Set-ItemProperty -Path $VersionRegPath -Name 'RestartScheduleResult' -Value 'BlockedBitLocker' -Force -ErrorAction Stop } catch { }
+                Set-DATInstallStatus -RegPath $VersionRegPath -Result 'PendingReboot' -ToolExitCode $flashExitCode -ScriptExitCode 3010 -Phase 'RestartBlockedBitLocker' -ErrorMessage 'BitLocker protection could not be confirmed as suspended -- restart not scheduled'
+                Write-CMTraceLog "=========================================="
+                exit 3010
+            }
+
+            if (-not $restartNoticeShown) {
+                Write-CMTraceLog "[RestartNotice] Restarting WITHOUT DAT's restart notice having been shown ($restartNotice) -- the only warning the user gets is the Windows shutdown message" -Severity 2
+            }
+
+            $restartScheduledAt = Get-Date
+            shutdown.exe /r /t $RestartDelaySeconds /c "BIOS firmware update prestaged by Driver Automation Tool. Your system will restart in $RestartDelayMinutes minute(s) to apply the update. Please save your work." /d p:1:18
+            $shutdownExitCode = $LASTEXITCODE
+            $restartDueAt = $restartScheduledAt.AddSeconds($RestartDelaySeconds)
+            $restartPhase = 'RestartScheduled'
+            switch ($shutdownExitCode) {
+                0 {
+                    Write-CMTraceLog "Restart scheduled for $($restartDueAt.ToString('yyyy-MM-dd HH:mm:ss')) -- shutdown.exe exit code: 0"
+                    $restartScheduleResult = 'Scheduled'
+                }
+                1190 {
+                    # ERROR_SHUTDOWN_IS_SCHEDULED -- ours was not registered; whatever is already
+                    # pending (e.g. Windows Update) will restart the device and apply the BIOS.
+                    Write-CMTraceLog "shutdown.exe exit code 1190 (ERROR_SHUTDOWN_IS_SCHEDULED) -- another restart was already scheduled, so this one was NOT registered. The BIOS will apply when that restart runs." -Severity 2
+                    $restartScheduleResult = 'AlreadyScheduledByOther'
+                }
+                1115 {
+                    Write-CMTraceLog "shutdown.exe exit code 1115 (ERROR_SHUTDOWN_IN_PROGRESS) -- the device is already shutting down; the BIOS will apply on this restart." -Severity 2
+                    $restartScheduleResult = 'ShutdownInProgress'
+                }
+                default {
+                    Write-CMTraceLog "shutdown.exe FAILED with exit code $shutdownExitCode -- NO restart is scheduled. The BIOS update will apply on the next manual reboot." -Severity 3
+                    $restartScheduleResult = "Failed ($shutdownExitCode)"
+                    $restartPhase = 'RestartScheduleFailed'
+                }
+            }
+            # Recorded so the next run (and custom reporting) can tell whether the restart
+            # actually happened -- a scheduled restart can still be aborted with 'shutdown /a'.
+            try {
+                Set-ItemProperty -Path $VersionRegPath -Name 'RestartScheduledUtc'   -Value $restartScheduledAt.ToUniversalTime().ToString('o') -Force -ErrorAction Stop
+                Set-ItemProperty -Path $VersionRegPath -Name 'RestartScheduleResult' -Value $restartScheduleResult -Force -ErrorAction Stop
+                if ($shutdownExitCode -eq 0) {
+                    Set-ItemProperty -Path $VersionRegPath -Name 'RestartDueUtc' -Value $restartDueAt.ToUniversalTime().ToString('o') -Force -ErrorAction Stop
+                }
+            } catch {
+                Write-CMTraceLog "WARNING: Failed to record the restart schedule -- $($_.Exception.Message)" -Severity 2
+            }
+            Set-DATInstallStatus -RegPath $VersionRegPath -Result 'PendingReboot' -ToolExitCode $flashExitCode -ScriptExitCode 3010 -Phase $restartPhase
+            Write-CMTraceLog "=========================================="
+            exit 3010
+        }
+
+        # Reached only when the flash needed no reboot (exit code 0 or 6) -- record success
+        Set-DATInstallStatus -RegPath $VersionRegPath -Result 'Success' -ToolExitCode $flashExitCode -ScriptExitCode 0 -Phase 'Complete'
+    }
+    Write-CMTraceLog "=========================================="
+
+    exit 0
+}
+catch {
+    Write-CMTraceLog "FATAL ERROR: $($_.Exception.Message)" -Severity 3
+    Write-CMTraceLog "Stack: $($_.ScriptStackTrace)" -Severity 3
+    if (-not $WhatIf -and $VersionRegPath) {
+        $phaseForStatus = if ($installPhase) { $installPhase } else { 'Unknown' }
+        $toolCodeForStatus = if ($null -ne $flashExitCode) { $flashExitCode } else { 0 }
+        Set-DATInstallStatus -RegPath $VersionRegPath -Result 'Failed' -Phase $phaseForStatus -ToolExitCode $toolCodeForStatus -ScriptExitCode 1 -ErrorMessage $_.Exception.Message
+    }
+    Complete-DATInstallProgress -Outcome Failed
+{{STATUS_TOAST_ERROR_BLOCK}}
+    exit 1
+}
+finally {
+    # Closes the progress notification on any exit path that did not report an outcome
+    Stop-DATInstallProgress
+    # Re-enable BitLocker if this run suspended it but did not flash (Resume-BitLockerProtection
+    # leaves it suspended while an earlier run's firmware is still waiting for a restart)
+    if ($script:BitLockerSuspended -and -not $script:FlashSucceeded) {
+        Resume-BitLockerProtection
+    }
+
+    # Clean up temp files that may have been left behind on any exit path
+    foreach ($tmpFile in @("$env:TEMP\dism_stdout.txt", "$env:TEMP\dism_stderr.txt",
+                           "$env:TEMP\robocopy_stdout.txt",
+                           "$env:TEMP\bios_stdout.txt", "$env:TEMP\bios_stderr.txt")) {
+        if (Test-Path $tmpFile) { Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue }
+    }
+}

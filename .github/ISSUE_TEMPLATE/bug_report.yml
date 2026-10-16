@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a reproducible issue with the Driver Automation Tool
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened? Do not disclose credentials or internal identifiers. For security issues, use private vulnerability reporting from the Security tab; contact vartaxe@outlook.com privately if unavailable.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Driver Automation Tool version, Windows version, Windows PowerShell version, ConfigMgr or Intune context, and whether the issue occurred in full Windows or WinPE. Sanitize identifiers.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and expected behavior
+      description: Describe minimal reproduction steps, expected and actual results, and the relevant process or exit code. Include only non-sensitive values and names.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Paste only sanitized log snippets. Do not upload raw archives, secrets, tokens, or certificates.

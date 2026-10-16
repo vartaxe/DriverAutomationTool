@@ -1,0 +1,65 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Validate PowerShell regression tests",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Run script regression harnesses",
+        "Run Pester regression suites"
+      ],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run script regression harnesses",
+      "type": "process",
+      "command": "${env:windir}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-ChildItem -LiteralPath '${workspaceFolder}\\Tests' -Filter 'Test-*.ps1' -File | Sort-Object Name | ForEach-Object { Write-Output \"Running $($_.Name)...\"; & '${env:windir}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $_.FullName; if ($LASTEXITCODE -ne 0) { throw \"$($_.Name) failed with exit code $LASTEXITCODE.\" } }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Pester regression suites",
+      "type": "process",
+      "command": "${env:windir}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Import-Module Pester -RequiredVersion '6.2.0' -ErrorAction Stop; $Tests = @(Get-ChildItem -LiteralPath '${workspaceFolder}\\Tests' -Filter '*.Tests.ps1' -File | Sort-Object Name); if ($Tests.Count -eq 0) { throw 'No Pester regression suites were found.' }; $Result = Invoke-Pester -Path $Tests.FullName -Output Detailed -PassThru; if ($null -eq $Result -or $Result.Result -ne 'Passed' -or $Result.TotalCount -eq 0 -or $Result.FailedCount -gt 0 -or $Result.FailedContainersCount -gt 0 -or $Result.FailedBlocksCount -gt 0 -or $Result.SkippedCount -gt 0 -or $Result.NotRunCount -gt 0) { throw 'Pester regression suites did not fully pass.' }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Check git whitespace",
+      "type": "process",
+      "command": "git",
+      "args": [
+        "diff",
+        "--check"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
