@@ -6,7 +6,7 @@ Format (WIM files).  wimlib and its command-line frontend `wimlib-imagex`
 provide a free and cross-platform alternative to Microsoft's WIMGAPI, ImageX,
 and DISM.
 
-For the release notes, see the [NEWS file](NEWS.md).
+For the release notes, see the [NEWS file](NEWS.txt).
 
 # Table of Contents
 
@@ -34,7 +34,7 @@ ZIP file containing the latest binaries.  All official releases are available
 from [wimlib.net](https://wimlib.net).
 
 For more details, including directions for how to build from source on Windows
-if desired, see [README.WINDOWS.md](README.WINDOWS.md).
+if desired, see [README.WINDOWS.txt](README.WINDOWS.txt).
 
 ## UNIX-like systems
 
@@ -267,12 +267,12 @@ wimlib was originally a project started by Carl Thijssen for use on Linux in the
 [Ultimate Deployment Appliance](https://www.ultimatedeployment.org).  Since then
 the code has been entirely rewritten and improved (main author: Eric Biggers).
 Windows support has been available since version 1.3.0 (March 2013).  A list of
-version-to-version changes can be found in the [NEWS file](NEWS.md).
+version-to-version changes can be found in the [NEWS file](NEWS.txt).
 
 # Notices
 
 wimlib is free software that comes with NO WARRANTY, to the extent permitted by
-law.  For full details, see the [COPYING file](COPYING).
+law.  For full details, see the [COPYING file](COPYING.txt).
 
 Bug reports, suggestions, and other contributions are appreciated and should be
 posted to [the forums](https://wimlib.net/forums/).
