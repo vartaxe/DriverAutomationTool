@@ -272,6 +272,7 @@
 						 - Package queries filter SMS_Package.SourceSite only when a site code is supplied; omitting it preserves all-sites behavior.
 						 - Preserved scoped AdminService certificate pinning and Zip Slip-safe archive extraction.
 	4.4.1 - (2026-10-16) - Applied hierarchy scoping consistently to XML package entries and fallback driver packages.
+	4.4.2 - (2026-11-01) - Reset detection state for each package so missing SystemSKU metadata cannot reuse a previous package's match.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingPlainTextForPassword", "", Justification = "Configuration Manager exposes task-sequence variables as strings; the value is converted immediately for Windows authentication and cleared after external token acquisition.")]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingConvertToSecureStringWithPlainText", "", Justification = "Configuration Manager exposes task-sequence variables as strings; conversion to PSCredential is required for Invoke-RestMethod on Windows PowerShell 5.1.")]
@@ -2212,10 +2213,17 @@ public static class AdminServiceCertificateValidation
 			}
 			Write-CMLogEntry -Value "[DriverPackage:$($DriverPackageDetails.PackageID)]: Processing driver package with $($DetectionMethodsCount) detection methods: $($DriverPackageDetails.PackageName)" -Severity 1
 
+			# Reset per package: a package skipped below for missing SystemSKU values must not inherit the previous package's match result.
+			$ComputerDetectionMethodResult = $null
 			switch ($ComputerDetectionMethod) {
 				"SystemSKU" {
 					if ([string]::IsNullOrEmpty($DriverPackageDetails.SystemSKU)) {
 						Write-CMLogEntry -Value "[DriverPackage:$($DriverPackageDetails.PackageID)]: Driver package was skipped due to missing SystemSKU values in description field" -Severity 2
+					}
+					elseif ($DriverPackageDetails.SystemSKU -match "no baseboard IDs published") {
+						# Built by the Driver Automation Tool for a model whose OEM catalog published no baseboard IDs: the description says so instead of listing any (issue #979), so match on computer model
+						Write-CMLogEntry -Value "[DriverPackage:$($DriverPackageDetails.PackageID)]: Driver package description lists no SystemSKU values (none were published for this model), matching on computer model instead" -Severity 1
+						$ComputerDetectionMethodResult = Confirm-ComputerModel -DriverPackageInput $DriverPackageDetails.Model -ComputerData $ComputerData
 					}
 					else {
 						# Attempt to match against SystemSKU
@@ -2937,7 +2945,7 @@ public static class AdminServiceCertificateValidation
 	}
 
 	Write-CMLogEntry -Value "[ApplyDriverPackage]: Apply Driver Package process initiated" -Severity 1
-	Write-CMLogEntry -Value " - Script version: 4.3.6" -Severity 1
+	Write-CMLogEntry -Value " - Script version: 4.4.2" -Severity 1
 	if ($PSCmdLet.ParameterSetName -like "Debug") {
 		Write-CMLogEntry -Value " - Apply driver package process initiated in debug mode" -Severity 1
 	}
