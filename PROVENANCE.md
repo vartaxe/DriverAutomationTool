@@ -2,7 +2,7 @@
 
 The `v1.0.0` maintained-fork baseline identifies this repository's consolidated
 snapshot, not a new version of the upstream Driver Automation Tool. The embedded
-application/module version remains **10.3.2.0**. Existing script version histories,
+application/module version is **10.3.6.0**. Existing script version histories,
 copyright notices, original authorship, and third-party licenses remain intact.
 Rebaselining Git history does not transfer ownership or change license terms.
 
@@ -23,6 +23,22 @@ recorded heads they were ahead of their upstream default branches by 1, 3, and
 maintenance is part of the baseline snapshot, not those recorded fork SHAs.
 The earlier bundled-script import baselines are retained separately in
 [`Data/BundledScriptParity.md`](Data/BundledScriptParity.md).
+
+## Current Driver Automation Tool upstream alignment
+
+On 2026-11-01, Vartaxe `main` was compared with
+`maurice-daly/DriverAutomationTool` `master` at
+`cda3d6275f81e003b900965b5f32587af2d53b6e`. Vartaxe PR #26 carries the adapted
+10.3.3–10.3.6 releases. At that comparison, every upstream path was present in
+Vartaxe: 114 of 136 paths were byte-identical, 22 same-path files differed, and
+Vartaxe had 71 additional paths. No upstream path was missing.
+
+The repositories had no shared commit ancestry because the maintained-fork
+baseline was re-established independently. The upstream history is now recorded
+as a second parent of Vartaxe `main`, preserving Vartaxe's first-parent history
+and application code without a force-push. This records the reviewed content
+relationship; future upstream changes still require content review and
+adaptation before being treated as synchronized.
 
 ## Ownership and maintenance boundary
 
