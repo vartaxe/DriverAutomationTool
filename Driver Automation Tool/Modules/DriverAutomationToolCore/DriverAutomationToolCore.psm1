@@ -25096,7 +25096,7 @@ function Invoke-DATBiosPackaging {
     .PARAMETER BiosFilePath
         Path to the downloaded BIOS executable or archive.
     .PARAMETER OEM
-        Manufacturer name (Dell, HP, Lenovo).
+        Manufacturer name (Dell, HP, Lenovo, Acer, Fujitsu).
     .PARAMETER Model
         Model name for folder structure.
     .PARAMETER Version

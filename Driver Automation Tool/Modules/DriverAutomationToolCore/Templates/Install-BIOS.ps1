@@ -859,10 +859,10 @@ function Test-DATBiosConfirmedCurrent {
 # Fail before payload discovery or extraction if no validated flash implementation exists.
 # The build pipeline enforces the same boundary, but the generated installer must remain safe if
 # it is copied, retained, or invoked independently of that pipeline.
-$DATSupportedBIOSManufacturers = @('Dell', 'HP', 'Lenovo')
+$DATSupportedBIOSManufacturers = @('Dell', 'HP', 'Lenovo', 'Acer', 'Fujitsu')
 $DATTemplateManufacturer = '{{OEM}}'
 if ($DATTemplateManufacturer -notin $DATSupportedBIOSManufacturers) {
-    Write-Error "Standalone BIOS installation is not supported for '$DATTemplateManufacturer'. Validated flash installers are available only for Dell, HP, and Lenovo."
+    Write-Error "Standalone BIOS installation is not supported for '$DATTemplateManufacturer'. Validated flash installers are available for Dell, HP, Lenovo, Acer, and Fujitsu."
     exit 1
 }
 if ($ValidateManufacturerOnly) {

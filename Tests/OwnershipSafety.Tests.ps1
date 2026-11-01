@@ -1,7 +1,9 @@
 BeforeAll {
     $repoRoot = Split-Path -Parent $PSScriptRoot
     $corePath = Join-Path $repoRoot 'Driver Automation Tool\Modules\DriverAutomationToolCore\DriverAutomationToolCore.psm1'
-    $coreAst = [Management.Automation.Language.Parser]::ParseFile($corePath, [ref]$null, [ref]$null)
+    $coreTokens = $null
+    $coreParseErrors = $null
+    $coreAst = [Management.Automation.Language.Parser]::ParseFile($corePath, [ref]$coreTokens, [ref]$coreParseErrors)
     foreach ($name in @('Get-DATTakeownDefaultAnswer', 'New-DATOwnershipProcess',
             'Get-DATProtectedTakeownPath', 'Get-DATEffectiveFileSystemRights',
             'Invoke-DATOwnershipProcess', 'Invoke-DATTakeown', 'Test-DATSafeContentRoot')) {
@@ -26,13 +28,23 @@ BeforeAll {
  /SKIPSL    Symbolischen Links nicht folgen.
 '@
     $uiPath = Join-Path $repoRoot 'Driver Automation Tool\UI\MainApplication.ps1'
-    $uiAst = [Management.Automation.Language.Parser]::ParseFile($uiPath, [ref]$null, [ref]$null)
+    $uiTokens = $null
+    $uiParseErrors = $null
+    $uiAst = [Management.Automation.Language.Parser]::ParseFile($uiPath, [ref]$uiTokens, [ref]$uiParseErrors)
+    $coreCode = (@($coreTokens | Where-Object { $_.Kind -ne 'Comment' } | ForEach-Object { $_.Text }) -join ' ')
+    $uiCode = (@($uiTokens | Where-Object { $_.Kind -ne 'Comment' } | ForEach-Object { $_.Text }) -join ' ')
     $permissionNodes = @($coreAst.FindAll({
         param($item)
         $item -is [Management.Automation.Language.TryStatementAst] -and
             $item.Body.Extent.Text -match 'Invoke-DATTakeown -Path \$DriverFolder' -and
             $item.Body.Statements.Count -lt 10
     }, $true))
+    $failClosedPermissionNodes = @($permissionNodes | Where-Object {
+        $_.Body.Extent.Text -match '\$icaclsProc|S-1-5-32-545'
+    })
+    $bestEffortPermissionNode = $permissionNodes | Where-Object {
+        $_.Body.Extent.Text -match '\$icaclsResult'
+    } | Select-Object -First 1
     $customPermissionNode = $uiAst.Find({
         param($item)
         $item -is [Management.Automation.Language.TryStatementAst] -and
@@ -281,11 +293,17 @@ Describe 'Ownership caller failure propagation' {
         $Version = '1'
         $driverCount = 1
     }
-    It 'stops both regular and retry ownership paths when discovery fails' {
-        $permissionNodes | Should -HaveCount 2
-        foreach ($node in $permissionNodes) {
+    It 'stops regular and retry paths when discovery fails while keeping wimlib permission reset best-effort' {
+        $failClosedPermissionNodes | Should -HaveCount 2
+        $bestEffortPermissionNode | Should -Not -BeNullOrEmpty
+        foreach ($node in $failClosedPermissionNodes) {
             $operation = [scriptblock]::Create($node.Extent.Text)
             { & $operation } | Should -Throw '*Unsupported ownership help*'
+        }
+        $bestEffortOperation = [scriptblock]::Create($bestEffortPermissionNode.Extent.Text)
+        { & $bestEffortOperation } | Should -Not -Throw
+        Should -Invoke Write-DATLogEntry -Exactly 1 -ParameterFilter {
+            $Severity -eq 2 -and $Value -match 'Permission reset failed'
         }
         Should -Invoke Start-Process -Exactly 0
     }
@@ -304,8 +322,8 @@ Describe 'Ownership caller failure propagation' {
     It 'has no active shell takeown command or hardcoded affirmative response' {
         $coreAst.Extent.Text | Should -Not -Match '(?i)-FilePath\s+"(?:[^"]*\\)?takeown\.exe"'
         $uiAst.Extent.Text | Should -Not -Match '(?i)-FilePath\s+"takeown\.exe"'
-        $coreAst.Extent.Text | Should -Not -Match '/D Y'
-        $uiAst.Extent.Text | Should -Not -Match '/D Y'
+        $coreCode | Should -Not -Match '/D Y'
+        $uiCode | Should -Not -Match '/D Y'
     }
 }
 
