@@ -26,7 +26,7 @@
 
 Fork release tags such as **v1.0.0** identify the maintained-fork baseline, not
 the upstream application version. The embedded application/module remains
-**10.3.2.0**. See [provenance and maintenance boundaries](PROVENANCE.md) for
+**10.3.6.0**. See [provenance and maintenance boundaries](PROVENANCE.md) for
 source ownership, pre-rebaseline commits, licenses, and archive compatibility.
 
 **Upstream notice, August 17, 2026:** Builds 10.1.9.0 and earlier are no longer
