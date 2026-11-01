@@ -1354,7 +1354,7 @@ function Get-DATOEMModelInfo {
 
     $WindowsBuild = $($OS).Split(" ")[2]
     $WindowsVersion = $OS.Trim("$WindowsBuild").TrimEnd()
-    $OEMSupportedModels = @()
+    $OEMSupportedModels = [Collections.Generic.List[object]]::new()
 
     foreach ($OEM in $RequiredOEMs) {
         Write-DATLogEntry -Value "- Loading $OEM model compatibility" -Severity 1
@@ -1402,14 +1402,14 @@ function Get-DATOEMModelInfo {
                         } else {
                             (Get-Date -Format 'ddMMyyyy')
                         }
-                        $OEMSupportedModels += [PSCustomObject]@{
+                        $OEMSupportedModels.Add([PSCustomObject]@{
                             OEM        = "HP"
                             Model      = $Model.SystemName
                             Baseboards = $(if ($sysIds) { $sysIds -join "," } else { "" })
                             OS         = $WindowsVersion
                             'OS Build' = $WindowsBuild
                             Version    = $hpModelVersion
-                        }
+                        })
                     }
                 } catch {
                     Write-DATLogEntry -Value "[Error] - HP model retrieval failed: $($_.Exception.Message)" -Severity 3
@@ -1457,14 +1457,14 @@ function Get-DATOEMModelInfo {
                     foreach ($Model in $DellModels) {
                         # Null-safe SystemId join (#16)
                         $sysIds = $Model.SystemId | Where-Object { $_ } | Select-Object -Unique
-                        $OEMSupportedModels += [PSCustomObject]@{
+                        $OEMSupportedModels.Add([PSCustomObject]@{
                             OEM        = "Dell"
                             Model      = $Model.SystemName
                             Baseboards = $(if ($sysIds) { $sysIds -join "," } else { "" })
                             OS         = $WindowsVersion
                             'OS Build' = 'All'
                             Version    = $(if ($DellDriverPackSource -eq 'SoftPaqs') { (Get-Date -Format 'ddMMyyyy') } else { $Model.DellVersion })
-                        }
+                        })
                     }
                 } catch {
                     Write-DATLogEntry -Value "[Error] - Dell model retrieval failed: $($_.Exception.Message)" -Severity 3
@@ -1498,7 +1498,7 @@ function Get-DATOEMModelInfo {
                         $hasGFX = $null -ne $gfxNode
                         $gfxBrand = if ($hasGFX) { $gfxNode.brand } else { $null }
                         if ($hasGFX) { Write-DATLogEntry -Value "[Lenovo] $Model has supplemental $gfxBrand GFX driver package" -Severity 1 }
-                        $OEMSupportedModels += [PSCustomObject]@{
+                        $OEMSupportedModels.Add([PSCustomObject]@{
                             OEM        = "Lenovo"
                             Model      = $Model
                             Baseboards = $BaseboardValues
@@ -1507,7 +1507,7 @@ function Get-DATOEMModelInfo {
                             HasGFX     = $hasGFX
                             GFXBrand   = $gfxBrand
                             Version    = $(if ($LenovoDriverPackSource -eq 'SoftPaqs') { (Get-Date -Format 'ddMMyyyy') } else { $lenovoDate })
-                        }
+                        })
                     }
                 } catch {
                     Write-DATLogEntry -Value "[Error] - Lenovo model retrieval failed: $($_.Exception.Message)" -Severity 3
@@ -1532,14 +1532,14 @@ function Get-DATOEMModelInfo {
                         foreach ($MSModelGroup in $DATMicrosoftModels) {
                             $latestEntry = $MSModelGroup.Group | Sort-Object { try { [datetime]$_.ReleaseDate } catch { [datetime]::MinValue } } -Descending | Select-Object -First 1
                             $msVersion = if ($latestEntry.ReleaseDate) { $latestEntry.ReleaseDate } else { '' }
-                            $OEMSupportedModels += [PSCustomObject]@{
+                            $OEMSupportedModels.Add([PSCustomObject]@{
                                 OEM        = "Microsoft"
                                 Model      = $MSModelGroup.Name
                                 Baseboards = if ($latestEntry.SupportedDevices) { $latestEntry.SupportedDevices } else { $MSModelGroup.Name }
                                 OS         = $WindowsVersion
                                 'OS Build' = $WindowsBuild
                                 Version    = $msVersion
-                            }
+                            })
                             $DATModelNames += $MSModelGroup.Name
                         }
                         Write-DATLogEntry -Value "[Microsoft] DAT catalog: $($DATMicrosoftModels.Count) model(s) found" -Severity 1
@@ -1568,14 +1568,14 @@ function Get-DATOEMModelInfo {
                             $products = ($MSModelGroup.Group | ForEach-Object { $_.SystemId } | Select-Object -Unique) -join ','
                             $latestEntry = $MSModelGroup.Group | Sort-Object { try { [datetime]$_.ReleaseDate } catch { [datetime]::MinValue } } -Descending | Select-Object -First 1
                             $msVersion = if ($latestEntry.ReleaseDate) { $latestEntry.ReleaseDate } else { '' }
-                            $OEMSupportedModels += [PSCustomObject]@{
+                            $OEMSupportedModels.Add([PSCustomObject]@{
                                 OEM        = "Microsoft"
                                 Model      = $MSModelGroup.Name
                                 Baseboards = $products
                                 OS         = $WindowsVersion
                                 'OS Build' = $WindowsBuild
                                 Version    = $msVersion
-                            }
+                            })
                         }
                         if ($MicrosoftModels.Count -gt 0) {
                             Write-DATLogEntry -Value "[Microsoft] OSD catalog: $($MicrosoftModels.Count) additional model(s) added" -Severity 1
@@ -1628,14 +1628,14 @@ function Get-DATOEMModelInfo {
                             $sccmNode = $modelNode.SCCM | Where-Object { $_.Version -eq $WindowsBuild -and $_.OS -eq $("Win" + "$($WindowsVersion.Split(' ')[1])") } | Select-Object -First 1
                             $acerVersion = if ($sccmNode.date) { $sccmNode.date } else { '' }
                         }
-                        $OEMSupportedModels += [PSCustomObject]@{
+                        $OEMSupportedModels.Add([PSCustomObject]@{
                             OEM        = "Acer"
                             Model      = $Model
                             Baseboards = $Model
                             OS         = $WindowsVersion
                             'OS Build' = $WindowsBuild
                             Version    = $acerVersion
-                        }
+                        })
                     }
                 } catch {
                     Write-DATLogEntry -Value "[Error] - Acer model retrieval failed: $($_.Exception.Message)" -Severity 3
@@ -1683,14 +1683,14 @@ function Get-DATOEMModelInfo {
                             $sccmNode = $modelNode.SCCM | Where-Object { $_.Version -eq $WindowsBuild -and $_.OS -eq $("Win" + "$($WindowsVersion.Split(' ')[1])") } | Select-Object -First 1
                             $panasonicVersion = if ($sccmNode.date) { $sccmNode.date } else { '' }
                         }
-                        $OEMSupportedModels += [PSCustomObject]@{
+                        $OEMSupportedModels.Add([PSCustomObject]@{
                             OEM        = "Panasonic"
                             Model      = $Model
                             Baseboards = $Model
                             OS         = $WindowsVersion
                             'OS Build' = $WindowsBuild
                             Version    = $panasonicVersion
-                        }
+                        })
                     }
                 } catch {
                     Write-DATLogEntry -Value "[Error] - Panasonic model retrieval failed: $($_.Exception.Message)" -Severity 3
@@ -1718,7 +1718,7 @@ function Get-DATOEMModelInfo {
                             $fujitsuVersion = if (-not [string]::IsNullOrEmpty($latestEntry.Version)) { $latestEntry.Version }
                                               elseif (-not [string]::IsNullOrEmpty($latestEntry.ReleaseDate)) { $latestEntry.ReleaseDate }
                                               else { '' }
-                            $OEMSupportedModels += [PSCustomObject]@{
+                            $OEMSupportedModels.Add([PSCustomObject]@{
                                 OEM         = "Fujitsu"
                                 Model       = $modelGroup.Name
                                 Baseboards  = if ($latestEntry.SupportedDevices) { $latestEntry.SupportedDevices } else { $modelGroup.Name }
@@ -1726,7 +1726,7 @@ function Get-DATOEMModelInfo {
                                 'OS Build'  = $WindowsBuild
                                 Version     = $fujitsuVersion
                                 DownloadURL = $latestEntry.DownloadURL
-                            }
+                            })
                         }
                         Write-DATLogEntry -Value "[Fujitsu] DAT catalog: $(@($FujitsuEntries | Group-Object -Property DisplayName).Count) model(s) found for $WindowsVersion $FujitsuArchFilter" -Severity 1
                     }
@@ -1757,7 +1757,7 @@ function Get-DATOEMModelInfo {
                             $asusVersion = if (-not [string]::IsNullOrEmpty($latestEntry.Version)) { $latestEntry.Version }
                                            elseif (-not [string]::IsNullOrEmpty($latestEntry.ReleaseDate)) { $latestEntry.ReleaseDate }
                                            else { '' }
-                            $OEMSupportedModels += [PSCustomObject]@{
+                            $OEMSupportedModels.Add([PSCustomObject]@{
                                 OEM         = "ASUS"
                                 Model       = $modelGroup.Name
                                 Baseboards  = if ($latestEntry.SupportedDevices) { $latestEntry.SupportedDevices } else { $modelGroup.Name }
@@ -1765,7 +1765,7 @@ function Get-DATOEMModelInfo {
                                 'OS Build'  = $WindowsBuild
                                 Version     = $asusVersion
                                 DownloadURL = $latestEntry.DownloadURL
-                            }
+                            })
                         }
                         Write-DATLogEntry -Value "[ASUS] DAT catalog: $(@($AsusEntries | Group-Object -Property DisplayName).Count) model(s) found for $WindowsVersion $AsusArchFilter" -Severity 1
                     }

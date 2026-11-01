@@ -54,6 +54,27 @@ foreach ($path in @($headlessPath, $uiPath, $coreModulePath, $driverPath, $biosP
     }
 }
 
+$coreTokens = $null
+$coreErrors = $null
+$coreAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $coreModulePath,
+    [ref]$coreTokens,
+    [ref]$coreErrors
+)
+$oemModelFunction = $coreAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-DATOEMModelInfo'
+}, $true)
+$quadraticModelAppends = @($oemModelFunction.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Operator -eq 'PlusEquals' -and
+        $node.Left.Extent.Text -eq '$OEMSupportedModels'
+}, $true))
+Assert-DAT ($oemModelFunction.Extent.Text -match '\$OEMSupportedModels\s*=\s*\[Collections\.Generic\.List\[object\]\]::new\(\)') 'OEM catalog model collection uses amortized constant-time list growth'
+Assert-DAT ($quadraticModelAppends.Count -eq 0) 'OEM catalog model collection avoids quadratic array appends'
+
 function Import-DATTestFunction {
     param([string]$Path, [string[]]$Name)
     $fileTokens = $null

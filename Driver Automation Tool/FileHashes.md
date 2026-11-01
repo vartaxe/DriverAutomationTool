@@ -33,7 +33,7 @@ and publish a SHA256 checksum for the ZIP itself.
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
 | DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.6 | `6926525056FAD473FF95F05504C27C4304B6C30D373056382A1D6B34A8E1D248` |
-| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1564.7 | `23BFDDF8D9AA134D34BFD0BFEC8D24B38480D975C3B14623D338E115141FDBD2` |
+| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1564.7 | `E717BDA82CBD6CC557E2084A413E197E7C5E193C1A12FD293D3E37520F98CFEC` |
 | Deploy-BIOSPassword-Detection.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Detection.ps1` | 1.7 | `7A7DCE6AD49DE2634FB5014D2E02594E36A5A212FA0BF3C21C3E6C5ACC64B235` |
 | Deploy-BIOSPassword-Remediation.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Remediation.ps1` | 3.2 | `04E95521191126AF41ACDED90CF6EA6C7FD16571B7DA203A3BE8E8E3DD0B4A3B` |
 | Import-CMOfflinePackages.ps1 | `Modules/DriverAutomationToolCore/Templates/Import-CMOfflinePackages.ps1` | 9.9 | `E6DB9F4D3873152AFCA5DC897541E2E5BCB58039AE0AC04B3B9BB5894A5FE15A` |
