@@ -4,8 +4,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $currentCore = Join-Path $repoRoot 'Driver Automation Tool\Modules\DriverAutomationToolCore\DriverAutomationToolCore.psm1'
 $hotFixCore = Join-Path $repoRoot 'HotFix\10.1.5\Modules\DriverAutomationToolCore\DriverAutomationToolCore.psm1'
 $readme = Get-Content (Join-Path $repoRoot 'README.md') -Raw
-$currentSupportedBIOSOEMs = @('Dell', 'HP', 'Lenovo', 'Acer', 'Fujitsu')
-$currentUnsupportedBIOSOEMs = @('Microsoft', 'Panasonic', 'ASUS')
+$currentSupportedBIOSOEMs = @('Dell', 'HP', 'Lenovo', 'Fujitsu')
+$currentUnsupportedBIOSOEMs = @('Microsoft', 'Acer', 'Panasonic', 'ASUS')
 $hotFixSupportedBIOSOEMs = @('Dell', 'HP', 'Lenovo')
 $hotFixUnsupportedBIOSOEMs = @('Microsoft', 'Acer', 'Panasonic', 'Fujitsu', 'ASUS')
 
@@ -229,7 +229,7 @@ $expectedMatrix = [ordered]@{
     'Dell'              = @('✅', '✅')
     'Lenovo'            = @('✅', '✅')
     'Microsoft Surface' = @('✅', '—')
-    'Acer'              = @('✅', '✅')
+    'Acer'              = @('✅', '—')
     'Panasonic'         = @('✅', '—')
     'Fujitsu'           = @('✅', '✅')
     'ASUS'              = @('✅', '—')
@@ -256,9 +256,9 @@ foreach ($oem in $expectedMatrix.Keys) {
 
 $allOEMsText = 'HP, Dell, Lenovo, Microsoft Surface, Acer, Panasonic, Fujitsu, and ASUS'
 Assert-DAT ($readme.Contains("Driver catalog discovery and packaging for $allOEMsText")) 'README Multi-OEM text names all eight driver OEMs'
-Assert-DAT ($readme -match 'Standalone BIOS\s+package creation and installation is currently validated only for Dell, HP, Lenovo, Acer,\s+and Fujitsu') 'README documents the validated BIOS boundary'
+Assert-DAT ($readme -match 'Standalone BIOS\s+package creation and installation is currently validated only for Dell, HP, Lenovo,\s+and Fujitsu') 'README documents the validated BIOS boundary'
 Assert-DAT ($readme -match 'Microsoft Surface firmware is delivered through driver packages') 'README keeps Microsoft standalone BIOS blocked'
-Assert-DAT ($readme -match 'BIOS packages\s+for Panasonic and ASUS are not generated') 'README documents every unsupported standalone BIOS OEM'
+Assert-DAT ($readme -match 'BIOS packages\s+for Acer, Panasonic, and ASUS are not generated') 'README documents every unsupported standalone BIOS OEM'
 
 Test-DATModuleBehavior -Path $currentCore -Label 'current' `
     -SupportedBIOSOEMs $currentSupportedBIOSOEMs -UnsupportedBIOSOEMs $currentUnsupportedBIOSOEMs

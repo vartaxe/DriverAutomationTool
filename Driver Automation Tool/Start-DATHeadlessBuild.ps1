@@ -394,8 +394,13 @@ try {
     # Per-model failures and aborts are recorded in the registry without throwing.
     # Do not remove older packages or report success unless processing actually completed.
     $buildState = Get-ItemProperty -Path $global:RegPath -ErrorAction Stop
-    if ($buildState.RunningState -notin @('Completed', 'CompletedNoMatch')) {
+    if ($buildState.RunningState -notin @('Completed', 'CompletedNoMatch', 'CompletedWithWarnings')) {
         throw "Model processing did not complete successfully (state: '$($buildState.RunningState)'). $($buildState.RunningMessage)"
+    }
+
+    if ($buildState.RunningState -eq 'CompletedWithWarnings') {
+        Write-DATLogEntry -Value "[Headless] Build completed with warnings: $($buildState.RunningMessage)" -Severity 2
+        Write-Host "[Headless] Package retention skipped because the build completed with warnings; existing packages were preserved."
     }
 
     # Package retention -- remove superseded packages after a successful build. This mirrors the
@@ -403,7 +408,8 @@ try {
     # headless runs never cleaned up old packages even with auto-cleanup enabled (#849). Settings
     # come from the BuildConfig 'PackageRetention' section, falling back to the UI-saved registry
     # values so an operator who toggled retention in the UI gets the same behaviour when scheduled.
-    if ($config.Platform -in @('ConfigMgr', 'Configuration Manager', 'Intune')) {
+    if ($buildState.RunningState -in @('Completed', 'CompletedNoMatch') -and
+        $config.Platform -in @('ConfigMgr', 'Configuration Manager', 'Intune')) {
         try {
             $retEnabled      = $false
             $retCount        = 0
@@ -559,7 +565,8 @@ try {
         Write-Host "[Headless] Telemetry summary failed: $($_.Exception.Message)"
     }
 
-    Write-DATLogEntry -Value "[Headless] Build completed successfully at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -Severity 1
+    $completionStatus = if ($buildState.RunningState -eq 'CompletedWithWarnings') { 'completed with warnings' } else { 'completed successfully' }
+    Write-DATLogEntry -Value "[Headless] Build $completionStatus at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -Severity 1
 } catch {
     $buildExitCode = 1
     # If the failure is the API version gate (HTTP 426), surface the upgrade instruction clearly and

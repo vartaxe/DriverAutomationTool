@@ -135,12 +135,26 @@ Describe 'Headless build outcomes and post-build actions' {
     It 'reports <State> as success' -ForEach @(
         @{ State = 'Completed' }
         @{ State = 'CompletedNoMatch' }
+        @{ State = 'CompletedWithWarnings' }
     ) {
         Mock Get-ItemProperty { [pscustomobject]@{ RunningState = $State } }
         . $buildLifecycle 2>$null
         $buildExitCode | Should -Be 0
         Should -Invoke Set-DATRunState -Times 1 -Exactly -ParameterFilter { $State -eq 'Completed' }
         Should -Invoke Send-DATSummaryReport -Times 1 -Exactly
+    }
+    It 'reports warning-only completion without removing existing packages' {
+        $config.Platform = 'Configuration Manager'
+        Mock Get-ItemProperty { [pscustomobject]@{ RunningState = 'CompletedWithWarnings'; RunningMessage = 'Some models were incomplete' } }
+        . $buildLifecycle 2>$null
+        $buildExitCode | Should -Be 0
+        Should -Invoke Invoke-DATPackageRetention -Times 0 -Exactly
+        Should -Invoke Write-DATLogEntry -Times 1 -Exactly -ParameterFilter {
+            $Severity -eq 2 -and $Value -like '*Build completed with warnings: Some models were incomplete*'
+        }
+        Should -Invoke Write-DATLogEntry -Times 1 -Exactly -ParameterFilter {
+            $Value -like '*Build completed with warnings at*'
+        }
     }
     It 'rejects non-success state <State> before retention or success reporting' -ForEach @(
         @{ State = 'CompletedWithErrors' }

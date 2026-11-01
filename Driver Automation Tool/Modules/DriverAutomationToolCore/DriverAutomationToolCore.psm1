@@ -2816,168 +2816,6 @@ function New-DATDriverManifest {
     }
 }
 
-function Invoke-DATTakeownProcess {
-    <#
-    .SYNOPSIS
-        Runs takeown.exe from System32 hidden and returns its exit code and output.
-    .DESCRIPTION
-        Output is redirected to temp files that are read back and removed, because a recursive
-        run prints a line for every file in the tree. takeown writes in the console's OEM code
-        page, so the files are read back as OEM.
-    #>
-    [CmdletBinding()]
-    [OutputType([pscustomobject])]
-    param (
-        [Parameter(Mandatory)][string]$Arguments
-    )
-
-    $takeownExe = Join-Path $env:SystemRoot 'System32\takeown.exe'
-    $token = [System.IO.Path]::GetRandomFileName()
-    $stdout = Join-Path ([System.IO.Path]::GetTempPath()) "DAT_takeown_$token.out"
-    $stderr = Join-Path ([System.IO.Path]::GetTempPath()) "DAT_takeown_$token.err"
-    try {
-        $proc = Start-Process -FilePath $takeownExe -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru `
-            -RedirectStandardOutput $stdout -RedirectStandardError $stderr -ErrorAction Stop
-
-        # Handle return value
-        return [PSCustomObject]@{
-            ExitCode = [int]$proc.ExitCode
-            Output   = [string](Get-Content -LiteralPath $stdout -Raw -Encoding Oem -ErrorAction SilentlyContinue)
-            Error    = [string](Get-Content -LiteralPath $stderr -Raw -Encoding Oem -ErrorAction SilentlyContinue)
-        }
-    }
-    finally {
-        Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
-    }
-}
-
-function Get-DATTakeownYesAnswer {
-    <#
-    .SYNOPSIS
-        Returns the value takeown /D accepts for "yes" in this Windows display language.
-    .DESCRIPTION
-        takeown only accepts the display language's own answers for /D: Y in English, J in
-        German, and so on. Any other value is rejected as invalid syntax before a single file is
-        touched, so a hard-coded "/D Y" takes no ownership at all on a German installation and
-        the permission repair ahead of WIM capture silently does nothing (issue #975).
-
-        The candidates are the single letters takeown quotes in its own help for /D, then a
-        short list of common answers. Each is confirmed by running takeown against an
-        empty scratch folder, because the help wording and quotation marks vary by language. N
-        is never chosen: takeown accepts it, but it means skip the folders it cannot list. When
-        nothing is confirmed, Y is returned, which is what the tool always passed. The answer is
-        cached for the session.
-    #>
-    [CmdletBinding()]
-    [OutputType([string])]
-    param ()
-
-    if (-not [string]::IsNullOrEmpty($script:DATTakeownYesAnswer)) { return $script:DATTakeownYesAnswer }
-
-    $candidates = New-Object System.Collections.Generic.List[string]
-    try {
-        $help = Invoke-DATTakeownProcess -Arguments '/?'
-        $lines = @($help.Output -split "`r?`n")
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -notmatch '^\s*/D\s') { continue }
-            $section = $lines[$i]
-            for ($j = $i + 1; $j -lt $lines.Count; $j++) {
-                if ([string]::IsNullOrWhiteSpace($lines[$j]) -or $lines[$j] -match '^\s*/\S') { break }
-                $section += ' ' + $lines[$j].Trim()
-            }
-            # A single letter between quotation marks of any style: straight, guillemets, curly or
-            # low-high. Built from code points so this file stays ASCII; PowerShell 7 treats a
-            # literal curly quote in source as a string delimiter.
-            $quoteClass = '["''' + (-join [char[]](0xAB, 0xBB, 0x2018, 0x2019, 0x201A, 0x201B, 0x201C, 0x201D, 0x201E, 0x201F, 0x2039, 0x203A)) + ']'
-            # Every quoted letter is a candidate, in order (yes comes first), because an apostrophe
-            # in the description can produce a false match ahead of the real one.
-            foreach ($match in [regex]::Matches($section, "$quoteClass\s?(\p{L})\s?$quoteClass")) {
-                $letter = $match.Groups[1].Value.ToUpperInvariant()
-                if (-not $candidates.Contains($letter)) { $candidates.Add($letter) }
-            }
-            break
-        }
-    }
-    catch {
-        Write-DATLogEntry -Value "[Packaging] Could not read the takeown help text: $($_.Exception.Message)" -Severity 2
-    }
-    foreach ($fallback in @('Y', 'J', 'O', 'S')) {
-        if (-not $candidates.Contains($fallback)) { $candidates.Add($fallback) }
-    }
-
-    $probeDir = Join-Path ([System.IO.Path]::GetTempPath()) "DAT_takeown_probe_$([System.IO.Path]::GetRandomFileName())"
-    try {
-        New-Item -Path $probeDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
-        foreach ($candidate in $candidates) {
-            if ($candidate -eq 'N') { continue }
-            $probe = Invoke-DATTakeownProcess -Arguments "/F `"$probeDir`" /R /D $candidate"
-            if ($probe.ExitCode -eq 0) {
-                $script:DATTakeownYesAnswer = $candidate
-                Write-DATLogEntry -Value "[Packaging] takeown /D answer for this Windows language: $candidate" -Severity 1
-                return $candidate
-            }
-        }
-        Write-DATLogEntry -Value "[Packaging] takeown accepted none of $($candidates -join ', ') for /D -- using Y" -Severity 2
-    }
-    catch {
-        Write-DATLogEntry -Value "[Packaging] Could not confirm the takeown /D answer: $($_.Exception.Message) -- using Y" -Severity 2
-    }
-    finally {
-        Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    # Handle return value
-    $script:DATTakeownYesAnswer = 'Y'
-    return 'Y'
-}
-
-function Invoke-DATTakeOwnership {
-    <#
-    .SYNOPSIS
-        Takes ownership of a folder tree with takeown.exe in any Windows display language.
-    .DESCRIPTION
-        Some OEM self-extractors (Dell in particular) leave files whose ACL denies
-        administrators the access DISM and wimlib need, and an icacls grant cannot be applied to
-        them until ownership changes. takeown runs recursively with /D so it never stops to ask
-        about a folder it cannot list, using the answer from Get-DATTakeownYesAnswer.
-
-        -Administrators gives ownership to the Administrators group (/A) instead of the calling
-        account. Returns takeown's exit code, or -1 when it could not be started. Failures are
-        logged rather than thrown, because every caller carries on to the capture.
-    #>
-    [CmdletBinding()]
-    [OutputType([int])]
-    param (
-        [Parameter(Mandatory)][AllowEmptyString()][string]$Path,
-        [switch]$Administrators,
-        [string]$Context = 'Packaging'
-    )
-
-    $yes = Get-DATTakeownYesAnswer
-    $arguments = "/F `"$Path`" /R"
-    if ($Administrators) { $arguments += ' /A' }
-    $arguments += " /D $yes"
-
-    try {
-        $result = Invoke-DATTakeownProcess -Arguments $arguments
-    }
-    catch {
-        Write-DATLogEntry -Value "[$Context] takeown could not be started: $($_.Exception.Message) -- continuing anyway" -Severity 2
-        return -1
-    }
-
-    if ($result.ExitCode -ne 0) {
-        # takeown's first line names the problem ("ERROR: Invalid syntax..."); the rest repeats per file.
-        $detail = @($result.Error, $result.Output) -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
-        $message = "[$Context] takeown returned code $($result.ExitCode) -- continuing anyway"
-        if ($detail) { $message += ": $($detail.Trim())" }
-        Write-DATLogEntry -Value $message -Severity 2
-    }
-
-    # Handle return value
-    return $result.ExitCode
-}
-
 function Invoke-DATDriverFilePackaging {
     param (
         [string]$FilePath,
@@ -3597,21 +3435,6 @@ function Invoke-DATDriverFilePackaging {
                 Write-DATLogEntry -Value "[$OEM] Command: $wimlibExe $wimlibArgs" -Severity 1
                 Write-DATLogEntry -Value "[$OEM] Compression: $wimlibCompressArg (multi-threaded)" -Severity 1
                 Set-DATRegistryValue -Name "RunningMessage" -Value "wimlib creating WIM for $OEM $Model ($wimlibCompressArg)..." -Type String
-
-                # Reset ACLs on extracted driver folder to ensure wimlib can read all files
-                # Some OEM driver packages (e.g. Dell) extract with restrictive ACLs
-                Write-DATLogEntry -Value "[$OEM] Resetting file permissions on driver folder..." -Severity 1
-                try {
-                    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-                    Invoke-DATTakeown -Path $DriverFolder -Confirm:$false
-                    $icaclsResult = Start-Process -FilePath (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::System)) 'icacls.exe') -ArgumentList "`"$DriverFolder`" /grant `"${currentUser}:(OI)(CI)R`" /T /Q /C" `
-                        -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
-                    if ($icaclsResult -and $icaclsResult.ExitCode -ne 0) {
-                        Write-DATLogEntry -Value "[$OEM] Warning: ACL grant returned exit code $($icaclsResult.ExitCode)" -Severity 2
-                    }
-                } catch {
-                    Write-DATLogEntry -Value "[$OEM] Warning: Permission reset failed: $($_.Exception.Message)" -Severity 2
-                }
 
                 $wimlibStdout = Join-Path $localWorkDir "DAT_wimlib_stdout.log"
                 $wimlibStderr = Join-Path $localWorkDir "DAT_wimlib_stderr.log"
@@ -9068,7 +8891,7 @@ function Start-DATModelProcessing {
                     Write-DATLogEntry -Value "[$currentIndex/$totalModels] SKIPPED -- Microsoft Surface BIOS updates are handled via driver injection, no separate BIOS package required" -Severity 1
                 }
                 elseif (-not (Test-DATBIOSInstallerSupport -OEM $oem)) {
-                    throw "Standalone BIOS packages are not supported for $oem. Supported installers are available for Dell, HP, Lenovo, Acer, and Fujitsu."
+                    throw "Standalone BIOS packages are not supported for $oem. Supported installers are available for Dell, HP, Lenovo, and Fujitsu."
                 }
                 # Skip BIOS if this OEM+Model was already processed in this session (BIOS is OS-independent)
                 elseif ($processedBiosModels.ContainsKey("$oem|$modelName")) {
@@ -25043,7 +24866,7 @@ function Test-DATBIOSInstallerSupport {
     [OutputType([bool])]
     param ([Parameter(Mandatory)][string]$OEM)
 
-    return $OEM -in @('Dell', 'HP', 'Lenovo', 'Acer', 'Fujitsu')
+    return $OEM -in @('Dell', 'HP', 'Lenovo', 'Fujitsu')
 }
 
 function Test-DATFujitsuBiosFlashable {
@@ -25090,13 +24913,13 @@ function Invoke-DATBiosPackaging {
     .SYNOPSIS
         Packages a downloaded BIOS payload for deployment.
         Dell's self-contained updater is placed directly; HP and Lenovo installers are extracted.
-        Acer ZIPs and validated Fujitsu BIOS Admin Packs are extracted to expose their flash utilities.
+        Validated Fujitsu BIOS Admin Packs are extracted to expose their flash utilities.
         When SkipWim is set (ConfigMgr), extracted files are staged directly.
         When SkipWim is not set (Intune), content is captured into a WIM.
     .PARAMETER BiosFilePath
         Path to the downloaded BIOS executable or archive.
     .PARAMETER OEM
-        Manufacturer name (Dell, HP, Lenovo, Acer, Fujitsu).
+        Manufacturer name (Dell, HP, Lenovo, Fujitsu).
     .PARAMETER Model
         Model name for folder structure.
     .PARAMETER Version
@@ -25119,7 +24942,7 @@ function Invoke-DATBiosPackaging {
     )
 
     if (-not (Test-DATBIOSInstallerSupport -OEM $OEM)) {
-        throw "Standalone BIOS packaging is not supported for $OEM. Supported installers are available for Dell, HP, Lenovo, Acer, and Fujitsu."
+        throw "Standalone BIOS packaging is not supported for $OEM. Supported installers are available for Dell, HP, Lenovo, and Fujitsu."
     }
 
     # BIOS packages are OS-agnostic -- use "BIOS" as the subfolder instead of OS name.
@@ -25145,15 +24968,6 @@ function Invoke-DATBiosPackaging {
     Set-DATRegistryValue -Name "RunningMessage" -Value "Packaging BIOS update for $OEM $Model..." -Type String
 
     switch ($OEM) {
-        'Acer' {
-            # Acer BIOS packages are ZIP archives -- extract to expose BIOS files
-            Write-DATLogEntry -Value "[BIOS] Acer: Extracting BIOS ZIP archive" -Severity 1
-            try {
-                Expand-DATArchiveSafely -Path $BiosFilePath -DestinationPath $extractDir
-            } catch {
-                throw "Acer BIOS extraction failed: $($_.Exception.Message)"
-            }
-        }
         'Fujitsu' {
             # Fujitsu BIOS Admin Pack: a ZIP holding DskFlash.exe, its data files and a <model>.bup
             # image (notebook packs keep them in a Windows\ subfolder). Install-BIOS.ps1 finds

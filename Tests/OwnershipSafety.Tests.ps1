@@ -42,9 +42,9 @@ BeforeAll {
     $failClosedPermissionNodes = @($permissionNodes | Where-Object {
         $_.Body.Extent.Text -match '\$icaclsProc|S-1-5-32-545'
     })
-    $bestEffortPermissionNode = $permissionNodes | Where-Object {
+    $bestEffortPermissionNodes = @($permissionNodes | Where-Object {
         $_.Body.Extent.Text -match '\$icaclsResult'
-    } | Select-Object -First 1
+    })
     $customPermissionNode = $uiAst.Find({
         param($item)
         $item -is [Management.Automation.Language.TryStatementAst] -and
@@ -293,17 +293,13 @@ Describe 'Ownership caller failure propagation' {
         $Version = '1'
         $driverCount = 1
     }
-    It 'stops regular and retry paths when discovery fails while keeping wimlib permission reset best-effort' {
+    It 'fails closed for every capture permission path when discovery fails' {
+        $permissionNodes | Should -HaveCount 2
         $failClosedPermissionNodes | Should -HaveCount 2
-        $bestEffortPermissionNode | Should -Not -BeNullOrEmpty
+        $bestEffortPermissionNodes | Should -HaveCount 0
         foreach ($node in $failClosedPermissionNodes) {
             $operation = [scriptblock]::Create($node.Extent.Text)
             { & $operation } | Should -Throw '*Unsupported ownership help*'
-        }
-        $bestEffortOperation = [scriptblock]::Create($bestEffortPermissionNode.Extent.Text)
-        { & $bestEffortOperation } | Should -Not -Throw
-        Should -Invoke Write-DATLogEntry -Exactly 1 -ParameterFilter {
-            $Severity -eq 2 -and $Value -match 'Permission reset failed'
         }
         Should -Invoke Start-Process -Exactly 0
     }

@@ -26,7 +26,6 @@
         'Invoke-DATExecutable',
         'Invoke-DATTakeown',
         'Invoke-DATDriverFilePackaging',
-        'Invoke-DATTakeOwnership',
         'Invoke-DATOEMDownloadModule',
         'Install-DATDriverPackage',
         'Start-DATModelProcessing',
