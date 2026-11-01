@@ -39,6 +39,20 @@ BeforeAll {
         Invoke-BatchLibrary -Function 'padRight' -Arguments @($Value, $Width)
     }
 
+    function ConvertTo-BatchValueForDelayedExpansion {
+        param(
+            [Parameter(Mandatory)]
+            [AllowEmptyString()]
+            [string]$Value
+        )
+
+        $escaped = [regex]::Replace($Value, '\^+!', {
+            param($match)
+            ('^' * (2 * ($match.Value.Length - 1) + 1)) + '!'
+        })
+        [regex]::Replace($escaped, '(?<!\^)!', '^!')
+    }
+
     function Invoke-BatchLibraryWithDelayedExpansion {
         param(
             [Parameter(Mandatory)]
@@ -53,13 +67,15 @@ BeforeAll {
             [switch]$NamedVariable
         )
 
-        $batchValue = $Value.Replace('^', '^^').Replace('!', '^!')
-        $batchExpectedValue = $ExpectedValue.Replace('^', '^^').Replace('!', '^!')
-        $batchWidth = if ($null -eq $Width) { '' } else { $Width.Replace('^', '^^').Replace('!', '^!') }
+        $batchValue = ConvertTo-BatchValueForDelayedExpansion -Value $Value
+        $batchExpectedValue = ConvertTo-BatchValueForDelayedExpansion -Value $ExpectedValue
+        $batchWidth = if ($null -eq $Width) { '' } else { ConvertTo-BatchValueForDelayedExpansion -Value $Width }
+        $valueArgument = '%%testValue%%'
+        $widthArgument = '%%testWidth%%'
         $call = if ($NamedVariable) {
             'call "{0}" {1} testValue' -f $script:ExecutablePath, $Function
         } else {
-            'call "{0}" {1} %%testValue%% %%testWidth%%' -f $script:ExecutablePath, $Function
+            'call "{0}" {1} "{2}" "{3}"' -f $script:ExecutablePath, $Function, $valueArgument, $widthArgument
         }
         $lines = @(
             '@echo off'
@@ -135,6 +151,72 @@ Describe 'Batch library padRight' {
         $result.Output | Should -Match 'WIDTH_PRESERVED'
         $result.Output | Should -Match 'DELAYED_EXPANSION_RESTORED'
         $result.ExitCode | Should -Be 1
+    }
+
+    It 'preserves caret-only arguments in padRight with caller delayed expansion enabled' {
+        $result = Invoke-BatchLibraryWithDelayedExpansion -Function 'padRight' `
+            -Value 'A^B' -ExpectedValue 'A^B' -Width '5'
+        $result.Output | Should -Match '(?m)^A\^B  $'
+        $result.Output | Should -Match 'VALUE_PRESERVED'
+        $result.Output | Should -Match 'DELAYED_EXPANSION_RESTORED'
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'preserves mixed caret and exclamation arguments in padRight with caller delayed expansion enabled' {
+        $result = Invoke-BatchLibraryWithDelayedExpansion -Function 'padRight' `
+            -Value 'A^!B' -ExpectedValue 'A^!B' -Width '6'
+        $result.Output | Should -Match '(?m)^A\^!B  $'
+        $result.Output | Should -Match 'VALUE_PRESERVED'
+        $result.Output | Should -Match 'DELAYED_EXPANSION_RESTORED'
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'preserves caret-only trimmed named-variable outputs with caller delayed expansion enabled' {
+        $result = Invoke-BatchLibraryWithDelayedExpansion -Function 'trimWhitespace' `
+            -Value '  A^B  ' -ExpectedValue 'A^B' -NamedVariable
+        $result.Output | Should -Match '(?m)^VALUE=A\^B$'
+        $result.Output | Should -Match 'VALUE_PRESERVED'
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'preserves mixed caret and exclamation marks in trimmed named-variable outputs with caller delayed expansion enabled' {
+        $result = Invoke-BatchLibraryWithDelayedExpansion -Function 'trimWhitespace' `
+            -Value '  A^!B  ' -ExpectedValue 'A^!B' -NamedVariable
+        $result.Output | Should -Match '(?m)^VALUE=A\^!B$'
+        $result.Output | Should -Match 'VALUE_PRESERVED'
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'preserves caret-only converted named-variable outputs with caller delayed expansion enabled' {
+        $result = Invoke-BatchLibraryWithDelayedExpansion -Function 'toLower' `
+            -Value 'A^B' -ExpectedValue 'a^b' -NamedVariable
+        $result.Output | Should -Match '(?m)^VALUE=a\^b$'
+        $result.Output | Should -Match 'VALUE_PRESERVED'
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'preserves mixed caret and exclamation marks in converted named-variable outputs with caller delayed expansion enabled' {
+        $result = Invoke-BatchLibraryWithDelayedExpansion -Function 'toLower' `
+            -Value 'A^!B' -ExpectedValue 'a^!b' -NamedVariable
+        $result.Output | Should -Match '(?m)^VALUE=a\^!b$'
+        $result.Output | Should -Match 'VALUE_PRESERVED'
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'preserves caret-only message arguments in logMessage with caller delayed expansion enabled' {
+        $result = Invoke-BatchLibraryWithDelayedExpansion -Function 'logMessage' `
+            -Value 'INFO' -ExpectedValue 'INFO' -Width 'message^B'
+        $result.Output | Should -Match '\[INFO\] message\^B'
+        $result.Output | Should -Match 'DELAYED_EXPANSION_RESTORED'
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'preserves mixed caret and exclamation message arguments in logMessage with caller delayed expansion enabled' {
+        $result = Invoke-BatchLibraryWithDelayedExpansion -Function 'logMessage' `
+            -Value 'INFO' -ExpectedValue 'INFO' -Width 'message^!B'
+        $result.Output | Should -Match '\[INFO\] message\^!B'
+        $result.Output | Should -Match 'DELAYED_EXPANSION_RESTORED'
+        $result.ExitCode | Should -Be 0
     }
 
     It 'preserves named-variable outputs with caller delayed expansion enabled' {

@@ -35,14 +35,34 @@ set "_funcMyLib=%~1"
 set "_argOneMyLib=%~2"
 set "_argTwoMyLib=%~3"
 set "_argThreeMyLib=%~4"
-if "%_delayedExpansionMyLib%"=="1" set "_funcMyLib=%_funcMyLib:^=^^%"
-if "%_delayedExpansionMyLib%"=="1" set "_argOneMyLib=%_argOneMyLib:^=^^%"
-if "%_delayedExpansionMyLib%"=="1" set "_argTwoMyLib=%_argTwoMyLib:^=^^%"
-if "%_delayedExpansionMyLib%"=="1" set "_argThreeMyLib=%_argThreeMyLib:^=^^%"
-if "%_delayedExpansionMyLib%"=="1" set "_funcMyLib=%_funcMyLib:!=^!%"
-if "%_delayedExpansionMyLib%"=="1" set "_argOneMyLib=%_argOneMyLib:!=^!%"
-if "%_delayedExpansionMyLib%"=="1" set "_argTwoMyLib=%_argTwoMyLib:!=^!%"
-if "%_delayedExpansionMyLib%"=="1" set "_argThreeMyLib=%_argThreeMyLib:!=^!%"
+set "_funcProbeMyLib=X%_funcMyLib%"
+if "%_delayedExpansionMyLib%"=="1" if not "%_funcProbeMyLib:!=%"=="%_funcProbeMyLib%" goto _escapeFuncMyLib
+goto _funcEscapedMyLib
+:_escapeFuncMyLib
+set "_funcMyLib=%_funcMyLib:^=^^%"
+set "_funcMyLib=%_funcMyLib:!=^!%"
+:_funcEscapedMyLib
+set "_argOneProbeMyLib=X%_argOneMyLib%"
+if "%_delayedExpansionMyLib%"=="1" if not "%_argOneProbeMyLib:!=%"=="%_argOneProbeMyLib%" goto _escapeArgOneMyLib
+goto _argOneEscapedMyLib
+:_escapeArgOneMyLib
+set "_argOneMyLib=%_argOneMyLib:^=^^%"
+set "_argOneMyLib=%_argOneMyLib:!=^!%"
+:_argOneEscapedMyLib
+set "_argTwoProbeMyLib=X%_argTwoMyLib%"
+if "%_delayedExpansionMyLib%"=="1" if not "%_argTwoProbeMyLib:!=%"=="%_argTwoProbeMyLib%" goto _escapeArgTwoMyLib
+goto _argTwoEscapedMyLib
+:_escapeArgTwoMyLib
+set "_argTwoMyLib=%_argTwoMyLib:^=^^%"
+set "_argTwoMyLib=%_argTwoMyLib:!=^!%"
+:_argTwoEscapedMyLib
+set "_argThreeProbeMyLib=X%_argThreeMyLib%"
+if "%_delayedExpansionMyLib%"=="1" if not "%_argThreeProbeMyLib:!=%"=="%_argThreeProbeMyLib%" goto _escapeArgThreeMyLib
+goto _argThreeEscapedMyLib
+:_escapeArgThreeMyLib
+set "_argThreeMyLib=%_argThreeMyLib:^=^^%"
+set "_argThreeMyLib=%_argThreeMyLib:!=^!%"
+:_argThreeEscapedMyLib
 endlocal & set "_funcMyLib=%_funcMyLib%" & set "_argOneMyLib=%_argOneMyLib%" & set "_argTwoMyLib=%_argTwoMyLib%" & set "_argThreeMyLib=%_argThreeMyLib%"
 
 call :_setSuccessMyLib
@@ -130,8 +150,13 @@ goto _removeBatchVariablesMyLib
     )
     setlocal DisableDelayedExpansion
     set "_valMyLib=%_valMyLib%"
-    if "%_delayedExpansionMyLib%"=="1" set "_valMyLib=%_valMyLib:^=^^%"
-    if "%_delayedExpansionMyLib%"=="1" set "_valMyLib=%_valMyLib:!=^!%"
+    set "_valProbeMyLib=X%_valMyLib%"
+    if "%_delayedExpansionMyLib%"=="1" if not "%_valProbeMyLib:!=%"=="%_valProbeMyLib%" goto _escapeTrimValueMyLib
+    goto _trimValueEscapedMyLib
+:_escapeTrimValueMyLib
+    set "_valMyLib=%_valMyLib:^=^^%"
+    set "_valMyLib=%_valMyLib:!=^!%"
+:_trimValueEscapedMyLib
     endlocal & endlocal & set "%_argOneMyLib%=%_valMyLib%"
 goto :eof
 
@@ -175,8 +200,13 @@ goto :eof
     )
     setlocal DisableDelayedExpansion
     set "_valMyLib=%_valMyLib%"
-    if "%_delayedExpansionMyLib%"=="1" set "_valMyLib=%_valMyLib:^=^^%"
-    if "%_delayedExpansionMyLib%"=="1" set "_valMyLib=%_valMyLib:!=^!%"
+    set "_valProbeMyLib=X%_valMyLib%"
+    if "%_delayedExpansionMyLib%"=="1" if not "%_valProbeMyLib:!=%"=="%_valProbeMyLib%" goto _escapeLowerValueMyLib
+    goto _lowerValueEscapedMyLib
+:_escapeLowerValueMyLib
+    set "_valMyLib=%_valMyLib:^=^^%"
+    set "_valMyLib=%_valMyLib:!=^!%"
+:_lowerValueEscapedMyLib
     endlocal & endlocal & set "%_argOneMyLib%=%_valMyLib%"
 goto :eof
 
@@ -199,7 +229,7 @@ goto :eof
     set "_stampMyLib=!_stampMyLib!_!_tmMyLib:~0,2!-!_tmMyLib:~3,2!-!_tmMyLib:~6,2!"
     setlocal DisableDelayedExpansion
     set "_stampMyLib=%_stampMyLib%"
-    if "%_delayedExpansionMyLib%"=="1" set "_stampMyLib=%_stampMyLib:^=^^%"
+    if "%_delayedExpansionMyLib%"=="1" if not "%_stampMyLib:!=%"=="%_stampMyLib%" set "_stampMyLib=%_stampMyLib:^=^^%"
     if "%_delayedExpansionMyLib%"=="1" set "_stampMyLib=%_stampMyLib:!=^!%"
     endlocal & endlocal & set "%_argOneMyLib%=%_stampMyLib%"
 goto :eof
@@ -298,5 +328,10 @@ goto :eof
     set _delayedExpansionMyLib=
     set _resultMyLib=
     set _valMyLib=
+    set _funcProbeMyLib=
+    set _argOneProbeMyLib=
+    set _argTwoProbeMyLib=
+    set _argThreeProbeMyLib=
+    set _valProbeMyLib=
     REM Append new variables above this line.
     set "_returnCodeMyLib=" & exit /b %_returnCodeMyLib%
