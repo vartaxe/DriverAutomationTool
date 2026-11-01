@@ -69,6 +69,19 @@ if (-not [Environment]::Is64BitProcess -and [Environment]::Is64BitOperatingSyste
     }
 }
 
+# --- WinPE Guard ---
+# This script flashes and then schedules its own restart (shutdown.exe), which makes sense on an
+# installed Windows OS only. WinPE sets the MiniNT key and an installed OS never does, so refuse
+# there before anything is logged, flashed or scheduled.
+function Test-DATWinPE {
+    param ([string]$KeyPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\MiniNT')
+    Test-Path -LiteralPath $KeyPath
+}
+if (Test-DATWinPE) {
+    Write-Warning 'WinPE detected -- Install-BIOS.ps1 only runs on an installed Windows OS. Nothing was flashed and no restart was scheduled.'
+    exit 1
+}
+
 $LogFile = Join-Path $env:ProgramData "Microsoft\IntuneManagementExtension\Logs\DriverAutomationTool-BIOS.log"
 
 function Write-CMTraceLog {
@@ -212,6 +225,8 @@ function Invoke-BIOSFlashUtility {
     param (
         [Parameter(Mandatory)][string]$FilePath,
         [string]$Arguments,
+        # Not enforced: the flash tool is started with -Wait and has no time limit from this script.
+        # The deployment's maximum run time is the only limit.
         [int]$TimeoutSeconds = 600
     )
 
@@ -338,9 +353,13 @@ function Confirm-DATBitLockerSuspended {
                 return $true
             }
             'On' {
-                Write-CMTraceLog "[BitLocker] Before the $($Stage.ToLower()): protection on $($env:SystemDrive) is ON -- suspending for 1 restart (attempt $attempt of $Attempts)"
                 try {
-                    $suspend = Invoke-CimMethod -InputObject $state.Volume -MethodName 'DisableKeyProtectors' -Arguments @{ DisableCount = [uint32]1 } -ErrorAction Stop
+                    # One restart, or the count set for this firmware ($script:BitLockerSuspendCount, 2 for
+                    # Surface). Unset, 0 or negative falls back to 1, never 0 (indefinite); a value that is
+                    # not a number throws here, so nothing is suspended and the caller does not proceed.
+                    $suspendCount = $(if ($script:BitLockerSuspendCount -ge 1) { [uint32]$script:BitLockerSuspendCount } else { [uint32]1 })
+                    Write-CMTraceLog "[BitLocker] Before the $($Stage.ToLower()): protection on $($env:SystemDrive) is ON -- suspending for $suspendCount restart$(if ($suspendCount -ne 1) { 's' }) (attempt $attempt of $Attempts)"
+                    $suspend = Invoke-CimMethod -InputObject $state.Volume -MethodName 'DisableKeyProtectors' -Arguments @{ DisableCount = $suspendCount } -ErrorAction Stop
                     if ($suspend.ReturnValue -eq 0) {
                         $script:BitLockerSuspended = $true
                         Write-CMTraceLog "[BitLocker] Suspend accepted -- reading the state back to confirm"
@@ -657,6 +676,47 @@ function Compare-BIOSVersion {
                 return $true
             }
         }
+        '*Fujitsu*' {
+            try {
+                # The catalog carries the BIOS release as "1.16" (LIFEBOOK, CELSIUS H) or
+                # "V5.0.0.26 - R3.20.0" (ESPRIMO, CELSIUS W/J), and the device's SMBIOS string
+                # wraps it in text (e.g. "Version 1.16", "V5.0.0.26 R3.20.0 for D4022-A3x").
+                # Compare the release number: the R-number when there is one, otherwise the
+                # first dotted number. Falls back to release date when either cannot be read.
+                $fujitsuRelease = {
+                    param([string]$Value)
+                    if ($Value -match '\bR(\d+(?:\.\d+){1,3})\b') { return [System.Version]$Matches[1] }
+                    if ($Value -match '(\d+(?:\.\d+){1,3})') { return [System.Version]$Matches[1] }
+                    return $null
+                }
+                $availableRelease = & $fujitsuRelease $AvailableBIOSVersion
+                $currentRelease   = & $fujitsuRelease $currentVersion
+                if ($null -ne $availableRelease -and $null -ne $currentRelease) {
+                    Write-CMTraceLog "Fujitsu: Device BIOS release $currentRelease | package release $availableRelease"
+                    if ($availableRelease -gt $currentRelease) {
+                        Write-CMTraceLog "Fujitsu: Newer BIOS available ($availableRelease > $currentRelease)"
+                        return $true
+                    }
+                } else {
+                    $currentReleaseDate = if ($null -ne $currentBIOS.ReleaseDate) {
+                        ([datetime]$currentBIOS.ReleaseDate).ToString('yyyyMMdd')
+                    } else { '' }
+                    $datesComparable = ($AvailableReleaseDate -match '^\d{8}$') -and ($currentReleaseDate -match '^\d{8}$')
+                    if ($datesComparable) {
+                        if ([string]::CompareOrdinal($AvailableReleaseDate, $currentReleaseDate) -gt 0) {
+                            Write-CMTraceLog "Fujitsu: Newer BIOS available (release date $AvailableReleaseDate > $currentReleaseDate)"
+                            return $true
+                        }
+                    } else {
+                        Write-CMTraceLog "Fujitsu: Version/date not comparable -- proceeding with update" -Severity 2
+                        return $true
+                    }
+                }
+            } catch {
+                Write-CMTraceLog "WARNING: Fujitsu BIOS version comparison failed -- $($_.Exception.Message). Proceeding with update." -Severity 2
+                return $true
+            }
+        }
         default {
             Write-CMTraceLog "Unknown manufacturer '$Manufacturer' -- skipping version comparison, proceeding with update" -Severity 2
             return $true
@@ -799,10 +859,10 @@ function Test-DATBiosConfirmedCurrent {
 # Fail before payload discovery or extraction if no validated flash implementation exists.
 # The build pipeline enforces the same boundary, but the generated installer must remain safe if
 # it is copied, retained, or invoked independently of that pipeline.
-$DATSupportedBIOSManufacturers = @('Dell', 'HP', 'Lenovo')
+$DATSupportedBIOSManufacturers = @('Dell', 'HP', 'Lenovo', 'Fujitsu')
 $DATTemplateManufacturer = '{{OEM}}'
 if ($DATTemplateManufacturer -notin $DATSupportedBIOSManufacturers) {
-    Write-Error "Standalone BIOS installation is not supported for '$DATTemplateManufacturer'. Validated flash installers are available only for Dell, HP, and Lenovo."
+    Write-Error "Standalone BIOS installation is not supported for '$DATTemplateManufacturer'. Validated flash installers are available for Dell, HP, Lenovo, and Fujitsu."
     exit 1
 }
 if ($ValidateManufacturerOnly) {
@@ -1053,8 +1113,15 @@ try {
     # BitLocker is checked immediately before flashing and again before restart.
     Set-DATInstallProgress -Step 2
     $script:BitLockerSuspended = $false
+    # Microsoft's BitLocker guidance for Surface UEFI / TPM firmware updates is a suspend count of
+    # 2 or more, as the update can take more than one restart. Fujitsu packs that carry an Intel ME
+    # firmware update also take an extra restart-and-update cycle. Every other OEM stays at 1.
+    $script:BitLockerSuspendCount = if ($Manufacturer -like '*Microsoft*' -or $Manufacturer -like '*Fujitsu*') { 2 } else { 1 }
     $script:FlashSucceeded = $false
     $flashExitCode = $null
+    # Set by a flash tool that reports success with exit code 0 even though the new firmware only
+    # takes effect after a restart (Fujitsu DskFlash run with /NRB).
+    $flashNeedsRestart = $false
 
     if ($WhatIf) {
         Write-CMTraceLog "WHATIF: Would confirm BitLocker protection is suspended immediately before the flash and again before the restart" -Severity 2
@@ -1396,6 +1463,69 @@ try {
             }
         }
 
+        # -- Fujitsu ------------------------------------------------------------
+        # Fujitsu BIOS Admin Pack (LIFEBOOK notebooks, CELSIUS H mobile workstations): DskFlash.exe
+        # plus a <model>.bup image. Fujitsu's own SilentUpdate.bat runs
+        #   DskFlash.exe /UPD /W /OV /O=<image>.bup /ARB /BPC=26 /IAC
+        # Switches, from DskFlash's built-in help: /UPD update the system BIOS, /O= the image,
+        # /S /W no dialogs or warnings, /OV allow overwriting the current BIOS, /BPC= minimum battery
+        # charge, /IAC do not demand AC power on notebooks, /LF= log file, /WD= working folder,
+        # /NRB suppress DskFlash's own restart. /NRB replaces Fujitsu's /ARB so the restart goes
+        # through this script's BitLocker-aware restart handling instead of DskFlash rebooting.
+        # The new BIOS only takes effect after a restart, so success always schedules one.
+        '*Fujitsu*' {
+            Write-CMTraceLog "Fujitsu BIOS update detected -- searching for DskFlash and the BIOS image"
+
+            $dskFlash = Get-ChildItem -Path $ExtractPath -Recurse -Filter 'DskFlash.exe' -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            $bupFile = if ($dskFlash) {
+                Get-ChildItem -Path $dskFlash.DirectoryName -Filter '*.bup' -File -ErrorAction SilentlyContinue |
+                    Sort-Object Length -Descending | Select-Object -First 1
+            }
+            if (-not $dskFlash -or -not $bupFile) {
+                Write-CMTraceLog "ERROR: No Fujitsu DskFlash.exe and .bup BIOS image found in extracted content" -Severity 3
+                throw "No Fujitsu DskFlash.exe and .bup BIOS image found in extracted content"
+            }
+            Write-CMTraceLog "Fujitsu DskFlash found: $($dskFlash.FullName) | BIOS image: $($bupFile.Name)"
+
+            if (-not [string]::IsNullOrEmpty($biosPassword)) {
+                Write-CMTraceLog "WARNING: A BIOS password is configured, but DskFlash takes no password on the command line -- flashing without it. A password-protected BIOS may refuse the update." -Severity 2
+            }
+
+            $fujitsuLogFile = Join-Path $env:ProgramData 'Microsoft\IntuneManagementExtension\Logs\DAT_FujitsuDskFlash.log'
+            $flashArgs = "/UPD /S /W /OV /O=`"$($bupFile.FullName)`" /WD=`"$($dskFlash.DirectoryName)`" /NRB /BPC=26 /IAC /LF=`"$fujitsuLogFile`""
+
+            if ($WhatIf) {
+                Write-CMTraceLog "WHATIF: Would execute Fujitsu BIOS update: $($dskFlash.FullName) $flashArgs" -Severity 2
+                $flashExitCode = 0
+            } else {
+                $flashExitCode = Invoke-BIOSFlashUtility -FilePath $dskFlash.FullName -Arguments $flashArgs
+            }
+
+            # DskFlash exit codes. 0 is taken as success; the others below are the numbered
+            # messages in DskFlash's own message table (DskFlash.dat). Confirm on hardware.
+            #    301      = a restart is needed before DskFlash can run
+            #   1044      = BIOS access is blocked until the next restart
+            #   1025-1033 = battery too low, not recognised or missing, or AC adapter not connected
+            #   1049      = rollback to an older BIOS is forbidden by the BIOS setup
+            if ($flashExitCode -eq 0) {
+                Write-CMTraceLog "Fujitsu BIOS update staged successfully (exit code: 0) -- the new BIOS applies at the next restart"
+                $flashNeedsRestart = $true
+            } elseif ($flashExitCode -in @(301, 1044)) {
+                Write-CMTraceLog "Fujitsu DskFlash reports a restart is needed before it can flash (exit code: $flashExitCode). Will retry after the next restart." -Severity 2
+                Set-DATInstallStatus -RegPath $VersionRegPath -Result 'RetryScheduled' -Phase 'RestartBeforeFlash' -ToolExitCode $flashExitCode -ScriptExitCode 1618 -ErrorMessage "DskFlash exit code $flashExitCode (restart needed before flashing) -- deferred to a later cycle"
+                exit 1618  # ERROR_INSTALL_ALREADY_RUNNING -- tells Intune to retry
+            } elseif ($flashExitCode -ge 1025 -and $flashExitCode -le 1033) {
+                Write-CMTraceLog "Fujitsu DskFlash refused to flash on battery power (exit code: $flashExitCode) -- connect AC power or charge the battery. Will retry on next Intune cycle." -Severity 2
+                Set-DATInstallStatus -RegPath $VersionRegPath -Result 'RetryScheduled' -Phase 'ACPower' -ToolExitCode $flashExitCode -ScriptExitCode 1618 -ErrorMessage "DskFlash exit code $flashExitCode (battery/AC power) -- deferred to next Intune cycle"
+{{STATUS_TOAST_ACPOWER_BLOCK}}
+                exit 1618  # ERROR_INSTALL_ALREADY_RUNNING -- tells Intune to retry
+            } else {
+                Write-CMTraceLog "ERROR: Fujitsu BIOS update failed with DskFlash exit code: $flashExitCode (log: $fujitsuLogFile)" -Severity 3
+                throw "Fujitsu BIOS update failed with DskFlash exit code: $flashExitCode"
+            }
+        }
+
         default {
             Write-CMTraceLog "ERROR: Unsupported manufacturer '$Manufacturer' for BIOS update" -Severity 3
             throw "Unsupported manufacturer '$Manufacturer' for BIOS update"
@@ -1413,7 +1543,7 @@ try {
     # Without this, a device whose reboot never happens (Focus Assist, "Disable Automatic
     # Restart" policy, or a user who never restarts) would report as Installed in Intune forever
     # despite never actually running the new BIOS.
-    $rebootRequiredForMarker = $flashExitCode -in @(1, 2, 3010)
+    $rebootRequiredForMarker = $flashNeedsRestart -or ($flashExitCode -in @(1, 2, 3010))
     if ($WhatIf) {
         Write-CMTraceLog "WHATIF: Would write version '{{Version}}' to registry at $VersionRegPath" -Severity 2
     } else {
@@ -1453,7 +1583,7 @@ try {
         Write-CMTraceLog "WHATIF: BIOS update simulation completed -- no changes were made"
     } else {
         Write-CMTraceLog "BIOS firmware prestaged successfully"
-        if ($flashExitCode -in @(2, 1, 3010)) {
+        if ($flashNeedsRestart -or ($flashExitCode -in @(2, 1, 3010))) {
             $DisableRestart = {{DISABLE_RESTART}}
             $RestartDelaySeconds = {{RESTART_DELAY_SECONDS}}
             $RestartDelayMinutes = [math]::Round($RestartDelaySeconds / 60, 0)

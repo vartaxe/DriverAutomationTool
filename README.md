@@ -54,13 +54,13 @@ The Driver Automation Tool is a PowerShell WPF desktop application that automate
 | Microsoft Surface | ✅ | — |
 | Acer | ✅ | — |
 | Panasonic | ✅ | — |
-| Fujitsu | ✅ | — |
+| Fujitsu | ✅ | ✅ |
 | ASUS | ✅ | — |
 
 Driver catalog discovery and packaging covers all eight OEMs listed above. Standalone BIOS
-package creation and installation is currently validated only for Dell, HP, and Lenovo.
-Microsoft Surface firmware is delivered through driver packages; BIOS packages for Acer,
-Panasonic, Fujitsu, and ASUS are not generated.
+package creation and installation is currently validated only for Dell, HP, Lenovo,
+and Fujitsu. Microsoft Surface firmware is delivered through driver packages; BIOS packages
+for Acer, Panasonic, and ASUS are not generated.
 
 Getac is not an automated catalog provider in this project. The bundled apply script
 recognizes Getac hardware, so administrators can use the **Custom Driver Pack** workflow

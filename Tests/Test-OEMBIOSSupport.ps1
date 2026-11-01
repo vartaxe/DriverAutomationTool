@@ -4,13 +4,38 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $currentCore = Join-Path $repoRoot 'Driver Automation Tool\Modules\DriverAutomationToolCore\DriverAutomationToolCore.psm1'
 $hotFixCore = Join-Path $repoRoot 'HotFix\10.1.5\Modules\DriverAutomationToolCore\DriverAutomationToolCore.psm1'
 $readme = Get-Content (Join-Path $repoRoot 'README.md') -Raw
-$supportedBIOSOEMs = @('Dell', 'HP', 'Lenovo')
-$unsupportedBIOSOEMs = @('Microsoft', 'Acer', 'Panasonic', 'Fujitsu', 'ASUS')
+$currentSupportedBIOSOEMs = @('Dell', 'HP', 'Lenovo', 'Fujitsu')
+$currentUnsupportedBIOSOEMs = @('Microsoft', 'Acer', 'Panasonic', 'ASUS')
+$hotFixSupportedBIOSOEMs = @('Dell', 'HP', 'Lenovo')
+$hotFixUnsupportedBIOSOEMs = @('Microsoft', 'Acer', 'Panasonic', 'Fujitsu', 'ASUS')
 
 function Assert-DAT {
     param ([bool]$Condition, [string]$Message)
     if (-not $Condition) { throw "FAIL: $Message" }
     Write-Host "PASS: $Message"
+}
+
+function New-DATBIOSArchiveFixture {
+    param (
+        [string]$Path,
+        [string[]]$EntryNames
+    )
+
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+    $archive = [System.IO.Compression.ZipFile]::Open($Path, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($entryName in $EntryNames) {
+            $writer = [System.IO.StreamWriter]::new($archive.CreateEntry($entryName).Open())
+            try {
+                $writer.Write('fixture')
+            } finally {
+                $writer.Dispose()
+            }
+        }
+    } finally {
+        $archive.Dispose()
+    }
 }
 
 function Set-DATModuleTestSeams {
@@ -104,7 +129,9 @@ function Get-DATStartProcessCallCount {
 function Test-DATModuleBehavior {
     param (
         [string]$Path,
-        [string]$Label
+        [string]$Label,
+        [string[]]$SupportedBIOSOEMs,
+        [string[]]$UnsupportedBIOSOEMs
     )
 
     Remove-Module DriverAutomationToolCore -Force -ErrorAction SilentlyContinue
@@ -116,12 +143,22 @@ function Test-DATModuleBehavior {
     try {
         Set-DATModuleTestSeams -Module $module -TempRoot $tempRoot
 
-        foreach ($oem in $supportedBIOSOEMs) {
+        foreach ($oem in $SupportedBIOSOEMs) {
             Assert-DAT (Test-DATBIOSInstallerSupport -OEM $oem) "$Label exposes $oem as a supported BIOS build OEM"
 
             $model = 'RegressionModel'
-            $sourcePath = Join-Path $tempRoot "$oem-source.exe"
-            Set-Content -LiteralPath $sourcePath -Value "mock $oem BIOS payload"
+            if ($oem -in @('Acer', 'Fujitsu')) {
+                $sourcePath = Join-Path $tempRoot "$oem-source.zip"
+                $entryNames = if ($oem -eq 'Fujitsu') {
+                    @('DskFlash.exe', "$model.bup")
+                } else {
+                    @('BIOS.fd')
+                }
+                New-DATBIOSArchiveFixture -Path $sourcePath -EntryNames $entryNames
+            } else {
+                $sourcePath = Join-Path $tempRoot "$oem-source.exe"
+                Set-Content -LiteralPath $sourcePath -Value "mock $oem BIOS payload"
+            }
             $extractDir = Join-Path $tempRoot "BIOSExtract\$oem\$model"
             Set-DATPackagingCase -Module $module -OEM $oem -ExtractDir $extractDir
 
@@ -135,7 +172,7 @@ function Test-DATModuleBehavior {
             Assert-DAT ($manifestEntries.Count -ge 1 -and ($manifestEntries -notmatch 'DAT-BIOS-SHA256.txt')) "$Label manifests the staged $oem payload"
         }
 
-        foreach ($oem in $unsupportedBIOSOEMs) {
+        foreach ($oem in $UnsupportedBIOSOEMs) {
             Assert-DAT (-not (Test-DATBIOSInstallerSupport -OEM $oem)) "$Label rejects $oem in the BIOS support contract"
             $sourcePath = Join-Path $tempRoot "$oem-source.exe"
             Set-Content -LiteralPath $sourcePath -Value "mock $oem BIOS payload"
@@ -158,7 +195,7 @@ function Test-DATModuleBehavior {
 
         $generatedRoot = Join-Path $tempRoot 'GeneratedInstallers'
         New-Item -Path $generatedRoot -ItemType Directory -Force | Out-Null
-        foreach ($oem in @($supportedBIOSOEMs + $unsupportedBIOSOEMs)) {
+        foreach ($oem in @($SupportedBIOSOEMs + $UnsupportedBIOSOEMs)) {
             $outputPath = Join-Path $generatedRoot "$oem-Install-BIOS.ps1"
             New-DATIntuneInstallScript -OutputPath $outputPath -OEM $oem -Model 'RegressionModel' `
                 -OS 'Windows 11' -Version '1.2.3' -UpdateType BIOS -DisableToast -DisableRestart | Out-Null
@@ -194,7 +231,7 @@ $expectedMatrix = [ordered]@{
     'Microsoft Surface' = @('✅', '—')
     'Acer'              = @('✅', '—')
     'Panasonic'         = @('✅', '—')
-    'Fujitsu'           = @('✅', '—')
+    'Fujitsu'           = @('✅', '✅')
     'ASUS'              = @('✅', '—')
 }
 
@@ -219,11 +256,13 @@ foreach ($oem in $expectedMatrix.Keys) {
 
 $allOEMsText = 'HP, Dell, Lenovo, Microsoft Surface, Acer, Panasonic, Fujitsu, and ASUS'
 Assert-DAT ($readme.Contains("Driver catalog discovery and packaging for $allOEMsText")) 'README Multi-OEM text names all eight driver OEMs'
-Assert-DAT ($readme -match 'Standalone BIOS\s+package creation and installation is currently validated only for Dell, HP, and Lenovo') 'README documents the validated BIOS boundary'
+Assert-DAT ($readme -match 'Standalone BIOS\s+package creation and installation is currently validated only for Dell, HP, Lenovo,\s+and Fujitsu') 'README documents the validated BIOS boundary'
 Assert-DAT ($readme -match 'Microsoft Surface firmware is delivered through driver packages') 'README keeps Microsoft standalone BIOS blocked'
-Assert-DAT ($readme -match 'BIOS packages for Acer,\s+Panasonic, Fujitsu, and ASUS are not generated') 'README documents every unsupported standalone BIOS OEM'
+Assert-DAT ($readme -match 'BIOS packages\s+for Acer, Panasonic, and ASUS are not generated') 'README documents every unsupported standalone BIOS OEM'
 
-Test-DATModuleBehavior -Path $currentCore -Label 'current'
-Test-DATModuleBehavior -Path $hotFixCore -Label 'HotFix'
+Test-DATModuleBehavior -Path $currentCore -Label 'current' `
+    -SupportedBIOSOEMs $currentSupportedBIOSOEMs -UnsupportedBIOSOEMs $currentUnsupportedBIOSOEMs
+Test-DATModuleBehavior -Path $hotFixCore -Label 'HotFix' `
+    -SupportedBIOSOEMs $hotFixSupportedBIOSOEMs -UnsupportedBIOSOEMs $hotFixUnsupportedBIOSOEMs
 
 Write-Host 'OEM BIOS support behavior regression harness completed successfully.'
