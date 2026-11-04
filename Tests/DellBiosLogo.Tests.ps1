@@ -131,6 +131,12 @@ Describe 'Dell BIOS logo actions' {
 
     It 'generates logo arguments only for Dell BIOS packages' {
         Import-Module -Name $moduleManifestPath -Force -ErrorAction Stop
+        $module = Get-Module DriverAutomationToolCore
+        & $module {
+            Set-Item -Path Function:script:Assert-DATTemplateSourceTrusted -Value {
+                param ([string]$Context)
+            }
+        }
         try {
             $cases = @(
                 @{ OEM = 'Dell'; Type = 'BIOS'; Action = 'DoNotManage'; Expected = "-LogoSwitch ''" }
