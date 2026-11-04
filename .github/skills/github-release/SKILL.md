@@ -110,7 +110,7 @@ git fetch --tags
 
 # Compare numeric components after removing one optional leading v/V; retain the original tag
 $prevTag = git tag |
-  Where-Object { $_ -match '^[vV]?\d+\.\d+\.\d+$' } |
+  Where-Object { $_ -match '^[vV]?[0-9]+\.[0-9]+\.[0-9]+$' } |
   ForEach-Object {
     [pscustomobject]@{
       Version = [version]($_ -replace '^[vV]', '')

@@ -17,6 +17,8 @@ Describe 'GitHub release tag selection' {
     It 'compares stable numeric versions and retains original tags in both shell examples' {
         $script:BashPattern | Should -Not -BeNullOrEmpty
         $script:PowerShellPattern | Should -Not -BeNullOrEmpty
+        $script:BashPattern | Should -Match '\[0-9\]'
+        $script:PowerShellPattern | Should -Match '\[0-9\]'
 
         $script:SkillContent | Should -Match '(?s)sort -t .*?-k1,1Vr'
         $script:SkillContent | Should -Match '\[version\]\(\$_ -replace'
@@ -26,7 +28,7 @@ Describe 'GitHub release tag selection' {
             foreach ($Tag in '1.2.3', 'v1.2.3', 'V1.2.3') {
                 [regex]::IsMatch($Tag, $Pattern) | Should -BeTrue -Because "$Tag is a stable three-component version"
             }
-            foreach ($Tag in '1.2.3-rc.1', 'v1.2.3-beta', '1.2.3+build.7', 'v1.2.3-extra') {
+            foreach ($Tag in '1.2.3-rc.1', 'v1.2.3-beta', '1.2.3+build.7', 'v1.2.3-extra', '١.٢.٣') {
                 [regex]::IsMatch($Tag, $Pattern) | Should -BeFalse -Because "$Tag has a suffix and is not an exact stable version tag"
             }
         }
