@@ -296,12 +296,14 @@ goto :eof
 :: ========================================================================
 
 :_showHelpMyLib
+    setlocal
     echo:
     for /f "skip=1 delims=" %%a in ('findstr /n "^" "%~f0"') do (
         set "_line=%%a"
         setlocal EnableDelayedExpansion
         for /f "delims=:" %%n in ("!_line!") do set "_lineNum=%%n"
         if !_lineNum! GTR %_helpLinesMyLib% (
+            endlocal
             endlocal
             goto :eof
         )
@@ -313,6 +315,7 @@ goto :eof
         )
         endlocal
     )
+   endlocal
 goto :eof
 
 :: ========================================================================

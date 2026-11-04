@@ -1,6 +1,7 @@
 BeforeAll {
     $script:LibraryPath = Join-Path $PSScriptRoot '..\.github\skills\batch-files\assets\library.txt'
     $script:ExecutablePath = Join-Path $PSScriptRoot ("PadRight-library-{0}.cmd" -f [guid]::NewGuid().ToString('N'))
+    $script:HelpExecutablePath = Join-Path $PSScriptRoot ("Help-library-{0}.cmd" -f [guid]::NewGuid().ToString('N'))
     $script:RunnerPath = Join-Path $PSScriptRoot ("PadRight-runner-{0}.cmd" -f [guid]::NewGuid().ToString('N'))
     $library = [IO.File]::ReadAllText($script:LibraryPath, [Text.Encoding]::UTF8)
     $library = [regex]::Replace($library, "`r`n|`r|`n", "`r`n")
@@ -20,6 +21,34 @@ BeforeAll {
             @('@echo off', 'setlocal DisableDelayedExpansion', $call, 'endlocal & exit /b %ERRORLEVEL%'),
             [System.Text.Encoding]::ASCII
         )
+        $output = @(& $env:ComSpec /d /c $script:RunnerPath 2>&1 | ForEach-Object { "$_" })
+        [pscustomobject]@{
+            Output = $output -join "`n"
+            ExitCode = $LASTEXITCODE
+        }
+    }
+
+    function Invoke-HelpLibrary {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateSet('Early', 'Normal')]
+            [string]$ReturnPath
+        )
+
+        $library = [IO.File]::ReadAllText($script:LibraryPath, [Text.Encoding]::UTF8)
+        $library = [regex]::Replace($library, "`r`n|`r|`n", "`r`n")
+        $helpLineCount = if ($ReturnPath -eq 'Normal') { '9999' } else { '17' }
+        $library = $library.Replace('set "_helpLinesMyLib=17"', "set `"_helpLinesMyLib=$helpLineCount`"")
+        [IO.File]::WriteAllText($script:HelpExecutablePath, $library, [Text.Encoding]::ASCII)
+
+        $lines = @(
+            '@echo off'
+            'set "_line=caller-value"'
+            ('call "{0}" /?' -f $script:HelpExecutablePath)
+            'if "%_line%"=="caller-value" echo CALLER_LINE_PRESERVED'
+            'if not "%_line%"=="caller-value" echo CALLER_LINE_CHANGED'
+        )
+        [System.IO.File]::WriteAllLines($script:RunnerPath, $lines, [System.Text.Encoding]::ASCII)
         $output = @(& $env:ComSpec /d /c $script:RunnerPath 2>&1 | ForEach-Object { "$_" })
         [pscustomobject]@{
             Output = $output -join "`n"
@@ -103,10 +132,22 @@ BeforeAll {
 }
 
 AfterAll {
-    Remove-Item -LiteralPath $script:RunnerPath, $script:ExecutablePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $script:RunnerPath, $script:ExecutablePath, $script:HelpExecutablePath -Force -ErrorAction SilentlyContinue
 }
 
 Describe 'Batch library padRight' {
+    It 'preserves the caller _line variable when help returns early' {
+        $result = Invoke-HelpLibrary -ReturnPath 'Early'
+        $result.Output | Should -Match 'CALLER_LINE_PRESERVED'
+        $result.Output | Should -Not -Match 'CALLER_LINE_CHANGED'
+    }
+
+    It 'preserves the caller _line variable when help returns normally' {
+        $result = Invoke-HelpLibrary -ReturnPath 'Normal'
+        $result.Output | Should -Match 'CALLER_LINE_PRESERVED'
+        $result.Output | Should -Not -Match 'CALLER_LINE_CHANGED'
+    }
+
     It 'pads a value to the requested width' {
         $result = Invoke-PadRight -Value 'Hello' -Width '8'
         $result.ExitCode | Should -Be 0

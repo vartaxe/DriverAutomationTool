@@ -1,7 +1,10 @@
 # Supply Chain
 
-A workflow runs other people's code every time it `uses:` an action. Those actions execute with
-your token and (on privileged triggers) your secrets, so their integrity is your integrity.
+A workflow runs other people's code every time it `uses:` an action. Actions can access the
+`GITHUB_TOKEN` through the `github.token` context, with permissions set by the workflow/job.
+Privileged workflows may also access repository secrets, but an action receives a secret only when
+the workflow passes or otherwise exposes it (for example, through an input or `env:`). Treat action
+integrity accordingly.
 
 ## Pin Third-Party Actions to a Commit SHA
 

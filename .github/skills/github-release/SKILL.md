@@ -362,9 +362,18 @@ Rules:
 - If a commit message revealed intent that the code diff alone wouldn't convey
   (e.g. a security fix disguised as a one-line change), include that context in
   the changelog entry.
-- Also update the diff link at the bottom of the file:
+- Also update the release link at the bottom of the file using the exact
+  previously discovered `PREV_TAG` and owner-confirmed `NEXT_TAG` spellings.
+  Preserve their case and any optional `v`/`V` prefix; do not normalize tag names.
+  In the URL templates below, substitute those exact tag names.
+  When a previous release tag exists, use a compare link:
   ```markdown
-  [X.Y.Z]: https://github.com/OWNER/REPO/compare/vPREV...vNEXT
+  [X.Y.Z]: https://github.com/OWNER/REPO/compare/PREV_TAG...NEXT_TAG
+  ```
+  For the first release, when `PREV_TAG` is `(none)`, link to the new tag/tree
+  instead of using a compare link:
+  ```markdown
+  [X.Y.Z]: https://github.com/OWNER/REPO/tree/NEXT_TAG
   ```
 
 **Show the user the proposed changelog section before writing it to disk.**
