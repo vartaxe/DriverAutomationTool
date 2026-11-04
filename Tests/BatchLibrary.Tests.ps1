@@ -154,6 +154,18 @@ Describe 'Batch library padRight' {
         $result.Output | Should -BeExactly 'Hello   '
     }
 
+    It 'preserves a value longer than the requested width' {
+        $result = Invoke-PadRight -Value 'Hello' -Width '3'
+        $result.ExitCode | Should -Be 0
+        $result.Output | Should -BeExactly 'Hello'
+    }
+
+    It 'preserves a value when the requested width is zero' {
+        $result = Invoke-PadRight -Value 'Hello' -Width '0'
+        $result.ExitCode | Should -Be 0
+        $result.Output | Should -BeExactly 'Hello'
+    }
+
     It 'pads an explicitly empty value with spaces' {
         $result = Invoke-PadRight -Value '' -Width '4'
         $result.ExitCode | Should -Be 0

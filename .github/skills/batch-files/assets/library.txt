@@ -270,11 +270,12 @@ goto :eof
     set /a _widthMyLib=_widthDigitsMyLib
     if !_widthMyLib! GTR 8000 goto _padRightInvalidWidthMyLib
     if !_widthMyLib! EQU 0 (
-        echo(
+        echo(!_argOneMyLib!
         endlocal
         goto :eof
     )
     set "_valMyLib=!_argOneMyLib!"
+    if defined _valMyLib if not "!_valMyLib:~%_widthMyLib%,1!"=="" goto _padRightAlreadyWideMyLib
     set "_padMyLib=!_valMyLib!"
     if not defined _padMyLib set "_padMyLib= "
 :_padRightAddSpacesMyLib
@@ -284,6 +285,11 @@ goto :eof
 :_padRightFinishMyLib
     set "_padMyLib=!_padMyLib:~0,%_widthMyLib%!"
     echo(!_padMyLib!
+    endlocal
+goto :eof
+
+:_padRightAlreadyWideMyLib
+    echo(!_valMyLib!
     endlocal
 goto :eof
 
