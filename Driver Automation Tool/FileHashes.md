@@ -17,7 +17,7 @@ and publish a SHA256 checksum for the ZIP itself.
 | | |
 |---|---|
 | Version | `10.3.6.0` |
-| Generated (UTC) | 2026-11-01 14:33:04 |
+| Generated (UTC) | 2026-11-04 12:10:03 |
 | Files | 20 |
 | Algorithm | SHA256 |
 
@@ -26,18 +26,18 @@ and publish a SHA256 checksum for the ZIP itself.
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
 | Start-DriverAutomationTool.ps1 | `Start-DriverAutomationTool.ps1` | 15.8 | `938DA92A2645CEDF91455DE2A408E7D59D577FB5134812BCD7BFAD11050A50D3` |
-| Start-DATHeadlessBuild.ps1 | `Start-DATHeadlessBuild.ps1` | 46.0 | `2B3CB5F84C52821E98F6E6B44D7B804C6A821866E85C5993730DF8342B27410C` |
+| Start-DATHeadlessBuild.ps1 | `Start-DATHeadlessBuild.ps1` | 46.1 | `11B83936215487B2F294EF4AC966D1ACDF4912D637175E3E7FF079582D717581` |
 
 ## Core Module
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.6 | `6926525056FAD473FF95F05504C27C4304B6C30D373056382A1D6B34A8E1D248` |
-| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1564.7 | `E717BDA82CBD6CC557E2084A413E197E7C5E193C1A12FD293D3E37520F98CFEC` |
+| DriverAutomationToolCore.psd1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psd1` | 7.7 | `EBB5508AA7345A075A5A033E8FC6B7C061A33DBA9CE2B04B641B53374318FDA0` |
+| DriverAutomationToolCore.psm1 | `Modules/DriverAutomationToolCore/DriverAutomationToolCore.psm1` | 1567.7 | `F64F4560C3090AFF367BAF7D09D3347C31C3854FA97D900E6C972AF91AF8F9AA` |
 | Deploy-BIOSPassword-Detection.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Detection.ps1` | 1.7 | `7A7DCE6AD49DE2634FB5014D2E02594E36A5A212FA0BF3C21C3E6C5ACC64B235` |
 | Deploy-BIOSPassword-Remediation.ps1 | `Modules/DriverAutomationToolCore/Templates/Deploy-BIOSPassword-Remediation.ps1` | 3.2 | `04E95521191126AF41ACDED90CF6EA6C7FD16571B7DA203A3BE8E8E3DD0B4A3B` |
 | Import-CMOfflinePackages.ps1 | `Modules/DriverAutomationToolCore/Templates/Import-CMOfflinePackages.ps1` | 9.9 | `E6DB9F4D3873152AFCA5DC897541E2E5BCB58039AE0AC04B3B9BB5894A5FE15A` |
-| Install-BIOS.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-BIOS.ps1` | 111.3 | `0F0F17D5C97D84C47BF6ABF80584C96210527F1617878D082263822636042246` |
+| Install-BIOS.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-BIOS.ps1` | 112.0 | `8CEDC84C9FD7912BDFC97C9695BC0391AE60444DE9F546A70CE360B68C752BAA` |
 | Install-Drivers.ps1 | `Modules/DriverAutomationToolCore/Templates/Install-Drivers.ps1` | 67.5 | `ED104016244CE1345A6B4B565CB151ED840478284A66B3B00B07C7A63ED21110` |
 | Invoke-DATToastTest.ps1 | `Modules/DriverAutomationToolCore/Templates/Invoke-DATToastTest.ps1` | 29.7 | `B57BEF1E6128B9CE9CC65E36428EBB7F82268C311F84B0D9D8FEE0CDCBFC4B96` |
 | Test-DATMaintenanceWindow.ps1 | `Modules/DriverAutomationToolCore/Templates/Test-DATMaintenanceWindow.ps1` | 6.9 | `1E45CC1E002C8399C95C1E6244D6610094156F35BC200CB187401B1F2CDE00E0` |
@@ -46,7 +46,7 @@ and publish a SHA256 checksum for the ZIP itself.
 
 | File | Path | Size (KB) | SHA256 |
 |------|------|-----------|--------|
-| MainApplication.ps1 | `UI/MainApplication.ps1` | 1713.5 | `334977CAD136DB7DB40934F1162AF99AD23BE2D88D9FA7CE56EBC492348E8ED1` |
+| MainApplication.ps1 | `UI/MainApplication.ps1` | 1716.6 | `D3BF5E389FC9EAC4ED3E95E74813394117B3EA49A1CD2F613BB4305EC4B4DED9` |
 | ThemeDefinitions.ps1 | `UI/Themes/ThemeDefinitions.ps1` | 8.9 | `B7C6D8D529D3581C7EDCD79092F24F2550BE2B3DD7CB647DF690CC161520933A` |
 
 ## Deployment Scripts
