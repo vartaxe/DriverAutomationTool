@@ -178,6 +178,18 @@ Describe 'Batch library padRight' {
         $result.Output | Should -BeExactly 'A   '
     }
 
+    It 'rejects an omitted width' {
+        $result = Invoke-BatchLibrary -Function 'padRight' -Arguments @('A')
+        $result.Output | Should -BeExactly 'ERROR: padRight width must be an integer from 0 to 8000.'
+        $result.ExitCode | Should -Be 1
+    }
+
+    It 'rejects an explicitly empty width' {
+        $result = Invoke-BatchLibrary -Function 'padRight' -Arguments @('A', '')
+        $result.Output | Should -BeExactly 'ERROR: padRight width must be an integer from 0 to 8000.'
+        $result.ExitCode | Should -Be 1
+    }
+
     It 'preserves exclamation marks in the value' {
         $result = Invoke-PadRight -Value 'A!B!C' -Width '7'
         $result.ExitCode | Should -Be 0

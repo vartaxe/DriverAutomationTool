@@ -256,8 +256,8 @@ goto :eof
     REM Pad a string to a given width with trailing spaces.
     REM   %_argOneMyLib% = the string to pad
     REM   %_argTwoMyLib% = desired total width
-    if not defined _argTwoMyLib goto :eof
     setlocal EnableDelayedExpansion
+    if not defined _argTwoMyLib goto _padRightInvalidWidthMyLib
     set "_widthMyLib=!_argTwoMyLib!"
     if not "!_widthMyLib:;=!"=="!_widthMyLib!" goto _padRightInvalidWidthMyLib
     set "_invalidWidthMyLib="
